@@ -113,7 +113,9 @@ inline bool AreAdjacent(const HexCoord& a, const HexCoord& b) {
 
 // Convert between offset coordinates (row, col) and cube coordinates
 // This implementation assumes "odd-q" offset system where odd columns are shifted up
+// Replace or fix the existing OffsetToCube function in hex_grid.h
 inline HexCoord OffsetToCube(int col, int row) {
+  // Using "odd-r" horizontal layout
   int x = col;
   int z = row - (col - (col & 1)) / 2;
   int y = -x - z;

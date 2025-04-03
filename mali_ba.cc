@@ -10,6 +10,7 @@
 #include "open_spiel/abseil-cpp/absl/strings/str_split.h"
 #include "open_spiel/game_parameters.h"
 #include "open_spiel/games/mali_ba/mali_ba_observer.h"
+#include "open_spiel/games/mali_ba/board_adapter.h"
 #include "open_spiel/spiel.h"
 #include "open_spiel/spiel_globals.h"
 #include "open_spiel/spiel_utils.h"
@@ -38,11 +39,12 @@ const GameType kGameType{
     {
         {"players", GameParameter(2)},
         {"grid_radius", GameParameter(5)},
-        {"simplified", GameParameter(true)}
+        {"simplified", GameParameter(true)},
+        {"use_flexible_board", GameParameter(true)}
     }};
 
-// Define special action ID for pass moves
-constexpr Action kPassActionId = 0;
+// Use the global pass action ID
+// No need to redefine it here since it's already defined in mali_ba.h
 
 // Register the observer
 RegisterSingleTensorObserver single_tensor(kGameType.short_name);
@@ -65,22 +67,14 @@ constexpr double kDrawUtility = 0.0;
 
 }  // namespace
 
-// Player/Color conversions
-Player ColorToPlayer(Color color) {
-  return static_cast<Player>(color);
-}
-
-Color PlayerToColor(Player player) {
-  return static_cast<Color>(player);
-}
-
 // Mali_BaGame implementation
 
 // Constructor from parameters
 Mali_BaGame::Mali_BaGame(const GameParameters& params)
     : Game(kGameType, params),
       num_players_(ParameterValue<int>("players")),
-      grid_radius_(ParameterValue<int>("grid_radius")) {
+      grid_radius_(ParameterValue<int>("grid_radius")),
+      use_flexible_board_(ParameterValue<bool>("use_flexible_board")) {
   // Validate parameters
   SPIEL_CHECK_GE(num_players_, 2);
   SPIEL_CHECK_LE(num_players_, 4);
@@ -95,53 +89,9 @@ Mali_BaGame::Mali_BaGame(const GameParameters& params)
 #endif
 }
 
-// Implementation of pure virtual methods from Game
-int Mali_BaGame::NumDistinctActions() const {
-  // Calculate maximum number of possible actions
-  // This is an upper bound estimate - can be refined with more analysis
-  int num_hexes = 3 * grid_radius_ * (grid_radius_ + 1) + 1;
-  return 1 + num_hexes * 1001; // Pass + hex combinations with path hashes
-}
-
-int Mali_BaGame::MaxGameLength() const {
-  // Estimate based on board size and typical game length
-  return 100 + 10 * grid_radius_; 
-}
-
-int Mali_BaGame::NumPlayers() const {
-  return num_players_;
-}
-
-double Mali_BaGame::MinUtility() const {
-  return kLossUtility;
-}
-
-double Mali_BaGame::MaxUtility() const {
-  return kWinUtility;
-}
-
-std::vector<int> Mali_BaGame::ObservationTensorShape() const {
-  // 20 channels, hexagonal board with radius
-  int board_size = 2 * grid_radius_ + 1;
-  return {20, board_size, board_size};
-}
-
-// Implementation of NewInitialState
-std::unique_ptr<State> Mali_BaGame::NewInitialState() const {
-  return std::unique_ptr<State>(new Mali_BaState(shared_from_this()));
-}
-
-// Deserialize a state from a string
-std::unique_ptr<State> Mali_BaGame::DeserializeState(
-    const std::string& str) const {
-  // For now, assume the serialized string is an MBN notation
-  return std::unique_ptr<State>(new Mali_BaState(shared_from_this(), str));
-}
-
-// Create the observer for the game
 std::shared_ptr<Observer> Mali_BaGame::MakeObserver(
-    absl::optional<IIGObservationType> iig_obs_type,
-    const GameParameters& params) const {
+  absl::optional<IIGObservationType> iig_obs_type,
+  const GameParameters& params) const {
   if (params.empty()) {
     if (!iig_obs_type) {
       // Default observer
@@ -157,6 +107,40 @@ std::shared_ptr<Observer> Mali_BaGame::MakeObserver(
     return Game::MakeObserver(iig_obs_type, params);
   }
 }
+// Deserialize a state from a string
+std::unique_ptr<State> Mali_BaGame::DeserializeState(const std::string& str) const {
+  // Check if the string is empty
+  if (str.empty()) {
+    return NewInitialState(); // Return a fresh state
+  }
+  
+  std::unique_ptr<Mali_BaState> state = absl::make_unique<Mali_BaState>(shared_from_this(), str);
+  
+  // Verify the current player is correctly restored
+  std::vector<std::string> parts = absl::StrSplit(str, '/');
+  if (!parts.empty()) {
+    Color expected_color = Color::kBlack; // Default
+    if (parts[0] == "b") {
+      expected_color = Color::kBlack;
+    } else if (parts[0] == "w") {
+      expected_color = Color::kWhite;
+    } else if (parts[0] == "r") {
+      expected_color = Color::kRed;
+    } else if (parts[0] == "u") {
+      expected_color = Color::kBlue;
+    }
+    
+    if (state->Board().ToPlay() != expected_color) {
+      // Fix the state if needed
+      std::cerr << "Warning: Fixing deserialized state current player from "
+                << ColorToString(state->Board().ToPlay()) << " to " 
+                << ColorToString(expected_color) << std::endl;
+      state->Board().SetToPlay(expected_color);
+    }
+  }
+  
+  return state;
+}
 
 // Mali_BaState implementation
 
@@ -165,9 +149,14 @@ Mali_BaState::Mali_BaState(std::shared_ptr<const Game> game)
     : State(game),
       is_terminal_(false) {
   
-  // Initialize board
-  start_board_ = BoardAdapter::CreateSimplifiedBoard(true);
-  current_board_ = start_board_;
+  auto mali_ba_game = static_cast<const Mali_BaGame*>(game.get());
+  
+  // Initialize board adapter based on game parameters
+  bool use_flexible_board = mali_ba_game->UseFlexibleBoard();
+  int grid_radius = mali_ba_game->GridRadius();
+  
+  // Create the board
+  board_adapter_ = BoardAdapter::CreateSimplifiedBoard(use_flexible_board);
   
   // Initialize with meeples
   InitializeMeeples();
@@ -179,17 +168,23 @@ Mali_BaState::Mali_BaState(std::shared_ptr<const Game> game,
     : State(game),
       is_terminal_(false) {
   
-  // Initialize default board
-  start_board_ = BoardAdapter::CreateSimplifiedBoard(true);
+  auto mali_ba_game = static_cast<const Mali_BaGame*>(game.get());
+  bool use_flexible_board = mali_ba_game->UseFlexibleBoard();
   
   // Try to load from MBN
-  auto board_opt = BoardAdapter::FromMBN(mbn, true);
-  current_board_ = board_opt;  // Use assignment operator
+  board_adapter_ = BoardAdapter::FromMBN(mbn, use_flexible_board);
+  
+  // Record the starting board state
+  start_board_ = board_adapter_;
 }
 
-// Placeholder implementation for InitializeMeeples
+// Initialize meeples on the board
 void Mali_BaState::InitializeMeeples() {
-  // This would be implemented to set up initial meeples on the board
+  // Record the starting board state
+  start_board_ = board_adapter_;
+  
+  // Note: The actual meeple initialization is done in the board implementation,
+  // so we don't need to do anything here
 }
 
 // Get current player
@@ -197,7 +192,7 @@ Player Mali_BaState::CurrentPlayer() const {
   if (is_terminal_) {
     return kTerminalPlayerId;
   }
-  return ColorToPlayer(current_board_.ToPlay());
+  return ColorToPlayer(board_adapter_.ToPlay());
 }
 
 // Get legal actions for current player
@@ -223,13 +218,24 @@ void Mali_BaState::MaybeGenerateLegalActions() const {
   }
   
   std::vector<Action> actions;
-  current_board_.GenerateLegalMoves([&](const Move& move) {
-    actions.push_back(MoveToAction(move, GridRadius()));
+  
+  // Add Pass action first
+  actions.push_back(kPassActionId);
+  
+  // Then add all other actions
+  board_adapter_.GenerateLegalMoves([&](const Move& move) {
+    // Skip pass moves since we already added kPassActionId
+    if (!move.is_pass()) {
+      actions.push_back(MoveToAction(move, board_adapter_.GridRadius()));
+    }
     return true;
   });
   
-  // Sort the actions in ascending order to meet OpenSpiel requirements
+  // Sort the actions in ascending order
   std::sort(actions.begin(), actions.end());
+  
+  // Remove duplicates - important to prevent the error
+  actions.erase(std::unique(actions.begin(), actions.end()), actions.end());
   
   cached_legal_actions_ = actions;
 }
@@ -241,13 +247,13 @@ std::string Mali_BaState::ActionToString(Player player, Action action) const {
   }
   
   // Convert action to move and then to string
-  Move move = ActionToMove(action, current_board_);
+  Move move = ActionToMove(action, board_adapter_);
   return move.ToString();
 }
 
 // Convert board state to string
 std::string Mali_BaState::ToString() const {
-  return current_board_.DebugString();
+  return board_adapter_.DebugString();
 }
 
 // Check if game is over
@@ -294,13 +300,17 @@ absl::optional<std::vector<double>> Mali_BaState::MaybeFinalReturns() const {
   // Check trading routes (placeholder implementation)
   for (int player = 0; player < NumPlayers(); player++) {
     Color color = PlayerToColor(player);
-    int routes = current_board_.CountConnectedPosts(color);
+    int routes = board_adapter_.CountConnectedPosts(color);
     if (routes >= 4) {
       // This player wins
       std::vector<double> result(NumPlayers(), kLossUtility);
       result[player] = kWinUtility;
       return result;
     }
+    
+    // TODO: Implement checks for other win conditions:
+    // - 4 different rare goods
+    // - Connect Timbuktu with the sea via other cities
   }
   
   // No end condition met yet
@@ -335,8 +345,29 @@ void Mali_BaState::ObservationTensor(Player player,
   // Zero out the values first
   std::fill(values.begin(), values.end(), 0);
   
-  // Placeholder implementation - in practice, this would be filled in properly
-  // by the observer defined in mali_ba_observer.cc
+  // This would be filled in properly by the observer defined in mali_ba_observer.cc
+  // For now, we provide a very basic implementation
+  
+  const auto& shape = ObservationTensorShape();
+  if (shape.size() != 3 || values.size() != shape[0] * shape[1] * shape[2]) {
+    SpielFatalError("Observation tensor has wrong size");
+    return;
+  }
+  
+  // Write current player plane
+  int current_player_plane = 19;
+  int current_player = CurrentPlayer();
+  int height = shape[1];
+  int width = shape[2];
+  
+  if (current_player >= 0 && current_player < NumPlayers()) {
+    for (int i = 0; i < height; ++i) {
+      for (int j = 0; j < width; ++j) {
+        values[current_player_plane * height * width + i * width + j] = 
+            (current_player == player) ? 1.0 : 0.0;
+      }
+    }
+  }
 }
 
 // Create a copy of the state
@@ -354,15 +385,15 @@ void Mali_BaState::DoApplyAction(Action action) {
   if (action == kPassActionId) {
     move = kPassMove;
   } else {
-    move = ActionToMove(action, current_board_);
+    move = ActionToMove(action, board_adapter_);
   }
   
   // Record the current board hash for repetition detection
-  uint64_t hash = current_board_.HashValue();
+  uint64_t hash = board_adapter_.HashValue();
   repetitions_[hash]++;
   
   // Apply the move to the board
-  current_board_.ApplyMove(move);
+  board_adapter_.ApplyMove(move);
   
   // Store the move in history
   moves_history_.push_back(move);
@@ -382,55 +413,36 @@ void Mali_BaState::UndoAction(Player player, Action action) {
   moves_history_.pop_back();
   
   // Reset the current board to the starting board
-  current_board_ = start_board_;
+  board_adapter_ = start_board_;
   
   // Clear repetition table
   repetitions_.clear();
   
   // Replay all moves except the last one
   for (const auto& move : moves_history_) {
-    uint64_t hash = current_board_.HashValue();
+    uint64_t hash = board_adapter_.HashValue();
     repetitions_[hash]++;
-    current_board_.ApplyMove(move);
+    board_adapter_.ApplyMove(move);
   }
   
   // Reset terminal state flag
   is_terminal_ = false;
 }
 
-// Serialize the state
-std::string Mali_BaState::Serialize() const {
-  return current_board_.ToMBN();
-}
-
 // Debug string representation
-std::string Mali_BaState::DebugString() const {
-  return current_board_.DebugString();
-}
-
-// Get the grid radius from the game
-int Mali_BaState::GridRadius() const {
-  auto game = static_cast<const Mali_BaGame*>(GetGame().get());
-  return game->GridRadius();
-}
-
-// Get number of players
-int Mali_BaState::NumPlayers() const {
-  auto game = static_cast<const Mali_BaGame*>(GetGame().get());
-  return game->NumPlayers();
-}
-
-// Utility helper functions
-double Mali_BaState::WinUtility() const {
-  return kWinUtility;
-}
-
-double Mali_BaState::LossUtility() const {
-  return kLossUtility;
-}
-
-double Mali_BaState::DrawUtility() const {
-  return kDrawUtility;
+std::string Mali_BaState::Serialize() const {
+  std::string mbn = board_adapter_.ToMBN();
+  
+  // For debugging, check that deserialization works:
+  BoardAdapter test_board = BoardAdapter::FromMBN(mbn, board_adapter_.IsUsingFlexBoard());
+  if (test_board.ToPlay() != board_adapter_.ToPlay()) {
+    // Log an error - mismatch between serialized and deserialized state
+    std::cerr << "Warning: Serialization/deserialization mismatch for current player!" << std::endl;
+    std::cerr << "Original: " << ColorToString(board_adapter_.ToPlay()) 
+              << ", Deserialized: " << ColorToString(test_board.ToPlay()) << std::endl;
+  }
+  
+  return mbn;
 }
 
 // Parse a move string to an action
@@ -480,10 +492,10 @@ Action Mali_BaState::ParseMoveToAction(const std::string& move_str) const {
   bool place_post = (parts.size() > 1 && parts.back() == "post");
   
   // Create the move
-  Move move{current_board_.ToPlay(), start_hex, path, place_post};
+  Move move{board_adapter_.ToPlay(), start_hex, path, place_post};
   
   // Convert to action
-  return MoveToAction(move, GridRadius());
+  return MoveToAction(move, board_adapter_.GridRadius());
 }
 
 // Converting a move to an action ID

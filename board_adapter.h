@@ -5,15 +5,15 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <functional>
 
 #include "open_spiel/games/mali_ba/hex_grid.h"
+#include "open_spiel/abseil-cpp/absl/types/optional.h"
 
 namespace open_spiel {
 namespace mali_ba {
 
 // Forward declarations
-class Mali_BaBoard;
-class FlexBoard;
 struct Piece;
 struct TradePost;
 struct City;
@@ -24,11 +24,23 @@ enum class Color : int8_t;
 // to work with either the original Mali_BaBoard or the new FlexBoard
 class BoardAdapter {
  public:
+  // Default constructor - creates a default simplified board with FlexBoard
+  BoardAdapter();
+  
   // Create an adapter for the original fixed board
-  explicit BoardAdapter(const Mali_BaBoard& board);
+  explicit BoardAdapter(const class Mali_BaBoard& board);
   
   // Create an adapter for the new flexible board
-  explicit BoardAdapter(const FlexBoard& board);
+  explicit BoardAdapter(const class FlexBoard& board);
+  
+  // Copy constructor
+  BoardAdapter(const BoardAdapter& other);
+  
+  // Assignment operator
+  BoardAdapter& operator=(const BoardAdapter& other);
+  
+  // Destructor
+  ~BoardAdapter();
   
   // Constructor for a board from a board notation string
   static BoardAdapter FromMBN(const std::string& mbn, bool use_flexible_board = false);
@@ -58,7 +70,7 @@ class BoardAdapter {
   std::string ToMBN() const;
   std::string DebugString() const;
   
-  // Use FlexBoard's MoveYieldFn type here to avoid circular dependencies
+  // Use a function type for MoveYieldFn to avoid dependency on specific board implementations
   using MoveYieldFn = std::function<bool(const Move&)>;
   void GenerateLegalMoves(const MoveYieldFn& yield) const;
   void GenerateLegalMoves(const MoveYieldFn& yield, Color color) const;
@@ -72,23 +84,17 @@ class BoardAdapter {
   
   int CountConnectedPosts(Color color) const;
   
-  bool IsUsingFlexBoard() const { return using_flexible_board_; }
+  bool IsUsingFlexBoard() const;
   
   // Advanced flexible board operations
   std::vector<HexCoord> GetValidNeighbors(const HexCoord& hex) const;
   bool AreConnected(const HexCoord& a, const HexCoord& b) const;
   std::vector<std::set<HexCoord>> GetConnectedComponents() const;
   
-  // Access to the underlying board implementations
-  const Mali_BaBoard* GetFixedBoard() const;
-  const FlexBoard* GetFlexBoard() const;
-  
  private:
-  bool using_flexible_board_;
-  
-  // We use unique_ptr to avoid object slicing and allow polymorphic behavior
-  std::unique_ptr<Mali_BaBoard> fixed_board_;
-  std::unique_ptr<FlexBoard> flexible_board_;
+  // PIMPL idiom: hide implementation details in a private implementation class
+  class Impl;
+  std::unique_ptr<Impl> pimpl_;
 };
 
 }  // namespace mali_ba

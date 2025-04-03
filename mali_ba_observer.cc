@@ -23,6 +23,7 @@
 #include "open_spiel/abseil-cpp/absl/strings/str_cat.h"
 #include "open_spiel/games/mali_ba/mali_ba.h"
 #include "open_spiel/games/mali_ba/mali_ba_board.h"
+#include "open_spiel/games/mali_ba/board_adapter.h"
 #include "open_spiel/spiel_utils.h"
 
 namespace open_spiel {
@@ -123,7 +124,7 @@ void MaliBaObserver::WritePublicInfo(const State& state, int player,
       if (std::abs(x) + std::abs(y) + std::abs(z) > 2 * grid_radius) continue;
       
       HexCoord hex(x, y, z);
-      if (!board.InBoardArea(hex)) continue;
+      if (!board.IsValidHex(hex)) continue;
       
       // Convert hex to board coordinates
       auto [col, row] = CubeToOffset(hex);
@@ -135,7 +136,7 @@ void MaliBaObserver::WritePublicInfo(const State& state, int player,
       if (row < 0 || row >= height || col < 0 || col >= width) continue;
       
       // Get piece at this hex
-      const Piece& piece = board.at(hex);
+      const Piece& piece = board.GetPiece(hex);
       if (piece.type != MeepleType::kEmpty) {
         // Set the appropriate player plane
         if (piece.color != Color::kEmpty) {
@@ -149,7 +150,7 @@ void MaliBaObserver::WritePublicInfo(const State& state, int player,
       }
       
       // Mark trading posts and centers
-      const TradePost& post = board.post_at(hex);
+      const TradePost& post = board.GetTradePost(hex);
       if (post.type != TradePostType::kNone && post.owner != Color::kEmpty) {
         int owner_plane = static_cast<int>(post.owner);
         int post_plane = (post.type == TradePostType::kPost) ? 

@@ -67,34 +67,62 @@ FlexBoard FlexBoard::CreateStandardBoard(int radius) {
   return FlexBoard(valid_hexes, radius);
 }
 
-// In flexible_board.cc:
 FlexBoard FlexBoard::CreateSimplifiedBoard() {
-  #ifdef MALI_BA_SIMPLIFIED_BOARD
-    // Use our custom simplified board layout
-    return CreateSimplifiedCustomBoard();
-  #else
-    // Use a smaller radius for the simplified board
-    int radius = 4;
-    return CreateStandardBoard(radius);
-  #endif
-  }
-  
+  // Just delegate to CreateSimplifiedCustomBoard
+  return CreateSimplifiedCustomBoard();
+}
 
-// Create a custom board with specific hex structure
 FlexBoard FlexBoard::CreateCustomBoard(const std::vector<HexCoord>& valid_hexes) {
   std::set<HexCoord> hex_set(valid_hexes.begin(), valid_hexes.end());
   
   // Calculate max radius from the provided hexes
   int max_radius = 0;
   for (const auto& hex : hex_set) {
-    max_radius = std::max(max_radius, std::max(std::abs(hex.x), 
-                           std::max(std::abs(hex.y), std::abs(hex.z))));
+      max_radius = std::max(max_radius, std::max(std::abs(hex.x), 
+                         std::max(std::abs(hex.y), std::abs(hex.z))));
   }
   
   return FlexBoard(hex_set, max_radius);
 }
 
-// Add these methods to flex_board.cc
+FlexBoard FlexBoard::CreateSimplifiedCustomBoard() {
+  // Create a set of valid hexes for a 6x6 grid
+  std::set<HexCoord> valid_hexes;
+  
+  // Manually specify the cube coordinates for a 6x6 grid
+  // This bypasses any issues with OffsetToCube conversion
+  for (int q = -2; q <= 3; q++) {
+    for (int r = -3; r <= 2; r++) {
+      int s = -q - r;
+      valid_hexes.insert(HexCoord(q, r, s));
+    }
+  }
+  
+  // Create the board with these hexes
+  FlexBoard board(valid_hexes, 3);  // Use a smaller max_radius
+  
+  // Clear any default cities
+  board.ClearCities();
+  
+  // Add the four cities at carefully chosen coordinates
+  // C1 (Warri) - top left corner
+  board.AddCity("Warri", Region::kIdjo, "Palm Oil", "Coral Necklace", 
+                HexCoord(-2, 2, 0));
+  
+  // C2 (Dosso) - right side, third row 
+  board.AddCity("Dosso", Region::kSonghai, "Cotton", "Silver Headdress", 
+                HexCoord(3, -3, 0));
+  
+  // C3 (Tabou) - left side, fifth row
+  board.AddCity("Tabou", Region::kKru, "Pepper", "Canoe", 
+                HexCoord(-2, -2, 4));
+  
+  // C4 (Oyo) - fifth row, fifth column
+  board.AddCity("Oyo", Region::kYoruba, "Ivory", "Ivory Bracelet", 
+                HexCoord(2, -3, 1));
+  
+  return board;
+}
 
 // Clear all cities from the board
 void FlexBoard::ClearCities() {
@@ -114,73 +142,73 @@ void FlexBoard::AddCity(const std::string& name, Region region,
 }
 
 // Implementation for CreateSimplifiedCustomBoard
-FlexBoard FlexBoard::CreateSimplifiedCustomBoard() {
-  // Create a board with the specific layout requested
-  std::vector<HexCoord> valid_hexes;
+// FlexBoard FlexBoard::CreateSimplifiedCustomBoard() {
+//   // Create a board with the specific layout requested
+//   std::vector<HexCoord> valid_hexes;
   
-  // Add all hexes to create the board shape shown in the example
-  // Row 1
-  valid_hexes.push_back(HexCoord(-5, 2, 3));  // C1: Warri
-  valid_hexes.push_back(HexCoord(-4, 1, 3));
-  valid_hexes.push_back(HexCoord(-3, 0, 3));
-  valid_hexes.push_back(HexCoord(-2, -1, 3));
-  valid_hexes.push_back(HexCoord(-1, -2, 3));
-  valid_hexes.push_back(HexCoord(0, -3, 3));
+//   // Add all hexes to create the board shape shown in the example
+//   // Row 1
+//   valid_hexes.push_back(HexCoord(-5, 2, 3));  // C1: Warri
+//   valid_hexes.push_back(HexCoord(-4, 1, 3));
+//   valid_hexes.push_back(HexCoord(-3, 0, 3));
+//   valid_hexes.push_back(HexCoord(-2, -1, 3));
+//   valid_hexes.push_back(HexCoord(-1, -2, 3));
+//   valid_hexes.push_back(HexCoord(0, -3, 3));
   
-  // Row 2
-  valid_hexes.push_back(HexCoord(-4, 2, 2));
-  valid_hexes.push_back(HexCoord(-3, 1, 2));
-  valid_hexes.push_back(HexCoord(-2, 0, 2));
-  valid_hexes.push_back(HexCoord(-1, -1, 2));
-  valid_hexes.push_back(HexCoord(0, -2, 2));
-  valid_hexes.push_back(HexCoord(1, -3, 2));
+//   // Row 2
+//   valid_hexes.push_back(HexCoord(-4, 2, 2));
+//   valid_hexes.push_back(HexCoord(-3, 1, 2));
+//   valid_hexes.push_back(HexCoord(-2, 0, 2));
+//   valid_hexes.push_back(HexCoord(-1, -1, 2));
+//   valid_hexes.push_back(HexCoord(0, -2, 2));
+//   valid_hexes.push_back(HexCoord(1, -3, 2));
   
-  // Row 3
-  valid_hexes.push_back(HexCoord(-5, 3, 2));
-  valid_hexes.push_back(HexCoord(-4, 2, 2));
-  valid_hexes.push_back(HexCoord(-3, 1, 2));
-  valid_hexes.push_back(HexCoord(-2, 0, 2));
-  valid_hexes.push_back(HexCoord(-1, -1, 2));
-  valid_hexes.push_back(HexCoord(0, -2, 2));  // C2: Dosso
+//   // Row 3
+//   valid_hexes.push_back(HexCoord(-5, 3, 2));
+//   valid_hexes.push_back(HexCoord(-4, 2, 2));
+//   valid_hexes.push_back(HexCoord(-3, 1, 2));
+//   valid_hexes.push_back(HexCoord(-2, 0, 2));
+//   valid_hexes.push_back(HexCoord(-1, -1, 2));
+//   valid_hexes.push_back(HexCoord(0, -2, 2));  // C2: Dosso
   
-  // Row 4
-  valid_hexes.push_back(HexCoord(-4, 3, 1));
-  valid_hexes.push_back(HexCoord(-3, 2, 1));
-  valid_hexes.push_back(HexCoord(-2, 1, 1));
-  valid_hexes.push_back(HexCoord(-1, 0, 1));
-  valid_hexes.push_back(HexCoord(0, -1, 1));
-  valid_hexes.push_back(HexCoord(1, -2, 1));
+//   // Row 4
+//   valid_hexes.push_back(HexCoord(-4, 3, 1));
+//   valid_hexes.push_back(HexCoord(-3, 2, 1));
+//   valid_hexes.push_back(HexCoord(-2, 1, 1));
+//   valid_hexes.push_back(HexCoord(-1, 0, 1));
+//   valid_hexes.push_back(HexCoord(0, -1, 1));
+//   valid_hexes.push_back(HexCoord(1, -2, 1));
   
-  // Row 5
-  valid_hexes.push_back(HexCoord(-5, 4, 1));  // C3: Tabou
-  valid_hexes.push_back(HexCoord(-4, 3, 1));
-  valid_hexes.push_back(HexCoord(-3, 2, 1));
-  valid_hexes.push_back(HexCoord(-2, 1, 1));
-  valid_hexes.push_back(HexCoord(-1, 0, 1));  // C4: Oyo
-  valid_hexes.push_back(HexCoord(0, -1, 1));
+//   // Row 5
+//   valid_hexes.push_back(HexCoord(-5, 4, 1));  // C3: Tabou
+//   valid_hexes.push_back(HexCoord(-4, 3, 1));
+//   valid_hexes.push_back(HexCoord(-3, 2, 1));
+//   valid_hexes.push_back(HexCoord(-2, 1, 1));
+//   valid_hexes.push_back(HexCoord(-1, 0, 1));  // C4: Oyo
+//   valid_hexes.push_back(HexCoord(0, -1, 1));
   
-  // Row 6
-  valid_hexes.push_back(HexCoord(-4, 4, 0));
-  valid_hexes.push_back(HexCoord(-3, 3, 0));
-  valid_hexes.push_back(HexCoord(-2, 2, 0));
-  valid_hexes.push_back(HexCoord(-1, 1, 0));
-  valid_hexes.push_back(HexCoord(0, 0, 0));
-  valid_hexes.push_back(HexCoord(1, -1, 0));
+//   // Row 6
+//   valid_hexes.push_back(HexCoord(-4, 4, 0));
+//   valid_hexes.push_back(HexCoord(-3, 3, 0));
+//   valid_hexes.push_back(HexCoord(-2, 2, 0));
+//   valid_hexes.push_back(HexCoord(-1, 1, 0));
+//   valid_hexes.push_back(HexCoord(0, 0, 0));
+//   valid_hexes.push_back(HexCoord(1, -1, 0));
   
-  // Create the board with these hexes
-  auto board = FlexBoard::CreateCustomBoard(valid_hexes);
+//   // Create the board with these hexes
+//   auto board = FlexBoard::CreateCustomBoard(valid_hexes);
   
-  // We'll override the city initialization since we want specific city placements
-  board.ClearCities();
+//   // We'll override the city initialization since we want specific city placements
+//   board.ClearCities();
   
-  // Add the cities at the specified locations
-  board.AddCity("Warri", Region::kIdjo, "Palm Oil", "Coral Necklace", HexCoord(-5, 2, 3));
-  board.AddCity("Dosso", Region::kSonghai, "Cotton", "Silver Headdress", HexCoord(0, -2, 2));
-  board.AddCity("Tabou", Region::kKru, "Pepper", "Canoe", HexCoord(-5, 4, 1));
-  board.AddCity("Oyo", Region::kYoruba, "Ivory", "Ivory Bracelet", HexCoord(-1, 0, 1));
+//   // Add the cities at the specified locations
+//   board.AddCity("Warri", Region::kIdjo, "Palm Oil", "Coral Necklace", HexCoord(-5, 2, 3));
+//   board.AddCity("Dosso", Region::kSonghai, "Cotton", "Silver Headdress", HexCoord(0, -2, 2));
+//   board.AddCity("Tabou", Region::kKru, "Pepper", "Canoe", HexCoord(-5, 4, 1));
+//   board.AddCity("Oyo", Region::kYoruba, "Ivory", "Ivory Bracelet", HexCoord(-1, 0, 1));
   
-  return board;
-}
+//   return board;
+// }
 
 // Add a valid hex to the board
 void FlexBoard::AddHex(const HexCoord& hex) {
@@ -495,6 +523,8 @@ void FlexBoard::InitializeCities() {
 }
 
 // Initialize meeples (placeholder that would be properly implemented)
+// In flex_board.cc, modify the InitializeMeeples method to add more meeples:
+
 void FlexBoard::InitializeMeeples() {
   // Random distribution of meeples across the board
   std::mt19937 rng(42);  // Fixed seed for reproducibility
@@ -507,10 +537,66 @@ void FlexBoard::InitializeMeeples() {
   
 #ifdef MALI_BA_SIMPLIFIED_BOARD
   // For simplified board, use a more deterministic placement
-  // (implementation would duplicate what's in the original code)
+  // Place meeples on most of the valid hexes (instead of being sparse)
+  for (const auto& hex : valid_hexes_) {
+    // Skip city locations
+    bool is_city = false;
+    for (const auto& city : cities_) {
+      if (city.location == hex) {
+        is_city = true;
+        break;
+      }
+    }
+    if (is_city) continue;
+    
+    // 80% chance to place a meeple
+    if (rng() % 100 < 80) {
+      // Randomly choose a meeple type
+      MeepleType type = meeple_types[rng() % meeple_types.size()];
+      // Place it as neutral (Color::kEmpty)
+      SetPiece(hex, {Color::kEmpty, type});
+    }
+  }
+  
+  // Also place some player-owned meeples to enable legal moves right away
+  std::vector<Color> players = {Color::kBlack, Color::kWhite};
+  int meeples_per_player = 3;
+  
+  for (Color player : players) {
+    int placed = 0;
+    // Try to place on different hexes
+    for (const auto& hex : valid_hexes_) {
+      if (GetPiece(hex).type == MeepleType::kEmpty && !CityAt(hex).has_value()) {
+        // Place a trader meeple for this player
+        SetPiece(hex, {player, MeepleType::kTrader});
+        placed++;
+        if (placed >= meeples_per_player) break;
+      }
+    }
+  }
 #else
-  // For the full board, use random distribution
+  // For the full board, use more random distribution
   // (implementation would duplicate what's in the original code)
+  // For each hex (except cities, which we'll handle separately)
+  for (const auto& hex : valid_hexes_) {
+    // Skip city locations
+    bool is_city = false;
+    for (const auto& city : cities_) {
+      if (city.location == hex) {
+        is_city = true;
+        break;
+      }
+    }
+    if (is_city) continue;
+    
+    // Randomly decide if this hex gets meeples (70% chance)
+    if (rng() % 100 < 70) {
+      // Place a meeple of random type
+      MeepleType type = meeple_types[rng() % meeple_types.size()];
+      // Neutral meeples initially (will be claimed by players during gameplay)
+      SetPiece(hex, {Color::kEmpty, type});
+    }
+  }
 #endif
 }
 
@@ -807,3 +893,7 @@ int FlexBoard::CountConnectedPosts(Color color) const {
   // Return the number of connected components
   return components.size();
 }
+
+}  // namespace mali_ba
+
+}  // namespace open_spiel

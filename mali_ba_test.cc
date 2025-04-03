@@ -74,7 +74,7 @@ void ActionConversionTests() {
     if (action == kPassActionId) continue;
     
     Move move = ActionToMove(action, mali_ba_state->Board());
-    Action action_from_move = MoveToAction(move, mali_ba_state->GridRadius());
+    Action action_from_move = MoveToAction(move, mali_ba_state->Board().GridRadius());
     SPIEL_CHECK_EQ(action, action_from_move);
   }
 }
