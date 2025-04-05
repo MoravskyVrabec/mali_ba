@@ -39,18 +39,19 @@ class MaliBaObserver : public Observer {
   std::string StringFrom(const State& state, int player) const override;
 
  private:
-  // Helper method to write public information to the tensor
-  // Note: Helper methods now use absl::Span<float> to match implementation
+  // Helper methods to write different parts of the observation tensor
+  // These methods take a state, player, and a span to write the tensor values into
   void WritePublicInfo(const State& state, int player,
                       absl::Span<float> values) const;
   
-  // Helper method to write private information to the tensor (if any)
   void WritePrivateInfo(const State& state, int player,
                        absl::Span<float> values) const;
   
-  // Helper method to write perfect information to the tensor
   void WritePerfectInfo(const State& state, int player,
                        absl::Span<float> values) const;
+                       
+  // Helper method to calculate tensor coordinates from a hex
+  std::pair<int, int> HexToTensorCoordinates(const HexCoord& hex, int grid_radius) const;
 
   // The type of observation we're providing
   IIGObservationType iig_obs_type_;
