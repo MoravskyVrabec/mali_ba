@@ -1,0 +1,1005 @@
+// mali_ba_state_core.cc
+// Core state implementation (constructor, basic state API functions)
+
+#include "open_spiel/games/mali_ba/mali_ba_common.h"
+#include "open_spiel/games/mali_ba/mali_ba_state.h"
+#include "open_spiel/games/mali_ba/mali_ba_game.h"
+#include "open_spiel/games/mali_ba/hex_grid.h"
+
+#include <algorithm>
+#include <iostream>
+#include <map>
+#include <memory>
+#include <sstream>
+
+#include "open_spiel/abseil-cpp/absl/strings/str_cat.h"
+#include "open_spiel/spiel.h"
+#include "open_spiel/spiel_globals.h"
+#include "open_spiel/spiel_utils.h"
+
+namespace open_spiel
+{
+    namespace mali_ba
+    {
+
+        namespace { // Use anonymous namespace for local constants/helpers
+
+            // Max values needed for plane indexing (match observer)
+            constexpr int kMaxPlayersObs = 5;       // Max players supported by tensor shape
+            constexpr int kNumMeepleColorsObs = 10; // Number of meeple colors for planes
+        
+            // Helper to convert hex to tensor coords (copied from observer for direct use)
+            std::pair<int, int> HexToTensorCoordinates(const HexCoord &hex, int grid_radius) {
+                // Convert hex to offset coordinates
+                auto [col, row] = CubeToOffset(hex);
+        
+                // Adjust to tensor indices (centered on grid_radius)
+                int adjusted_col = col + grid_radius;
+                int adjusted_row = row + grid_radius;
+        
+                return {adjusted_row, adjusted_col};
+            }
+        
+        } // namespace
+
+        // Constructor for a new game
+        Mali_BaState::Mali_BaState(std::shared_ptr<const Game> game)
+            : State(std::move(game)),
+              setup_phase_(true),
+              current_player_id_(kChancePlayerId),
+              current_phase_(Phase::kStart)
+        {
+            // Ensure game_ pointer is valid before using it
+            SPIEL_CHECK_TRUE(game_ != nullptr);
+            auto mali_ba_game = static_cast<const Mali_BaGame *>(game_.get());
+
+            // Update these lines:
+            // Instead of: valid_hexes_ = mali_ba_game->GetBoardConfig().valid_hexes;
+            valid_hexes_ = mali_ba_game->GetValidHexes(); // Or access directly: mali_ba_game->valid_hexes;
+
+            // --- Initialize the STATE'S RNG using the SEED from the GAME ---
+            std::mt19937::result_type seed = mali_ba_game->GetRNGSeed(); // Get the seed stored in the game
+            rng_.seed(seed);                                             // Seed the state's OWN rng_ member variable
+            std::cerr << "Mali_BaState Constructor: Seeding state RNG with " << seed << std::endl;
+
+            // Initialize Resource Vectors
+            int num_players = game_->NumPlayers();
+            common_goods_.resize(num_players); // Vector of empty maps
+            rare_goods_.resize(num_players);   // Vector of empty maps
+            // Initialize previous state vectors to match the starting state
+            previous_common_goods_ = common_goods_;
+            previous_rare_goods_ = rare_goods_;
+
+            InitializeBoard(); // Set up board structure, clear maps
+
+            // Copy the cities from the game configuration into this state instance
+            // Instead of: cities_ = mali_ba_game->GetBoardConfig().cities;
+            cities_ = mali_ba_game->GetCities(); // Or access directly: mali_ba_game->cities_;
+        }
+
+        void Mali_BaState::InitializeBoard()
+        {
+            player_token_locations_.clear();
+            hex_meeples_.clear();
+            trade_posts_locations_.clear();
+
+            // Initialize maps for all valid hexes
+            for (const auto &hex : valid_hexes_)
+            {
+                hex_meeples_[hex] = {};           // Empty vector of meeples
+                trade_posts_locations_[hex] = {}; // Empty vector of trading posts
+                // player_token_locations_ starts empty
+            }
+        }
+
+        Player Mali_BaState::CurrentPlayer() const
+        {
+            std::cerr << "DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=" << setup_phase_
+                      << ", is_terminal_=" << is_terminal_ << ", current_player_id_=" << current_player_id_ << std::endl;
+
+            if (is_terminal_)
+            {
+                return kTerminalPlayerId;
+            }
+
+            // If in setup phase, it's the chance node's turn
+            if (setup_phase_)
+            {
+                std::cerr << "DEBUG CurrentPlayer: Returning kChancePlayerId" << std::endl;
+                return kChancePlayerId;
+            }
+
+            std::cerr << "DEBUG CurrentPlayer: Returning current_player_id_ = " << current_player_id_ << std::endl;
+            return current_player_id_;
+        }
+
+        Phase Mali_BaState::CurrentPhase() const
+        {
+            return current_phase_;
+        }
+        // Definition
+        std::ostream &operator<<(std::ostream &os, const Phase &phase)
+        {
+            switch (phase)
+            {
+            case Phase::kEmpty:
+                os << "kPlaceToken";
+                break;
+            case Phase::kStart:
+                os << "kPlaceToken";
+                break;
+            case Phase::kPlaceToken:
+                os << "kPlaceToken";
+                break;
+            case Phase::kPlay:
+                os << "kPlay";
+                break;
+            case Phase::kEndRound:
+                os << "kPlaceToken";
+                break;
+            case Phase::kGameOver: // Example
+                os << "kGameOver";
+                break;
+            // Add cases for all your phase values
+            default:
+                // Optional: Handle unknown values
+                os << "UnknownPhase(" << static_cast<int>(phase) << ")";
+                break;
+            }
+            return os; // Return the stream to allow chaining
+        }
+
+        // Should make move type private and implement a function to get it.
+        // Meantime, need this for output
+        std::ostream &operator<<(std::ostream &os, const ActionType &at)
+        { // Changed parameter name to 'at'
+            switch (at)
+            { // Switch on the parameter 'at'
+            case ActionType::kEmpty:
+                os << "kEmpty";
+                break;
+            case ActionType::kPlaceToken:
+                os << "kPlaceToken";
+                break;
+            case ActionType::kMancala:
+                os << "kMancala";
+                break;
+            case ActionType::kPlaceTCenter:
+                os << "kPlaceTCenter";
+                break;
+            case ActionType::kPass:
+                os << "kPass";
+                break;
+            // Add cases for ALL your ActionType values if more exist
+            default:
+                // Use the correct parameter name 'at' here too
+                os << "UnknownActionType(" << static_cast<int>(at) << ")";
+                break;
+            }
+            return os;
+        }
+
+        bool Mali_BaState::IsChanceNode() const
+        {
+            std::cerr << "DEBUG IsChanceNode() called. setup_phase_ = " << setup_phase_ << std::endl;
+            return setup_phase_;
+        }
+
+        std::vector<std::pair<Action, double>> Mali_BaState::ChanceOutcomes() const
+        {
+            SPIEL_CHECK_TRUE(IsChanceNode());
+            // For the initial setup, there's only one abstract outcome: "perform setup"
+            // The actual distribution happens inside DoApplyAction.
+            // The probability of this single outcome is 1.0.
+            return {{kChanceSetupAction, 1.0}};
+        }
+
+        // LegalActions() definition (should call MaybeGenerateLegalActions)
+        std::vector<Action> Mali_BaState::LegalActions() const
+        {
+            MaybeGenerateLegalActions(); // Ensure cache is populated
+            // Handle case where generation failed or returned nullopt?
+            // SPIEL_CHECK_TRUE is good practice if you guarantee it's always populated
+            // If MaybeFinalReturns can make it nullopt after population, need care.
+            if (!cached_legal_actions_)
+            {
+                // This might happen if IsTerminal becomes true between
+                // MaybeGenerateLegalActions being called and now. Re-check.
+                if (IsTerminal())
+                    return {};
+                // Or if MaybeGenerateLegalActions failed somehow.
+                SpielFatalError("cached_legal_actions_ is nullopt unexpectedly.");
+                return {}; // Should be unreachable
+            }
+            return *cached_legal_actions_;
+        }
+
+        void Mali_BaState::MaybeGenerateLegalActions() const
+        {
+            // If cache is already populated, return.
+            if (cached_legal_actions_ && cached_legal_move_structs_)
+            {
+                return;
+            }
+            // Clear any potentially stale single cache entry
+            cached_legal_actions_ = absl::nullopt;
+            cached_legal_move_structs_ = absl::nullopt;
+
+            // Prepare lists to store generated actions and their corresponding moves
+            std::vector<Action> actions;
+            std::vector<Move> moves;
+
+            // Handle terminal and chance nodes first.
+            if (IsTerminal())
+            {
+                // No legal actions.
+            }
+            else if (IsChanceNode())
+            {
+                actions.push_back(kChanceSetupAction);
+                // Add a placeholder move or handle specially in DoApplyAction/ActionToMove?
+                // For now, ActionToMove handles kChanceSetupAction returning kPassMove.
+                // Let's add a placeholder to keep vectors aligned.
+                Move chance_move_placeholder;
+                chance_move_placeholder.type = ActionType::kEmpty; // Indicate it's not a real move
+                moves.push_back(chance_move_placeholder);
+            }
+            else
+            {
+                // --- Regular Player Turn ---
+                int current_mancala_index = 0; // Counter for assigning Mancala action IDs
+
+                switch (current_phase_)
+                {
+                case Phase::kPlaceToken:
+                {
+                    std::vector<Move> place_token_moves = GeneratePlaceTokenMoves();
+                    for (const auto &move : place_token_moves)
+                    {
+                        int hex_index = GetGame()->CoordToIndex(move.start_hex);
+                        if (hex_index >= 0)
+                        { // Basic validity check
+                            actions.push_back(kPlaceTokenActionBase + hex_index);
+                            moves.push_back(move);
+                        }
+                        else
+                        {
+                            std::cerr << "MaybeGenerateLegalActions WARNING: Invalid hex index " << hex_index
+                                      << " for hex " << move.start_hex.ToString() << std::endl;
+                        }
+                    }
+                    break;
+                }
+                case Phase::kPlay:
+                {
+                    // 1. Pass (Always legal in kPlay phase? Assume yes for now)
+                    // You might add specific conditions later if passing isn't always allowed.
+                    actions.push_back(kPassAction);
+                    moves.push_back(kPassMove); // Use the predefined const kPassMove
+
+                    // 2. Make Mancala moves
+                    std::vector<Move> mancala_moves = GenerateLegalMancalaMoves();
+                    for (const auto &move : mancala_moves)
+                    {
+                        // Assign sequential IDs starting from the base
+                        actions.push_back(kMancalaActionBase + current_mancala_index);
+                        moves.push_back(move);
+                        current_mancala_index++;
+                    }
+
+                    // 3. Upgrade trading posts to centers
+                    std::vector<Move> upgrade_moves = GenerateTradePostUpgradeMoves();
+                    for (const auto &move : upgrade_moves)
+                    {
+                        int hex_index = GetGame()->CoordToIndex(move.start_hex);
+                        // Do some debugging
+                        Action generated_action = kPlaceTCenterActionBase + hex_index; // Example
+                        int num_distinct = GetGame()->NumDistinctActions();
+                        std::cerr << "DEBUG LegalActions: Adding action " << generated_action
+                                  << " (NumDistinct=" << num_distinct << ")" << std::endl;
+                        // End debug
+                        if (hex_index >= 0)
+                        {
+                            actions.push_back(kPlaceTCenterActionBase + hex_index);
+                            moves.push_back(move);
+                        }
+                        else
+                        {
+                            std::cerr << "MaybeGenerateLegalActions WARNING: Invalid hex index " << hex_index
+                                      << " for upgrade hex " << move.start_hex.ToString() << std::endl;
+                        }
+                    }
+                    break;
+                }
+                default:
+                    // Default behavior for other phases (e.g., EndRound, GameOver if not terminal)
+                    // Usually only Pass is allowed, or perhaps no actions.
+                    // Add Pass if appropriate for these phases based on your rules.
+                    actions.push_back(kPassAction);
+                    moves.push_back(kPassMove);
+                    break;
+                }
+                // Ensure no duplicate ACTIONS generated if logic allows (e.g., upgrade + mancala start)
+                // The Move structs might be distinct, but if HexToIndex collides between bases, need care.
+                // Current base offsets (100, 2000, 3000) avoid this.
+            }
+
+            // Store the generated lists in the cache.
+            // IMPORTANT: Do NOT sort 'actions' here if ActionToMove relies on positional index.
+            // The order in 'actions' must match the order in 'moves'.
+            cached_legal_actions_ = actions;
+            cached_legal_move_structs_ = moves;
+
+            std::cerr << "MaybeGenerateLegalActions: Generated " << actions.size()
+                      << " actions for phase " << current_phase_ << " player " << current_player_id_ << std::endl;
+        }
+
+        // Updated DoApplyAction to handle different move types
+        void Mali_BaState::DoApplyAction(Action action)
+        {
+            // 1. Store previous state for UndoAction
+            StorePreviousState();
+
+            std::cerr << "DEBUG DoApplyAction: START. Action=" << action
+                      << ", Current setup_phase_=" << setup_phase_
+                      << ", Current player=" << current_player_id_ << std::endl;
+
+            // DEBUG-Check if action is legal IN THE CURRENT STATE before proceeding
+            // Get the action type based on the action value
+            ActionType action_type = GetActionType(action);
+            // Validate action type matches current phase
+            if (current_phase_ == Phase::kPlaceToken && action_type != ActionType::kPlaceToken) {
+                SpielFatalError(absl::StrCat("Invalid action type ", static_cast<int>(action_type), 
+                                            " for placement phase. Action: ", action));
+            } else if (current_phase_ == Phase::kPlay && action_type == ActionType::kPlaceToken) {
+                SpielFatalError(absl::StrCat("Cannot perform placement action ", action, 
+                                            " in play phase."));
+            }            std::vector<Action> current_legal_actions = LegalActions(); // Regenerates if cache was cleared
+            // Validate legality
+            if (std::find(current_legal_actions.begin(), current_legal_actions.end(), action) == current_legal_actions.end()) {
+                std::cerr << "DoApplyAction ERROR: Received action " << action
+                        << " which is NOT legal in the current state (Phase=" << current_phase_
+                        << ", Player=" << current_player_id_ << "). Ignoring action." << std::endl;
+                // Maybe throw an error here? Or just return? Returning might hide issues.
+                // For testing, throwing might be better if this shouldn't happen.
+                SpielFatalError(absl::StrCat("Attempted to apply illegal action ", action));
+                // return; // Alternatively, just ignore it, but this hides problems.
+            }
+
+            // 2. Clear caches (now clears both)
+            ClearCaches();        // Use the helper function
+            is_terminal_ = false; // Reset terminal status optimistically
+
+            // 3. Handle based on current player (Chance or Regular)
+            if (setup_phase_)
+            { // Equivalent to IsChanceNode() check here
+                SPIEL_CHECK_EQ(action, kChanceSetupAction);
+                ApplyChanceSetup();
+                setup_phase_ = false;
+                current_phase_ = Phase::kPlaceToken; // Move to token placement
+                current_player_id_ = 0;
+                current_player_color_ = GetPlayerColor(current_player_id_);
+                std::cerr << "DoApplyAction: Chance setup complete. First player: "
+                          << PlayerColorToString(current_player_color_) << " (ID " << current_player_id_ << ")" << std::endl;
+            }
+            else
+            {
+                // --- Regular Player Move ---
+                PlayerColor moving_player_color = GetCurrentPlayerColor(); // Get color before potential change
+
+                // Get the full Move struct using the new ActionToMove lookup
+                Move move = ActionToMove(action);  // This handles the lookup
+                move.player = moving_player_color; // Ensure player is set correctly in the move struct
+
+                std::cerr << "DoApplyAction: Player " << PlayerColorToString(moving_player_color)
+                          << " applying move type " << move.type
+                          << " (Action: " << action << ")" << std::endl;
+
+                // Apply the move based on its type
+                switch (move.type)
+                {
+                case ActionType::kPass:
+                    std::cerr << "DoApplyAction: Player PASSED." << std::endl;
+                    // No state change needed for pass itself.
+                    break; // Added break statement
+                case ActionType::kPlaceToken:
+                    ApplyPlaceTokenMove(move);
+                    break;
+                case ActionType::kMancala:
+                    ApplyMancalaMove(move);
+                    break;
+                case ActionType::kPlaceTCenter: // Note: Enum is ActionType, not ActionType
+                    ApplyTradingCenterUpgrade(move);
+                    break;
+                case ActionType::kEmpty: // Handle placeholder from chance node if necessary
+                    std::cerr << "DoApplyAction WARNING: Applying kEmpty action type (likely placeholder)." << std::endl;
+                    break;
+                default:
+                    SpielFatalError(absl::StrCat("DoApplyAction: Unknown or unexpected move type ", static_cast<int>(move.type), " for action ", action));
+                    break;
+                }
+
+                // Store the detailed move in history (pass moves included)
+                moves_history_.push_back(move);
+
+                // Switch to next player (unless move grants extra turn - add that logic here if needed)
+                // Placeholder for extra turn logic:
+                bool extra_turn = false;
+                // if (move.type == ActionType::kMancalaMove && DidMancalaEndInStore(move)) {
+                //     extra_turn = true;
+                // }
+
+                if (!extra_turn)
+                {
+                    current_player_color_ = GetNextPlayerColor(moving_player_color);
+                    current_player_id_ = GetPlayerId(current_player_color_);
+                    std::cerr << "DoApplyAction: Next player: "
+                              << PlayerColorToString(current_player_color_) << " (ID " << current_player_id_ << ")" << std::endl;
+                }
+                else
+                {
+                    std::cerr << "DoApplyAction: Player " << PlayerColorToString(moving_player_color)
+                              << " gets an extra turn." << std::endl;
+                }
+
+                // Check end of round conditions? If needed.
+            }
+
+            // Check for game ending conditions after the move
+            RefreshTerminalStatus(); // Updates is_terminal_ flag
+        }
+
+        // Helper to generate place token actions during setup phase
+        // std::vector<Action> Mali_BaState::GeneratePlaceTokenActions() const {
+        //     std::vector<Action> actions;
+
+        //     // In place token phase, player can place their token on any empty hex
+        //     // except city hexes (based on your rules)
+        //     for (const auto& hex : valid_hexes_) {
+        //         // Skip if hex already has any player token
+        //         if (player_token_locations_.find(hex) != player_token_locations_.end()) {
+        //             continue;
+        //         }
+
+        //         // Skip if hex is a city location
+        //         bool is_city = false;
+        //         for (const auto& city : cities_) {
+        //             if (city.location == hex) {
+        //                 is_city = true;
+        //                 break;
+        //             }
+        //         }
+        //         if (is_city) {
+        //             continue;
+        //         }
+
+        //         // Create a place token move
+        //         Move place_move;
+        //         place_move.player = current_player_color_;
+        //         place_move.start_hex = hex;
+        //         place_move.type = ActionType::kPlaceToken;
+
+        //         // Convert to action
+        //         Action action = MoveToAction(place_move, grid_radius_);
+        //         if (action != kInvalidAction) {
+        //             actions.push_back(action);
+        //         }
+        //     }
+
+        //     return actions;
+        // }
+
+        // Helper to add Mancala move actions to the actions vector
+        // void Mali_BaState::AppendMancalaMoveActions(std::vector<Action>& actions) const {
+        //     // Generate all legal Mancala moves
+        //     std::vector<Move> mancala_moves = GenerateLegalMancalaMoves();
+
+        //     // Convert moves to actions
+        //     for (const Move& move : mancala_moves) {
+        //         Action action = MoveToAction(move, grid_radius_);
+        //         if (action != kInvalidAction) {
+        //             actions.push_back(action);
+        //         }
+        //     }
+        // }
+
+        // Helper to add trading post upgrade actions to the actions vector
+        // void Mali_BaState::AppendTradePostUpgradeActions(std::vector<Action>& actions) const {
+        //     // Check if player has enough resources for upgrades
+        //     // Assuming 3 common goods or 1 rare good needed for upgrade (from rules)
+        //     bool has_upgrade_resources = false;
+
+        //     // Check for enough common goods
+        //     int total_common = 0;
+        //     const auto& common_goods = GetPlayerCommonGoods(current_player_id_);
+        //     for (const auto& [name, count] : common_goods) {
+        //         total_common += count;
+        //     }
+
+        //     // Check for any rare goods
+        //     int total_rare = 0;
+        //     const auto& rare_goods = GetPlayerRareGoods(current_player_id_);
+        //     for (const auto& [name, count] : rare_goods) {
+        //         total_rare += count;
+        //     }
+
+        //     // If not enough resources, can't upgrade
+        //     if (total_common < 3 && total_rare < 1) {
+        //         return;
+        //     }
+
+        //     // Player has resources, find trading posts they can upgrade
+        //     for (const auto& [hex, posts] : trade_posts_locations_) {
+        //         for (const auto& post : posts) {
+        //             // Check if this is the current player's post and it's not already a center
+        //             if (post.owner == current_player_color_ && post.type == TradePostType::kPost) {
+        //                 // Create an upgrade move
+        //                 Move upgrade_move;
+        //                 upgrade_move.player = current_player_color_;
+        //                 upgrade_move.start_hex = hex;
+        //                 upgrade_move.type = ActionType::kPlaceTCenter;
+
+        //                 // Convert to action
+        //                 Action action = MoveToAction(upgrade_move, grid_radius_);
+        //                 if (action != kInvalidAction) {
+        //                     actions.push_back(action);
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+
+        std::string Mali_BaState::ActionToString(Player player, Action action) const
+        {
+            // Use the new lookup mechanism
+            Move move = ActionToMove(action);
+
+            // Format based on move type
+            switch (move.type)
+            {
+            case ActionType::kPass:
+                return "Pass";
+            case ActionType::kPlaceToken:
+                return absl::StrCat("PlaceToken@", move.start_hex.ToString());
+            case ActionType::kMancala:
+                // Use the Move's ToString method if it's detailed enough
+                return move.ToString(); // Assumes Move::ToString() shows path/post info
+            case ActionType::kPlaceTCenter:
+                return absl::StrCat("Upgrade@", move.start_hex.ToString());
+            case ActionType::kEmpty: // Placeholder
+                if (action == kChanceSetupAction)
+                    return "ChanceSetup";
+                return absl::StrCat("UnknownAction(", action, ")");
+            default:
+                return absl::StrCat("UnknownAction(", action, ")");
+            }
+        }
+
+        bool Mali_BaState::IsTerminal() const
+        {
+            // Use flag to prevent redundant checks
+            if (is_terminal_)
+                return true;
+
+            // TODO: Implement actual terminal conditions based on rules
+            // Check win conditions (routes, resources)
+            // Check max game length
+            // Check stalemate (no legal moves other than pass?)
+
+            // Call MaybeFinalReturns to check win/draw conditions
+            if (MaybeFinalReturns().has_value())
+            {
+                is_terminal_ = true; // Use mutable member
+                return true;
+            }
+
+            if (history_.size() >= MaxGameLength())
+            {
+                std::cerr << "IsTerminal: Max game length reached." << std::endl;
+                is_terminal_ = true; // Use mutable member
+                return true;
+            }
+
+            is_terminal_ = false; // Not terminal yet
+            return false;
+        }
+
+        absl::optional<std::vector<double>> Mali_BaState::MaybeFinalReturns() const
+        {
+            // TODO: Implement scoring and win condition checks
+            // Check for 4 routes, 4 rare goods, Timbuktu connection etc.
+            // Calculate scores based on routes, resources etc.
+
+            // Placeholder: No win conditions implemented yet
+            return absl::nullopt;
+        }
+
+        std::vector<double> Mali_BaState::Returns() const
+        {
+            // Make sure terminal status is correct
+            if (!const_cast<Mali_BaState *>(this)->IsTerminal())
+            {
+                return std::vector<double>(NumPlayers(), 0.0);
+            }
+
+            auto maybe_returns = MaybeFinalReturns();
+            if (maybe_returns)
+            {
+                return *maybe_returns; // Return calculated scores
+            }
+            else if (history_.size() >= MaxGameLength())
+            {
+                // Draw if max game length reached without explicit win
+                return std::vector<double>(NumPlayers(), DrawUtility());
+            }
+            else
+            {
+                // Stalemate? If IsTerminal is true but no other condition met.
+                // Default to draw for now.
+                std::cerr << "Returns() called on terminal state with no defined outcome (stalemate?). Defaulting to draw." << std::endl;
+                return std::vector<double>(NumPlayers(), DrawUtility());
+            }
+        }
+
+        std::string Mali_BaState::InformationStateString(Player player) const
+        {
+            return ObservationString(player);
+        }
+
+        std::string Mali_BaState::ObservationString(Player player) const
+        {
+            return ToString(); // Fine if ToString is updated
+        }
+
+        // Add this function definition to mali_ba_state_core.cc
+
+        void Mali_BaState::ObservationTensor(Player player, absl::Span<float> values) const
+        {
+            SPIEL_CHECK_GE(player, 0);
+            SPIEL_CHECK_LT(player, game_->NumPlayers());
+
+            // 1. ---- Get Game and Shape Info ----
+            const Mali_BaGame *mali_ba_game = GetGame(); // Use the helper method
+            SPIEL_CHECK_TRUE(mali_ba_game != nullptr);
+
+            const std::vector<int> &shape = game_->ObservationTensorShape();
+            SPIEL_CHECK_EQ(shape.size(), 3); // Should be [planes, height, width]
+            int num_planes = shape[0];
+            int height = shape[1];
+            int width = shape[2];
+            int HxW = height * width; // Calculate once
+
+            // Verify the provided span has the correct size
+            SPIEL_CHECK_EQ(values.size(), num_planes * HxW);
+
+            // 2. ---- Initialize Tensor ----
+            std::fill(values.begin(), values.end(), 0.0f);
+
+            // 3. ---- Define Plane Indices (Matching Observer) ----
+            // It's crucial these match the definitions in mali_ba_observer.cc
+            // and the shape defined in mali_ba_common.h's ObservationTensorShape()
+            int plane_idx = 0;
+            const int player_token_base = plane_idx; // Planes 0-4 (kMaxPlayersObs)
+            plane_idx += kMaxPlayersObs;
+            const int meeple_color_base = plane_idx; // Planes 5-14 (kNumMeepleColorsObs)
+            plane_idx += kNumMeepleColorsObs;
+            // Important: Post/Center planes are indexed by PLAYER *ID*, not PlayerColor enum value directly
+            const int post_base = plane_idx;        // Planes 15-19 (kMaxPlayersObs)
+            plane_idx += kMaxPlayersObs;
+            const int center_base = plane_idx;      // Planes 20-24 (kMaxPlayersObs)
+            plane_idx += kMaxPlayersObs;
+            const int city_plane = plane_idx++;     // Plane 25
+            const int current_player_plane = plane_idx++; // Plane 26 (Indicates if 'player' is current)
+            // Goods planes are also indexed by PLAYER *ID*
+            const int common_goods_total_base = plane_idx; // Planes 27-(27+kMaxPl-1)
+            plane_idx += kMaxPlayersObs;
+            const int rare_goods_total_base = plane_idx; // Planes (27+kMaxPl)-(27+2*kMaxPl-1)
+            plane_idx += kMaxPlayersObs;
+
+            // Final check: Did we use the expected number of planes?
+            SPIEL_CHECK_EQ(plane_idx, num_planes);
+
+            // 4. ---- Fill Hex-Specific Planes ----
+            int grid_radius = mali_ba_game->GetGridRadius(); // Use game's radius
+
+            for (const auto &hex : mali_ba_game->GetValidHexes())
+            {
+                // Convert hex to tensor coordinates
+                auto [row, col] = HexToTensorCoordinates(hex, grid_radius);
+
+                // Skip if hex is outside the tensor bounds (shouldn't happen with correct shape/radius)
+                if (row < 0 || row >= height || col < 0 || col >= width) {
+                    // Log warning if this happens, might indicate shape/coord mismatch
+                    std::cerr << "ObservationTensor WARNING: Hex " << hex.ToString()
+                            << " maps to invalid tensor coordinates (" << row << "," << col << ")"
+                            << " for height=" << height << ", width=" << width << std::endl;
+                    continue;
+                }
+
+                int offset_base = row * width + col; // Base index for this (row, col)
+
+                // --- 4a. Player Tokens ---
+                PlayerColor token_owner_color = GetPlayerTokenAt(hex);
+                if (token_owner_color != PlayerColor::kEmpty)
+                {
+                    // Use the PlayerColor enum value directly for token plane index
+                    int token_plane = player_token_base + static_cast<int>(token_owner_color);
+                    // Bounds check against the defined planes for tokens
+                    if (token_plane >= player_token_base && token_plane < meeple_color_base)
+                    {
+                        values[token_plane * HxW + offset_base] = 1.0f;
+                    } else {
+                        std::cerr << "ObservationTensor WARNING: Invalid plane index " << token_plane
+                                << " for player token color " << static_cast<int>(token_owner_color)
+                                << " at hex " << hex.ToString() << std::endl;
+                    }
+                }
+
+                // --- 4b. Meeples (Counts per color) ---
+                const auto &meeples = GetMeeplesAt(hex);
+                if (!meeples.empty())
+                {
+                    std::map<MeepleColor, int> counts;
+                    for (MeepleColor mc : meeples)
+                    {
+                        counts[mc]++;
+                    }
+                    for (const auto &[mc, count] : counts)
+                    {
+                        if (mc != MeepleColor::kEmpty && count > 0)
+                        {
+                            // Use MeepleColor enum value directly for meeple plane index
+                            int meeple_plane = meeple_color_base + static_cast<int>(mc);
+                            // Bounds check against the defined planes for meeples
+                            if (meeple_plane >= meeple_color_base && meeple_plane < post_base)
+                            {
+                                values[meeple_plane * HxW + offset_base] = static_cast<float>(count);
+                            } else {
+                                std::cerr << "ObservationTensor WARNING: Invalid plane index " << meeple_plane
+                                        << " for meeple color " << static_cast<int>(mc)
+                                        << " at hex " << hex.ToString() << std::endl;
+                            }
+                        }
+                    }
+                }
+
+                // --- 4c. Trade Posts & Centers ---
+                const auto &posts_at_hex = GetTradePostsAt(hex);
+                for (const auto &post : posts_at_hex)
+                {
+                    if (post.type != TradePostType::kNone && post.owner != PlayerColor::kEmpty)
+                    {
+                        // Get the PLAYER *ID* (0, 1, 2, ...) for the owner color
+                        Player owner_id = GetPlayerId(post.owner);
+
+                        // Only record posts for valid, active players
+                        if (owner_id != kInvalidPlayer && owner_id < kMaxPlayersObs) // Check against tensor limit
+                        {
+                            if (post.type == TradePostType::kPost)
+                            {
+                                int post_plane = post_base + owner_id;
+                                // Bounds check (redundant given owner_id check, but safe)
+                                if (post_plane >= post_base && post_plane < center_base) {
+                                    values[post_plane * HxW + offset_base] = 1.0f;
+                                } else { /* Should not happen */ }
+                            }
+                            else // post.type == TradePostType::kCenter
+                            {
+                                int center_plane = center_base + owner_id;
+                                // Bounds check (redundant given owner_id check, but safe)
+                                if (center_plane >= center_base && center_plane < city_plane) {
+                                    values[center_plane * HxW + offset_base] = 1.0f;
+                                } else { /* Should not happen */ }
+                            }
+                        } else if (owner_id >= kMaxPlayersObs) {
+                            std::cerr << "ObservationTensor WARNING: Player ID " << owner_id
+                                    << " exceeds kMaxPlayersObs (" << kMaxPlayersObs
+                                    << ") for post/center at hex " << hex.ToString() << std::endl;
+                        }
+                    }
+                }
+
+                // --- 4d. Cities ---
+                if (mali_ba_game->GetCityAt(hex) != nullptr)
+                {
+                    // Bounds check (should always pass if plane indices are correct)
+                    if (city_plane >= center_base && city_plane < current_player_plane) {
+                        values[city_plane * HxW + offset_base] = 1.0f;
+                    } else { /* Should not happen */ }
+                }
+
+            } // End loop through valid_hexes_
+
+            // 5. ---- Fill Uniform Planes ----
+
+            // --- 5a. Current Player Plane ---
+            // This plane indicates if the OBSERVER (`player`) is the one whose turn it is.
+            float current_player_value = 0.0f;
+            if (!IsChanceNode() && CurrentPlayer() == player) {
+                current_player_value = 1.0f;
+            }
+            // Bounds check
+            if (current_player_plane >= city_plane && current_player_plane < common_goods_total_base) {
+                int plane_offset = current_player_plane * HxW;
+                for (int i = 0; i < HxW; ++i)
+                {
+                    values[plane_offset + i] = current_player_value;
+                }
+            } else { /* Should not happen */ }
+
+
+            // --- 5b. Resource Total Planes ---
+            // Iterate through actual players in the game, up to kMaxPlayersObs limit
+            int num_active_players = game_->NumPlayers();
+            for (Player p = 0; p < num_active_players; ++p)
+            {
+                // Skip if player ID exceeds tensor capacity
+                if (p >= kMaxPlayersObs) {
+                    std::cerr << "ObservationTensor WARNING: Player ID " << p
+                            << " exceeds kMaxPlayersObs (" << kMaxPlayersObs
+                            << ") for resource planes." << std::endl;
+                    continue;
+                }
+
+                // Calculate totals for player p
+                int common_total = 0;
+                const auto &common_map = GetPlayerCommonGoods(p);
+                for (const auto &[name, count] : common_map) common_total += count;
+
+                int rare_total = 0;
+                const auto &rare_map = GetPlayerRareGoods(p);
+                for (const auto &[name, count] : rare_map) rare_total += count;
+
+                // Fill Common Goods Total Plane for player p
+                int common_plane = common_goods_total_base + p;
+                // Bounds check
+                if (common_plane >= common_goods_total_base && common_plane < rare_goods_total_base) {
+                    int plane_offset = common_plane * HxW;
+                    for (int i = 0; i < HxW; ++i) {
+                        values[plane_offset + i] = static_cast<float>(common_total);
+                    }
+                } else { /* Should not happen */ }
+
+
+                // Fill Rare Goods Total Plane for player p
+                int rare_plane = rare_goods_total_base + p;
+                // Bounds check
+                if (rare_plane >= rare_goods_total_base && rare_plane < num_planes) {
+                    int plane_offset = rare_plane * HxW;
+                    for (int i = 0; i < HxW; ++i) {
+                        values[plane_offset + i] = static_cast<float>(rare_total);
+                    }
+                } else { /* Should not happen */ }
+
+            } // End loop through players for resource planes
+
+        } // End Mali_BaState::ObservationTensor
+
+        std::unique_ptr<State> Mali_BaState::Clone() const
+        {
+            return std::make_unique<Mali_BaState>(*this);
+        }
+
+        void Mali_BaState::StorePreviousState()
+        {
+            previous_player_id_ = current_player_id_;
+            previous_player_color_ = current_player_color_;
+            previous_phase_ = current_phase_;
+            previous_setup_phase_ = setup_phase_;
+            previous_player_token_locations_ = player_token_locations_;
+            previous_hex_meeples_ = hex_meeples_;
+            previous_trade_posts_locations_ = trade_posts_locations_;
+            previous_common_goods_ = common_goods_;
+            previous_rare_goods_ = rare_goods_;
+        }
+
+        void Mali_BaState::UndoAction(Player player, Action action)
+        {
+            // Basic restoration from previous state members (remains the same)
+            current_player_id_ = previous_player_id_;
+            current_player_color_ = previous_player_color_;
+            current_phase_ = previous_phase_;
+            setup_phase_ = previous_setup_phase_;
+            player_token_locations_ = previous_player_token_locations_;
+            hex_meeples_ = previous_hex_meeples_;
+            trade_posts_locations_ = previous_trade_posts_locations_;
+            common_goods_ = previous_common_goods_;
+            rare_goods_ = previous_rare_goods_;
+            // TODO: Need to restore current_phase_ as well! Add `previous_phase_` storage.
+
+            // Pop core game history if it reflects the action being undone
+            if (!history_.empty())
+            {
+                // Ideally, check if the last move in history corresponds to 'action'
+                // For now, assume the last move IS the one being undone.
+                history_.pop_back();
+            }
+            // Pop custom history if it reflects the action being undone
+            if (!moves_history_.empty())
+            {
+                // Ideally, check if the last move in history corresponds to 'action'
+                // For now, assume the last move IS the one being undone.
+                moves_history_.pop_back();
+            }
+            ClearCaches(); // Clear cache after restoring state
+            is_terminal_ = false; // Assume not terminal after undo
+        }
+
+        // void Mali_BaState::UndoAction(Player player, Action action) {
+        //     // Basic restoration from previous state members (remains the same)
+        //     current_player_id_ = previous_player_id_;
+        //     current_player_color_ = previous_player_color_;
+        //     setup_phase_ = previous_setup_phase_;
+        //     player_token_locations_ = previous_player_token_locations_;
+        //     hex_meeples_ = previous_hex_meeples_;
+        //     trade_posts_locations_ = previous_trade_posts_locations_;
+        //     common_goods_ = previous_common_goods_;
+        //     rare_goods_ = previous_rare_goods_;
+        //     // TODO: Need to restore current_phase_ as well! Add `previous_phase_` storage.
+
+        //     // Pop custom history if it reflects the action being undone
+        //     if (!moves_history_.empty()) {
+        //         // Ideally, check if the last move in history corresponds to 'action'
+        //         // For now, assume the last move IS the one being undone.
+        //         moves_history_.pop_back();
+        //     }
+
+        //     // Pop base history
+        //     history_.pop_back();
+
+        //     // --- CRITICAL: Clear caches after undo ---
+        //     ClearCaches(); // Use the helper to clear both caches
+        //     is_terminal_ = false; // Assume not terminal after undo, will be rechecked
+        // }
+
+        void Mali_BaState::ClearCaches()
+        {
+            cached_legal_actions_ = absl::nullopt;
+            cached_legal_move_structs_ = absl::nullopt; // Make sure this line is included
+        }
+
+        void Mali_BaState::RefreshTerminalStatus()
+        {
+            is_terminal_ = IsTerminal(); // Call the check function
+        }
+
+        Action Mali_BaState::ParseMoveToAction(const std::string &move_str) const
+        {
+            std::cerr << "ParseMoveToAction WARNING: Not implemented." << std::endl;
+            if (move_str == "Pass")
+                return kPassAction;
+            return kInvalidAction; // Placeholder
+        }
+        void Mali_BaState::SetCurrentPhase(Phase phase) {
+            current_phase_ = phase;
+        }
+    
+        // Getters (simply return the member)
+        const std::vector<std::map<std::string, int>>& Mali_BaState::GetCommonGoods() const {
+            return common_goods_;
+        }
+    
+        const std::vector<std::map<std::string, int>>& Mali_BaState::GetRareGoods() const {
+            return rare_goods_;
+        }
+        
+        // Setters (copy the provided data into the member)
+        void Mali_BaState::SetCommonGoods(const std::vector<std::map<std::string, int>>& goods) {
+            // Check size consistency? Optional, but good practice.
+            // SPIEL_CHECK_EQ(goods.size(), game_->NumPlayers());
+            common_goods_ = goods;
+        }
+    
+        void Mali_BaState::SetRareGoods(const std::vector<std::map<std::string, int>>& goods) {
+            // SPIEL_CHECK_EQ(goods.size(), game_->NumPlayers());
+            rare_goods_ = goods;
+        }
+    
+        const Mali_BaGame *Mali_BaState::GetGame() const
+        {
+            // Helper to safely get the derived game pointer
+            return static_cast<const Mali_BaGame *>(game_.get());
+        }
+
+    } // namespace mali_ba
+} // namespace open_spiel

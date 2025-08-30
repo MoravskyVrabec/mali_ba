@@ -1,0 +1,147 @@
+=================================================================
+Python
+=================================================================
+cd /media/robp/UD/Projects/open_spiel/open_spiel/python/games
+cd /home/robp/Projects/open_spiel/open_spiel/python/games
+python mali_ba/main.py --mode gui_replay --replay_file /tmp/mali_ba.states.20250708_150403.log
+
+python mali_ba/main.py --mode cpp_sync_gui --config_file /home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini
+
+** Python debug set args in launch.json (click debug, then gear)
+
+=================================================================
+Shell
+=================================================================
+grep "FINISH" *pid*log | sort -t ':' -k2,4
+
+grep -r "GameType(open_spiel::GameType const" --include=\*.{cc,h} .
+../open_spiel/python/pybind11/pyspiel.cc
+
+conda activate open_spiel
+
+cd /media/robp/UD/Projects/open_spiel/open_spiel/games/mali_ba
+
+export PYTHONPATH="/home/robp/Projects/open_spiel/build/python:/home/robp/Projects/open_spiel/open_spiel/python/games:${PYTHONPATH}" # Adjust if pyspiel.so is elsewhere
+export PYTHONPATH="/home/robp/Projects/open_spiel/open_spiel/python/games:${PYTHONPATH}" # For mali_ba package
+export PYTHONPATH="/media/robp/UD/Projects/open_spiel/build/python:${PYTHONPATH}" # Adjust if pyspiel.so is elsewhere
+export PYTHONPATH="/media/robp/UD/Projects/open_spiel/open_spiel/python/games:${PYTHONPATH}" # For mali_ba package
+
+python mali_ba/main.py --mode gui_replay --game_file mali_ba.states.20250711_170032.log
+
+python mali_ba/main.py --mode cpp_sync_gui  --players 3 --config_file /home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini
+
+# TRAINING: 
+# ---------------------------
+# In your open_spiel/build/ directory
+source ../open_spiel/python_games.sh
+# Or manually (adjust paths as needed)
+export PYTHONPATH="/path/to/open_spiel/build/python:/path/to/open_spiel:${PYTHONPATH}"
+# ---------------------------
+# Example command to start a new training session
+#    --config_file: Crucial. This points to your mali_ba.ini file, which defines the game rules, board layout, and city configuration. The AI will learn to play according to these specific rules.
+#    --num_episodes: This determines how many games the AI will play to train itself. For initial testing, 1,000 might be fine. For serious training, you'll need tens or hundreds of thousands of episodes.
+#    --save_model_path: Specify a filename (e.g., mali_ba_agent_v1.h5). The script will save the trained model weights here.
+#    --load_model_path: If you want to resume a previous training session, you provide the path to a saved model file.
+# ---------------------------
+python open_spiel/python/games/mali_ba/train_mali_ba.py \
+    --config_file open_spiel/games/mali_ba/mali_ba.ini \
+    --num_episodes 200 \
+    --save_model_path open_spiel/games/mali_ba/models/mali_ba_agent_v1.h5 \
+    --save_every 100
+    
+python open_spiel/python/games/mali_ba/train_mali_ba.py --bootstrap 50 --num_episodes 1000 --max_simulations 200 --uct_c 1.4 --learning_rate 0.0003 --batch_size 64 --replay_buffer_size 50000 --max_diversity
+
+python open_spiel/python/games/mali_ba/train_mali_ba.py --bootstrap 10 --num_episodes 1000 --max_simulations 16 --uct_c 1.4 --learning_rate 0.0003 --batch_size 64 --replay_buffer_size 50000 --max_diversity
+
+python open_spiel/python/games/mali_ba/train_mali_ba.py  --uct_c 1.4 --batch_size 128 --replay_buffer_size 50000 --config_file "/home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini"       --save_model_path "/home/robp/Projects/open_spiel/mali_ba_agent_v03.weights.h5" --load_model_path "/home/robp/Projects/open_spiel/mali_ba_agent_v02.weights.h5" --save_every 5 --learning_rate 0.0002    --max_simulations 100 --num_actors 20 --bootstrap_episodes 200 --num_episodes 400 
+
+python open_spiel/python/games/mali_ba/train_mali_ba.py  --uct_c 1.0  --batch_size 64 --replay_buffer_size 5000 --config_file "/home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini"  --save_model_path "/home/robp/Projects/open_spiel/mali_ba_agent_v01.weights.h5" --load_model_path "/home/robp/Projects/open_spiel/mali_ba_agent_vxx.weights.h5" --save_every 4 --learning_rate 0.001  --max_simulations 50 --num_actors 5 --games_per_actor 2 --bootstrap_episodes 24  --num_episodes 48
+
+
+# ---------------------------
+
+
+=================================================================
+Make
+=================================================================
+export CXX=clang++ # Or your preferred C++ compiler from Conda
+export CC=clang   # Or your preferred C compiler from Conda
+export CMAKE_CXX_COMPILER=clang++   # Or your preferred C compiler from Conda
+export CMAKE_C_COMPILER=clang # Or your preferred C++ compiler from Conda
+
+CXX=clang++ cmake -DCMAKE_BUILD_TYPE=Debug   -DPython3_EXECUTABLE=$(which python3)   -DPython3_INCLUDE_DIR=$(python3-config --includes | sed 's/-I//g' | tr ' ' '\n' | grep 'include' | head -n 1)   -DPython3_LIBRARY=$(python3-config --ldflags | grep -o '/.*libpython3.*so')   -DCMAKE_CXX_COMPILER=${CXX} -DCMAKE_CXX_FLAGS="-fsanitize=address -g -O0" -DBUILD_PYTHON=ON -DCMAKE_C_FLAGS="-fsanitize=address -g -O0"  ../open_spiel
+
+make -j$(nproc)
+make VERBOSE=1 pyspiel -j$(nproc)
+
+CXX=clang++ cmake -DCMAKE_BUILD_TYPE=Debug   -DPython3_EXECUTABLE=$(which python3)   -DPython3_INCLUDE_DIR=$(python3-config --includes | sed 's/-I//g' | tr ' ' '\n' | grep 'include' | head -n 1)   -DPython3_LIBRARY=$(python3-config --ldflags | grep -o '/.*libpython3.*so') -DPython_EXECUTABLE=$CONDA_PREFIX/bin/python  -DCMAKE_CXX_COMPILER=${CXX}  -DBUILD_PYTHON=ON -DCMAKE_C_FLAGS="-fsanitize=address -g -O0" -DOpenSpiel_USE_SANITIZER="Address" ../open_spiel
+
+CXX=clang++ cmake -DCMAKE_BUILD_TYPE=Debug  -DPython_EXECUTABLE=$CONDA_PREFIX/bin/python -DOPEN_SPIEL_BUILD_PYTHON=ON -DCMAKE_CXX_FLAGS="-fsanitize=address -g -O0" -DCMAKE_C_FLAGS="-fsanitize=address -g -O0" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address" -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address" -DCMAKE_CXX_COMPILER=${CXX} ../open_spiel
+
+NO ASAN
+CXX=clang++ cmake -DCMAKE_BUILD_TYPE=Debug   -DPython3_EXECUTABLE=$(which python3)   -DPython3_INCLUDE_DIR=$(python3-config --includes | sed 's/-I//g' | tr ' ' '\n' | grep 'include' | head -n 1)   -DPython3_LIBRARY=$(python3-config --ldflags | grep -o '/.*libpython3.*so') -DPython_EXECUTABLE=$CONDA_PREFIX/bin/python  -DCMAKE_CXX_COMPILER=${CXX}  -DBUILD_PYTHON=ON   ../open_spiel
+
+DEBUG NO ASAN
+CXX=clang++ cmake -DCMAKE_BUILD_TYPE=Debug   -DPython3_EXECUTABLE=$(which python3)   -DPython3_INCLUDE_DIR=$(python3-config --includes | sed 's/-I//g' | tr ' ' '\n' | grep 'include' | head -n 1)   -DPython3_LIBRARY=$(python3-config --ldflags | grep -o '/.*libpython3.*so') -DPython_EXECUTABLE=$CONDA_PREFIX/bin/python  -DCMAKE_CXX_COMPILER=${CXX}  -DBUILD_PYTHON=ON -DCMAKE_C_FLAGS="-g -O0" -DCMAKE_CXX_FLAGS="-g -O0"   ../open_spiel
+
+
+=================================================================
+C++ test
+=================================================================
+games/mali_ba_test
+games/mali_ba_test --log_moves --config_file /home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini
+
+=================================================================
+C++ debug
+=================================================================
+
+LD_PRELOAD=/home/robp/miniconda3/envs/open_spiel/lib/libasan.so python /media/robp/UD/Projects/open_spiel/open_spiel/python/games/mali_ba/main.py --mode cpp_sync_gui --players 3 --grid_radius 5
+===========================
+# Find your ASan runtime again (same as above)
+ASAN_LIB_PATH=/home/robp/miniconda3/envs/open_spiel/lib/libasan.so
+# ... (fallback to libasan.so* if needed) ...
+echo "Using ASAN_LIB_PATH for GDB: $ASAN_LIB_PATH"
+
+gdb python
+
+# Inside GDB:
+(gdb) 
+set env LD_PRELOAD=/home/robp/miniconda3/envs/open_spiel/lib/libasan.so
+set env PYTHONPATH=/home/robp/Projects/open_spiel/build/python:/home/robp/Projects/open_spiel/open_spiel/python/games:
+set args /home/robp/Projects/open_spiel/open_spiel/python/games/mali_ba/main.py --mode cpp_sync_gui --players 3 --grid_radius 5
+set args /home/robp/Projects/open_spiel/open_spiel/python/games/mali_ba/main.py --mode cpp_sync_gui --config_file /home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini
+set args --log_moves --config_file /home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini
+(gdb) run
+bt (after seg fault)
+
+break mali_ba_game.cc:390
+p this->game_type_
+watch this->game_type_.long_name._M_string_length
+
+===========================
+      
+# 0. Make sure your Conda environment is active!
+#    conda activate your_env_name
+
+# 1. Set CXX environment variable (if you want to force clang++)
+export CXX=clang++
+
+# 2. Clean previous build thoroughly
+cd /path/to/open_spiel/build
+rm -rf * # Or make clean if available and effective
+
+# 3. Configure CMake
+cmake  \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DPython_EXECUTABLE=$CONDA_PREFIX/bin/python \
+  -DOpenSpiel_ENABLE_SANITIZER_ADDRESS=ON \
+  -DBUILD_PYTHON=ON \
+  # -DCMAKE_CXX_COMPILER=${CXX} # Often not needed if CXX env var is set
+                               # CMake usually picks up CXX from env.
+  # Optional: Force no optimization if CMAKE_BUILD_TYPE=Debug doesn't do it enough for ASan
+  # -DCMAKE_CXX_FLAGS="-O0" \
+  # -DCMAKE_C_FLAGS="-O0"
+  ../open_spiel
+    
+===========================
+

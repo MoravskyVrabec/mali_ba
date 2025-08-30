@@ -1,0 +1,21 @@
+pygame 2.6.1 (SDL 2.28.4, Python 3.11.11)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+pyspiel imported successfully at top level.
+cpp_interface: pyspiel module successfully imported.
+Selected Mode: cpp_sync_gui
+Pygame initialized successfully.
+Using C++ Backend: True
+Using specified number of players: 3
+Initializing game for 3 players with grid radius 5
+Initializing GameInterface...
+(Re)Creating sample cities...
+Sample city generation using seed: 722071138
+Created 4 sample cities: ['Agadez', 'Oudane', 'Dinguiraye', 'Dosso']
+  - Agadez at -2,1,1
+  - Oudane at 1,-5,4
+  - Dinguiraye at 0,-5,5
+  - Dosso at 2,-5,3
+DEBUG: Created 4 sample cities in GameInterface init
+GameInterface: C++ backend requested and pyspiel is available.
+Loading OpenSpiel game 'mali_ba' with params: {'players': 3, 'grid_radius': 5}
+Pygame shutdown complete.

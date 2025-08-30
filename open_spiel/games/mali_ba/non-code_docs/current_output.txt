@@ -1,0 +1,868 @@
+======== Running Mali-Ba Tests ========
+################ Basic Tests ################
+Mali_BaGame Constructor: START
+Mali_BaGame Constructor: Params read & checked
+Mali_BaGame Constructor: Using default player colors for 2 players.
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: Board contains 91 hexes.
+Mali_BaGame Constructor: Processing RNG seed...
+  Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
+  Storing time-based RNG seed: 1745059213883282432
+InitializeLookups: Successfully mapped 91 hexes.
+Mali_BaGame Constructor: END
+  Running RandomSimTest...
+Mali_BaGame Constructor: START
+Mali_BaGame Constructor: Params read & checked
+Mali_BaGame Constructor: Using default player colors for 2 players.
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: Board contains 91 hexes.
+Mali_BaGame Constructor: Processing RNG seed...
+  Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
+  Storing time-based RNG seed: 1745059213883641609
+InitializeLookups: Successfully mapped 91 hexes.
+Mali_BaGame Constructor: END
+
+RandomSimTest, game = mali_ba, num_sims = 100
+Information state vector size: 0
+Observation vector size: 4477
+Utility range: -1 1
+Starting new game..
+Mali_BaState Constructor: Seeding state RNG with 1745059213883641609
+Initial state:
+State:
+DEBUG IsChanceNode() called. setup_phase_ = 1
+Chance Node Setup Phase
+
+player DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=1, is_terminal_=0, current_player_id_=-1
+DEBUG CurrentPlayer: Returning kChancePlayerId
+-1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=1, is_terminal_=0, current_player_id_=-1
+DEBUG CurrentPlayer: Returning kChancePlayerId
+DEBUG IsChanceNode() called. setup_phase_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=1, is_terminal_=0, current_player_id_=-1
+DEBUG CurrentPlayer: Returning kChancePlayerId
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=1, is_terminal_=0, current_player_id_=-1
+DEBUG CurrentPlayer: Returning kChancePlayerId
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=1, is_terminal_=0, current_player_id_=-1
+DEBUG CurrentPlayer: Returning kChancePlayerId
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=1, is_terminal_=0, current_player_id_=-1
+DEBUG CurrentPlayer: Returning kChancePlayerId
+DEBUG IsChanceNode() called. setup_phase_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 1
+MaybeGenerateLegalActions: Generated 1 actions for phase UnknownPhase(-1094795586) player -1
+DEBUG IsChanceNode() called. setup_phase_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 1
+Mali_BaGame Constructor: START
+Mali_BaGame Constructor: Params read & checked
+Mali_BaGame Constructor: Using default player colors for 2 players.
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: Board contains 91 hexes.
+Mali_BaGame Constructor: Processing RNG seed...
+  Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
+  Storing time-based RNG seed: 1745059213884416496
+InitializeLookups: Successfully mapped 91 hexes.
+Mali_BaGame Constructor: END
+Deserialize JSON input: {"commonGoods":[{},{}],"currentPhase":-1094795586,"currentPlayerId":-1,"hexMeeples":{},"history":[],"playerTokens":{},"rareGoods":[{},{}],"setupPhase":true,"tradePosts":{},"version":2}
+Mali_BaState Constructor: Seeding state RNG with 1745059213884416496
+Deserialize JSON: Successfully parsed state.
+DEBUG IsChanceNode() called. setup_phase_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=1, is_terminal_=0, current_player_id_=-1
+DEBUG CurrentPlayer: Returning kChancePlayerId
+DEBUG IsChanceNode() called. setup_phase_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 1
+sampled outcome: ChanceSetup with prob 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=1, is_terminal_=0, current_player_id_=-1
+DEBUG CurrentPlayer: Returning kChancePlayerId
+DEBUG DoApplyAction: START. Action=1, Current setup_phase_=1, Current player=-1
+ApplyChanceSetup: START
+ApplyChanceSetup: END
+DoApplyAction: Chance setup complete. First player: Red (ID 0)
+State: 
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Current Player: Red (ID: 0)
+
+                                   [ -5,  5,  0] [ -4,  5, -1] [ -3,  5, -2] [ -2,  5, -3] [ -1,  5, -4] [  0,  5, -5]                                      | (m3:sb1,sz1,cz1) (m3:cb1,cg1,cz1) (m3:cw1,cz2) (m3:ss1,sg1,sz1) (m3:cs1,cw1,cz1) (m3:cb1,cg1,cz1)
+                            [ -5,  4,  1] [ -4,  4,  0] [ -3,  4, -1] [ -2,  4, -2] [ -1,  4, -3] [  0,  4, -4] [  1,  4, -5]                               | (m3:cw1,cg1,sz1) (m3:sb1,sz1,cz1) (m3:sb1,sg1,cz1) (m3:sb2,sg1) (m3:sb1,cs1,sz1) (m3:cb1,cs1,cg1) (m3:ss1,cg1,cz1)
+                     [ -5,  3,  2] [ -4,  3,  1] [ -3,  3,  0] [ -2,  3, -1] [ -1,  3, -2] [  0,  3, -3] [  1,  3, -4] [  2,  3, -5]                        | (m3:ss1,sz1,cz1) (m3:cs1,cg1,sz1) (m3:cb1,sg1,cg1) (m3:cs1,sz1,ct1) (m3:cw1,sg1,cg1) (m3:cb2,cz1) (m3:ss1,cg1,sz1) (m3:ss1,sz1,cz1)
+              [ -5,  2,  3] [ -4,  2,  2] [ -3,  2,  1] [ -2,  2,  0] [ -1,  2, -1] [  0,  2, -2] [  1,  2, -3] [  2,  2, -4] [  3,  2, -5]                 | (m3:sb1,cb1,cs1) (m3:cg1,sz1,cz1) (m3:cb1,cw1,cg1) (m3:cb1,cs1,ct1) (m3:sz1,cz1,ct1) (m3:sb2,cs1) (m3:ss1,sg2) (m3:cg3) (m3:cb1,ss1,cs1)
+       [ -5,  1,  4] [ -4,  1,  3] [ -3,  1,  2] [ -2,  1,  1] [ -1,  1,  0] [  0,  1, -1] [  1,  1, -2] [  2,  1, -3] [  3,  1, -4] [  4,  1, -5]          | (m3:sb1,sg1,ct1) (m3:cs1,sg1,ct1) (m3:cs1,sg1,sz1) (m3:cz2,ct1) (m3:sb1,sg1,sz1) (m3:ss1,cg1,cz1) (m3:sb1,cw1,sg1) (m3:sb1,cs2) (m3:sg1,cz1,ct1) (m3:sb1,cg1,sz1)
+[ -5,  0,  5] [ -4,  0,  4] [ -3,  0,  3] [ -2,  0,  2] [ -1,  0,  1] [  0,  0,  0] [  1,  0, -1] [  2,  0, -2] [  3,  0, -3] [  4,  0, -4] [  5,  0, -5]   | (m3:sb1,cb1,cs1) (m3:cg2,ct1) (m3:sb1,cw2) (m3:cz1,ct2) (m3:cw1,cg1,cz1) (m3:cz2,ct1) (m3:sz2,ct1) (m3:cb1,ct2) (m3:cw1,cz1,ct1) (m3:sb1,cs1,cg1) (m3:sg1,cg1,cz1)
+       [ -4, -1,  5] [ -3, -1,  4] [ -2, -1,  3] [ -1, -1,  2] [  0, -1,  1] [  1, -1,  0] [  2, -1, -1] [  3, -1, -2] [  4, -1, -3] [  5, -1, -4]          | (m3:sb3) (m3:cb1,sg1,cg1) (m3:cw1,sg2) (m3:sb1,cb1,cw1) (m3:cb1,ct2) (m3:cb1,cs2) (m3:ss1,ct2) (m3:ss1,sz1,ct1) (m3:cs2,ct1) (m3:sb1,cb1,sz1)
+              [ -3, -2,  5] [ -2, -2,  4] [ -1, -2,  3] [  0, -2,  2] [  1, -2,  1] [  2, -2,  0] [  3, -2, -1] [  4, -2, -2] [  5, -2, -3]                 | (m3:ss1,cs1,sz1) (m3:cb1,cg1,cz1) (m3:ss2,cz1) (m3:cg1,sz1,cz1) (m3:cb1,cz2) (m3:sb1,sg1,cg1) (m3:cw1,sg1,ct1) (m3:sb1,cs1,ct1) (m3:ss3)
+                     [ -2, -3,  5] [ -1, -3,  4] [  0, -3,  3] [  1, -3,  2] [  2, -3,  1] [  3, -3,  0] [  4, -3, -1] [  5, -3, -2]                        | (m3:ss1,cg2) (m3:cs2,ct1) (m3:sz2,cz1) (m3:cb1,cs1,sz1) (m3:sb1,cz1,ct1) (m3:sb1,cb1,cz1) (m3:cs1,cw1,sz1) (m3:sb1,sg1,cz1)
+                            [ -1, -4,  5] [  0, -4,  4] [  1, -4,  3] [  2, -4,  2] [  3, -4,  1] [  4, -4,  0] [  5, -4, -1]                               | (m3:sb1,cs1,sg1) (m3:cb1,cw1,sg1) (m3:cs1,cg1,cz1) (m3:ss1,cs1,cw1) (m3:sb1,sz1,ct1) (m3:sg3) (m3:sb1,cs1,sz1)
+                                   [  0, -5,  5] [  1, -5,  4] [  2, -5,  3] [  3, -5,  2] [  4, -5,  1] [  5, -5,  0]                                      | (m3:cw1,sg1,cg1) (m3:sb1,cz2) (m3:sb1,cw1,cz1) (m3:cw1,cg1,cz1) (m3:cb1,cs1,cg1) (m3:ss1,cs1,sz1)
+
+--- Resources ---
+Red (ID:0):
+  Common: {}
+  Rare:   {}
+Green (ID:1):
+  Common: {}
+  Rare:   {}
+---------------
+
+player DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 91 actions for phase kPlaceToken player 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Mali_BaGame Constructor: START
+Mali_BaGame Constructor: Params read & checked
+Mali_BaGame Constructor: Using default player colors for 2 players.
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: Board contains 91 hexes.
+Mali_BaGame Constructor: Processing RNG seed...
+  Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
+  Storing time-based RNG seed: 1745059213887424966
+InitializeLookups: Successfully mapped 91 hexes.
+Mali_BaGame Constructor: END
+Deserialize JSON input: {"commonGoods":[{},{}],"currentPhase":1,"currentPlayerId":0,"hexMeeples":{"-1,-1,2":[4,1,0],"-1,-2,3":[2,2,8],"-1,-3,4":[3,3,9],"-1,-4,5":[5,0,3],"-1,0,1":[6,8,4],"-1,1,0":[5,7,0],"-1,2,-1":[7,9,8],"-...
+Mali_BaState Constructor: Seeding state RNG with 1745059213887424966
+Deserialize JSON: Successfully parsed state.
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Rewards: 0 0
+Returns: 0 0
+Sum Rewards: 0 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+chose action: 182 (PlaceToken@(4,-1,-3))
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG DoApplyAction: START. Action=182, Current setup_phase_=0, Current player=0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 91 actions for phase kPlaceToken player 0
+DoApplyAction: Player Red applying move type kPlaceToken (Action: 182)
+Place token. Tokens placed:1, NumPlayers: 2
+DoApplyAction: Next player: Green (ID 1)
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG DoApplyAction: START. Action=182, Current setup_phase_=0, Current player=0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 91 actions for phase kPlaceToken player 0
+DoApplyAction: Player Red applying move type kPlaceToken (Action: 182)
+Place token. Tokens placed:1, NumPlayers: 2
+DoApplyAction: Next player: Green (ID 1)
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+State: 
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Current Player: Green (ID: 1)
+
+                                   [ -5,  5,  0] [ -4,  5, -1] [ -3,  5, -2] [ -2,  5, -3] [ -1,  5, -4] [  0,  5, -5]                                      | (m3:sb1,sz1,cz1) (m3:cb1,cg1,cz1) (m3:cw1,cz2) (m3:ss1,sg1,sz1) (m3:cs1,cw1,cz1) (m3:cb1,cg1,cz1)
+                            [ -5,  4,  1] [ -4,  4,  0] [ -3,  4, -1] [ -2,  4, -2] [ -1,  4, -3] [  0,  4, -4] [  1,  4, -5]                               | (m3:cw1,cg1,sz1) (m3:sb1,sz1,cz1) (m3:sb1,sg1,cz1) (m3:sb2,sg1) (m3:sb1,cs1,sz1) (m3:cb1,cs1,cg1) (m3:ss1,cg1,cz1)
+                     [ -5,  3,  2] [ -4,  3,  1] [ -3,  3,  0] [ -2,  3, -1] [ -1,  3, -2] [  0,  3, -3] [  1,  3, -4] [  2,  3, -5]                        | (m3:ss1,sz1,cz1) (m3:cs1,cg1,sz1) (m3:cb1,sg1,cg1) (m3:cs1,sz1,ct1) (m3:cw1,sg1,cg1) (m3:cb2,cz1) (m3:ss1,cg1,sz1) (m3:ss1,sz1,cz1)
+              [ -5,  2,  3] [ -4,  2,  2] [ -3,  2,  1] [ -2,  2,  0] [ -1,  2, -1] [  0,  2, -2] [  1,  2, -3] [  2,  2, -4] [  3,  2, -5]                 | (m3:sb1,cb1,cs1) (m3:cg1,sz1,cz1) (m3:cb1,cw1,cg1) (m3:cb1,cs1,ct1) (m3:sz1,cz1,ct1) (m3:sb2,cs1) (m3:ss1,sg2) (m3:cg3) (m3:cb1,ss1,cs1)
+       [ -5,  1,  4] [ -4,  1,  3] [ -3,  1,  2] [ -2,  1,  1] [ -1,  1,  0] [  0,  1, -1] [  1,  1, -2] [  2,  1, -3] [  3,  1, -4] [  4,  1, -5]          | (m3:sb1,sg1,ct1) (m3:cs1,sg1,ct1) (m3:cs1,sg1,sz1) (m3:cz2,ct1) (m3:sb1,sg1,sz1) (m3:ss1,cg1,cz1) (m3:sb1,cw1,sg1) (m3:sb1,cs2) (m3:sg1,cz1,ct1) (m3:sb1,cg1,sz1)
+[ -5,  0,  5] [ -4,  0,  4] [ -3,  0,  3] [ -2,  0,  2] [ -1,  0,  1] [  0,  0,  0] [  1,  0, -1] [  2,  0, -2] [  3,  0, -3] [  4,  0, -4] [  5,  0, -5]   | (m3:sb1,cb1,cs1) (m3:cg2,ct1) (m3:sb1,cw2) (m3:cz1,ct2) (m3:cw1,cg1,cz1) (m3:cz2,ct1) (m3:sz2,ct1) (m3:cb1,ct2) (m3:cw1,cz1,ct1) (m3:sb1,cs1,cg1) (m3:sg1,cg1,cz1)
+       [ -4, -1,  5] [ -3, -1,  4] [ -2, -1,  3] [ -1, -1,  2] [  0, -1,  1] [  1, -1,  0] [  2, -1, -1] [  3, -1, -2] [  4, -1, -3] [  5, -1, -4]          | (m3:sb3) (m3:cb1,sg1,cg1) (m3:cw1,sg2) (m3:sb1,cb1,cw1) (m3:cb1,ct2) (m3:cb1,cs2) (m3:ss1,ct2) (m3:ss1,sz1,ct1) (R m3:cs2,ct1) (m3:sb1,cb1,sz1)
+              [ -3, -2,  5] [ -2, -2,  4] [ -1, -2,  3] [  0, -2,  2] [  1, -2,  1] [  2, -2,  0] [  3, -2, -1] [  4, -2, -2] [  5, -2, -3]                 | (m3:ss1,cs1,sz1) (m3:cb1,cg1,cz1) (m3:ss2,cz1) (m3:cg1,sz1,cz1) (m3:cb1,cz2) (m3:sb1,sg1,cg1) (m3:cw1,sg1,ct1) (m3:sb1,cs1,ct1) (m3:ss3)
+                     [ -2, -3,  5] [ -1, -3,  4] [  0, -3,  3] [  1, -3,  2] [  2, -3,  1] [  3, -3,  0] [  4, -3, -1] [  5, -3, -2]                        | (m3:ss1,cg2) (m3:cs2,ct1) (m3:sz2,cz1) (m3:cb1,cs1,sz1) (m3:sb1,cz1,ct1) (m3:sb1,cb1,cz1) (m3:cs1,cw1,sz1) (m3:sb1,sg1,cz1)
+                            [ -1, -4,  5] [  0, -4,  4] [  1, -4,  3] [  2, -4,  2] [  3, -4,  1] [  4, -4,  0] [  5, -4, -1]                               | (m3:sb1,cs1,sg1) (m3:cb1,cw1,sg1) (m3:cs1,cg1,cz1) (m3:ss1,cs1,cw1) (m3:sb1,sz1,ct1) (m3:sg3) (m3:sb1,cs1,sz1)
+                                   [  0, -5,  5] [  1, -5,  4] [  2, -5,  3] [  3, -5,  2] [  4, -5,  1] [  5, -5,  0]                                      | (m3:cw1,sg1,cg1) (m3:sb1,cz2) (m3:sb1,cw1,cz1) (m3:cw1,cg1,cz1) (m3:cb1,cs1,cg1) (m3:ss1,cs1,sz1)
+
+--- Resources ---
+Red (ID:0):
+  Common: {}
+  Rare:   {}
+Green (ID:1):
+  Common: {}
+  Rare:   {}
+---------------
+
+player DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Mali_BaGame Constructor: START
+Mali_BaGame Constructor: Params read & checked
+Mali_BaGame Constructor: Using default player colors for 2 players.
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: Board contains 91 hexes.
+Mali_BaGame Constructor: Processing RNG seed...
+  Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
+  Storing time-based RNG seed: 1745059213892838627
+InitializeLookups: Successfully mapped 91 hexes.
+Mali_BaGame Constructor: END
+Deserialize JSON input: {"commonGoods":[{},{}],"currentPhase":1,"currentPlayerId":1,"hexMeeples":{"-1,-1,2":[4,1,0],"-1,-2,3":[2,2,8],"-1,-3,4":[3,3,9],"-1,-4,5":[5,0,3],"-1,0,1":[6,8,4],"-1,1,0":[5,7,0],"-1,2,-1":[7,9,8],"-...
+Mali_BaState Constructor: Seeding state RNG with 1745059213892838627
+Deserialize JSON: Successfully parsed state.
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Rewards: 0 0
+Returns: 0 0
+Sum Rewards: 0 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+chose action: 175 (PlaceToken@(3,0,-3))
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG DoApplyAction: START. Action=175, Current setup_phase_=0, Current player=1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 90 actions for phase kPlaceToken player 1
+DoApplyAction: Player Green applying move type kPlaceToken (Action: 175)
+Place token. Tokens placed:2, NumPlayers: 2
+DoApplyAction: Next player: Red (ID 0)
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG DoApplyAction: START. Action=175, Current setup_phase_=0, Current player=1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 90 actions for phase kPlaceToken player 1
+DoApplyAction: Player Green applying move type kPlaceToken (Action: 175)
+Place token. Tokens placed:2, NumPlayers: 2
+DoApplyAction: Next player: Red (ID 0)
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+State: 
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Current Player: Red (ID: 0)
+
+                                   [ -5,  5,  0] [ -4,  5, -1] [ -3,  5, -2] [ -2,  5, -3] [ -1,  5, -4] [  0,  5, -5]                                      | (m3:sb1,sz1,cz1) (m3:cb1,cg1,cz1) (m3:cw1,cz2) (m3:ss1,sg1,sz1) (m3:cs1,cw1,cz1) (m3:cb1,cg1,cz1)
+                            [ -5,  4,  1] [ -4,  4,  0] [ -3,  4, -1] [ -2,  4, -2] [ -1,  4, -3] [  0,  4, -4] [  1,  4, -5]                               | (m3:cw1,cg1,sz1) (m3:sb1,sz1,cz1) (m3:sb1,sg1,cz1) (m3:sb2,sg1) (m3:sb1,cs1,sz1) (m3:cb1,cs1,cg1) (m3:ss1,cg1,cz1)
+                     [ -5,  3,  2] [ -4,  3,  1] [ -3,  3,  0] [ -2,  3, -1] [ -1,  3, -2] [  0,  3, -3] [  1,  3, -4] [  2,  3, -5]                        | (m3:ss1,sz1,cz1) (m3:cs1,cg1,sz1) (m3:cb1,sg1,cg1) (m3:cs1,sz1,ct1) (m3:cw1,sg1,cg1) (m3:cb2,cz1) (m3:ss1,cg1,sz1) (m3:ss1,sz1,cz1)
+              [ -5,  2,  3] [ -4,  2,  2] [ -3,  2,  1] [ -2,  2,  0] [ -1,  2, -1] [  0,  2, -2] [  1,  2, -3] [  2,  2, -4] [  3,  2, -5]                 | (m3:sb1,cb1,cs1) (m3:cg1,sz1,cz1) (m3:cb1,cw1,cg1) (m3:cb1,cs1,ct1) (m3:sz1,cz1,ct1) (m3:sb2,cs1) (m3:ss1,sg2) (m3:cg3) (m3:cb1,ss1,cs1)
+       [ -5,  1,  4] [ -4,  1,  3] [ -3,  1,  2] [ -2,  1,  1] [ -1,  1,  0] [  0,  1, -1] [  1,  1, -2] [  2,  1, -3] [  3,  1, -4] [  4,  1, -5]          | (m3:sb1,sg1,ct1) (m3:cs1,sg1,ct1) (m3:cs1,sg1,sz1) (m3:cz2,ct1) (m3:sb1,sg1,sz1) (m3:ss1,cg1,cz1) (m3:sb1,cw1,sg1) (m3:sb1,cs2) (m3:sg1,cz1,ct1) (m3:sb1,cg1,sz1)
+[ -5,  0,  5] [ -4,  0,  4] [ -3,  0,  3] [ -2,  0,  2] [ -1,  0,  1] [  0,  0,  0] [  1,  0, -1] [  2,  0, -2] [  3,  0, -3] [  4,  0, -4] [  5,  0, -5]   | (m3:sb1,cb1,cs1) (m3:cg2,ct1) (m3:sb1,cw2) (m3:cz1,ct2) (m3:cw1,cg1,cz1) (m3:cz2,ct1) (m3:sz2,ct1) (m3:cb1,ct2) (G m3:cw1,cz1,ct1) (m3:sb1,cs1,cg1) (m3:sg1,cg1,cz1)
+       [ -4, -1,  5] [ -3, -1,  4] [ -2, -1,  3] [ -1, -1,  2] [  0, -1,  1] [  1, -1,  0] [  2, -1, -1] [  3, -1, -2] [  4, -1, -3] [  5, -1, -4]          | (m3:sb3) (m3:cb1,sg1,cg1) (m3:cw1,sg2) (m3:sb1,cb1,cw1) (m3:cb1,ct2) (m3:cb1,cs2) (m3:ss1,ct2) (m3:ss1,sz1,ct1) (R m3:cs2,ct1) (m3:sb1,cb1,sz1)
+              [ -3, -2,  5] [ -2, -2,  4] [ -1, -2,  3] [  0, -2,  2] [  1, -2,  1] [  2, -2,  0] [  3, -2, -1] [  4, -2, -2] [  5, -2, -3]                 | (m3:ss1,cs1,sz1) (m3:cb1,cg1,cz1) (m3:ss2,cz1) (m3:cg1,sz1,cz1) (m3:cb1,cz2) (m3:sb1,sg1,cg1) (m3:cw1,sg1,ct1) (m3:sb1,cs1,ct1) (m3:ss3)
+                     [ -2, -3,  5] [ -1, -3,  4] [  0, -3,  3] [  1, -3,  2] [  2, -3,  1] [  3, -3,  0] [  4, -3, -1] [  5, -3, -2]                        | (m3:ss1,cg2) (m3:cs2,ct1) (m3:sz2,cz1) (m3:cb1,cs1,sz1) (m3:sb1,cz1,ct1) (m3:sb1,cb1,cz1) (m3:cs1,cw1,sz1) (m3:sb1,sg1,cz1)
+                            [ -1, -4,  5] [  0, -4,  4] [  1, -4,  3] [  2, -4,  2] [  3, -4,  1] [  4, -4,  0] [  5, -4, -1]                               | (m3:sb1,cs1,sg1) (m3:cb1,cw1,sg1) (m3:cs1,cg1,cz1) (m3:ss1,cs1,cw1) (m3:sb1,sz1,ct1) (m3:sg3) (m3:sb1,cs1,sz1)
+                                   [  0, -5,  5] [  1, -5,  4] [  2, -5,  3] [  3, -5,  2] [  4, -5,  1] [  5, -5,  0]                                      | (m3:cw1,sg1,cg1) (m3:sb1,cz2) (m3:sb1,cw1,cz1) (m3:cw1,cg1,cz1) (m3:cb1,cs1,cg1) (m3:ss1,cs1,sz1)
+
+--- Resources ---
+Red (ID:0):
+  Common: {}
+  Rare:   {}
+Green (ID:1):
+  Common: {}
+  Rare:   {}
+---------------
+
+player DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Mali_BaGame Constructor: START
+Mali_BaGame Constructor: Params read & checked
+Mali_BaGame Constructor: Using default player colors for 2 players.
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: Board contains 91 hexes.
+Mali_BaGame Constructor: Processing RNG seed...
+  Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
+  Storing time-based RNG seed: 1745059213897723647
+InitializeLookups: Successfully mapped 91 hexes.
+Mali_BaGame Constructor: END
+Deserialize JSON input: {"commonGoods":[{},{}],"currentPhase":1,"currentPlayerId":0,"hexMeeples":{"-1,-1,2":[4,1,0],"-1,-2,3":[2,2,8],"-1,-3,4":[3,3,9],"-1,-4,5":[5,0,3],"-1,0,1":[6,8,4],"-1,1,0":[5,7,0],"-1,2,-1":[7,9,8],"-...
+Mali_BaState Constructor: Seeding state RNG with 1745059213897723647
+Deserialize JSON: Successfully parsed state.
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Rewards: 0 0
+Returns: 0 0
+Sum Rewards: 0 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+chose action: 111 (PlaceToken@(-4,4,0))
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG DoApplyAction: START. Action=111, Current setup_phase_=0, Current player=0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 89 actions for phase kPlaceToken player 0
+DoApplyAction: Player Red applying move type kPlaceToken (Action: 111)
+Place token. Tokens placed:3, NumPlayers: 2
+DoApplyAction: Next player: Green (ID 1)
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG DoApplyAction: START. Action=111, Current setup_phase_=0, Current player=0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 89 actions for phase kPlaceToken player 0
+DoApplyAction: Player Red applying move type kPlaceToken (Action: 111)
+Place token. Tokens placed:3, NumPlayers: 2
+DoApplyAction: Next player: Green (ID 1)
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+State: 
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Current Player: Green (ID: 1)
+
+                                   [ -5,  5,  0] [ -4,  5, -1] [ -3,  5, -2] [ -2,  5, -3] [ -1,  5, -4] [  0,  5, -5]                                      | (m3:sb1,sz1,cz1) (m3:cb1,cg1,cz1) (m3:cw1,cz2) (m3:ss1,sg1,sz1) (m3:cs1,cw1,cz1) (m3:cb1,cg1,cz1)
+                            [ -5,  4,  1] [ -4,  4,  0] [ -3,  4, -1] [ -2,  4, -2] [ -1,  4, -3] [  0,  4, -4] [  1,  4, -5]                               | (m3:cw1,cg1,sz1) (R m3:sb1,sz1,cz1) (m3:sb1,sg1,cz1) (m3:sb2,sg1) (m3:sb1,cs1,sz1) (m3:cb1,cs1,cg1) (m3:ss1,cg1,cz1)
+                     [ -5,  3,  2] [ -4,  3,  1] [ -3,  3,  0] [ -2,  3, -1] [ -1,  3, -2] [  0,  3, -3] [  1,  3, -4] [  2,  3, -5]                        | (m3:ss1,sz1,cz1) (m3:cs1,cg1,sz1) (m3:cb1,sg1,cg1) (m3:cs1,sz1,ct1) (m3:cw1,sg1,cg1) (m3:cb2,cz1) (m3:ss1,cg1,sz1) (m3:ss1,sz1,cz1)
+              [ -5,  2,  3] [ -4,  2,  2] [ -3,  2,  1] [ -2,  2,  0] [ -1,  2, -1] [  0,  2, -2] [  1,  2, -3] [  2,  2, -4] [  3,  2, -5]                 | (m3:sb1,cb1,cs1) (m3:cg1,sz1,cz1) (m3:cb1,cw1,cg1) (m3:cb1,cs1,ct1) (m3:sz1,cz1,ct1) (m3:sb2,cs1) (m3:ss1,sg2) (m3:cg3) (m3:cb1,ss1,cs1)
+       [ -5,  1,  4] [ -4,  1,  3] [ -3,  1,  2] [ -2,  1,  1] [ -1,  1,  0] [  0,  1, -1] [  1,  1, -2] [  2,  1, -3] [  3,  1, -4] [  4,  1, -5]          | (m3:sb1,sg1,ct1) (m3:cs1,sg1,ct1) (m3:cs1,sg1,sz1) (m3:cz2,ct1) (m3:sb1,sg1,sz1) (m3:ss1,cg1,cz1) (m3:sb1,cw1,sg1) (m3:sb1,cs2) (m3:sg1,cz1,ct1) (m3:sb1,cg1,sz1)
+[ -5,  0,  5] [ -4,  0,  4] [ -3,  0,  3] [ -2,  0,  2] [ -1,  0,  1] [  0,  0,  0] [  1,  0, -1] [  2,  0, -2] [  3,  0, -3] [  4,  0, -4] [  5,  0, -5]   | (m3:sb1,cb1,cs1) (m3:cg2,ct1) (m3:sb1,cw2) (m3:cz1,ct2) (m3:cw1,cg1,cz1) (m3:cz2,ct1) (m3:sz2,ct1) (m3:cb1,ct2) (G m3:cw1,cz1,ct1) (m3:sb1,cs1,cg1) (m3:sg1,cg1,cz1)
+       [ -4, -1,  5] [ -3, -1,  4] [ -2, -1,  3] [ -1, -1,  2] [  0, -1,  1] [  1, -1,  0] [  2, -1, -1] [  3, -1, -2] [  4, -1, -3] [  5, -1, -4]          | (m3:sb3) (m3:cb1,sg1,cg1) (m3:cw1,sg2) (m3:sb1,cb1,cw1) (m3:cb1,ct2) (m3:cb1,cs2) (m3:ss1,ct2) (m3:ss1,sz1,ct1) (R m3:cs2,ct1) (m3:sb1,cb1,sz1)
+              [ -3, -2,  5] [ -2, -2,  4] [ -1, -2,  3] [  0, -2,  2] [  1, -2,  1] [  2, -2,  0] [  3, -2, -1] [  4, -2, -2] [  5, -2, -3]                 | (m3:ss1,cs1,sz1) (m3:cb1,cg1,cz1) (m3:ss2,cz1) (m3:cg1,sz1,cz1) (m3:cb1,cz2) (m3:sb1,sg1,cg1) (m3:cw1,sg1,ct1) (m3:sb1,cs1,ct1) (m3:ss3)
+                     [ -2, -3,  5] [ -1, -3,  4] [  0, -3,  3] [  1, -3,  2] [  2, -3,  1] [  3, -3,  0] [  4, -3, -1] [  5, -3, -2]                        | (m3:ss1,cg2) (m3:cs2,ct1) (m3:sz2,cz1) (m3:cb1,cs1,sz1) (m3:sb1,cz1,ct1) (m3:sb1,cb1,cz1) (m3:cs1,cw1,sz1) (m3:sb1,sg1,cz1)
+                            [ -1, -4,  5] [  0, -4,  4] [  1, -4,  3] [  2, -4,  2] [  3, -4,  1] [  4, -4,  0] [  5, -4, -1]                               | (m3:sb1,cs1,sg1) (m3:cb1,cw1,sg1) (m3:cs1,cg1,cz1) (m3:ss1,cs1,cw1) (m3:sb1,sz1,ct1) (m3:sg3) (m3:sb1,cs1,sz1)
+                                   [  0, -5,  5] [  1, -5,  4] [  2, -5,  3] [  3, -5,  2] [  4, -5,  1] [  5, -5,  0]                                      | (m3:cw1,sg1,cg1) (m3:sb1,cz2) (m3:sb1,cw1,cz1) (m3:cw1,cg1,cz1) (m3:cb1,cs1,cg1) (m3:ss1,cs1,sz1)
+
+--- Resources ---
+Red (ID:0):
+  Common: {}
+  Rare:   {}
+Green (ID:1):
+  Common: {}
+  Rare:   {}
+---------------
+
+player DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Mali_BaGame Constructor: START
+Mali_BaGame Constructor: Params read & checked
+Mali_BaGame Constructor: Using default player colors for 2 players.
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: Board contains 91 hexes.
+Mali_BaGame Constructor: Processing RNG seed...
+  Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
+  Storing time-based RNG seed: 1745059213902245754
+InitializeLookups: Successfully mapped 91 hexes.
+Mali_BaGame Constructor: END
+Deserialize JSON input: {"commonGoods":[{},{}],"currentPhase":1,"currentPlayerId":1,"hexMeeples":{"-1,-1,2":[4,1,0],"-1,-2,3":[2,2,8],"-1,-3,4":[3,3,9],"-1,-4,5":[5,0,3],"-1,0,1":[6,8,4],"-1,1,0":[5,7,0],"-1,2,-1":[7,9,8],"-...
+Mali_BaState Constructor: Seeding state RNG with 1745059213902245754
+Deserialize JSON: Successfully parsed state.
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Rewards: 0 0
+Returns: 0 0
+Sum Rewards: 0 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+chose action: 188 (PlaceToken@(5,-2,-3))
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG DoApplyAction: START. Action=188, Current setup_phase_=0, Current player=1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 88 actions for phase kPlaceToken player 1
+DoApplyAction: Player Green applying move type kPlaceToken (Action: 188)
+Place token. Tokens placed:4, NumPlayers: 2
+DoApplyAction: Next player: Red (ID 0)
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG DoApplyAction: START. Action=188, Current setup_phase_=0, Current player=1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 88 actions for phase kPlaceToken player 1
+DoApplyAction: Player Green applying move type kPlaceToken (Action: 188)
+Place token. Tokens placed:4, NumPlayers: 2
+DoApplyAction: Next player: Red (ID 0)
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+State: 
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Current Player: Red (ID: 0)
+
+                                   [ -5,  5,  0] [ -4,  5, -1] [ -3,  5, -2] [ -2,  5, -3] [ -1,  5, -4] [  0,  5, -5]                                      | (m3:sb1,sz1,cz1) (m3:cb1,cg1,cz1) (m3:cw1,cz2) (m3:ss1,sg1,sz1) (m3:cs1,cw1,cz1) (m3:cb1,cg1,cz1)
+                            [ -5,  4,  1] [ -4,  4,  0] [ -3,  4, -1] [ -2,  4, -2] [ -1,  4, -3] [  0,  4, -4] [  1,  4, -5]                               | (m3:cw1,cg1,sz1) (R m3:sb1,sz1,cz1) (m3:sb1,sg1,cz1) (m3:sb2,sg1) (m3:sb1,cs1,sz1) (m3:cb1,cs1,cg1) (m3:ss1,cg1,cz1)
+                     [ -5,  3,  2] [ -4,  3,  1] [ -3,  3,  0] [ -2,  3, -1] [ -1,  3, -2] [  0,  3, -3] [  1,  3, -4] [  2,  3, -5]                        | (m3:ss1,sz1,cz1) (m3:cs1,cg1,sz1) (m3:cb1,sg1,cg1) (m3:cs1,sz1,ct1) (m3:cw1,sg1,cg1) (m3:cb2,cz1) (m3:ss1,cg1,sz1) (m3:ss1,sz1,cz1)
+              [ -5,  2,  3] [ -4,  2,  2] [ -3,  2,  1] [ -2,  2,  0] [ -1,  2, -1] [  0,  2, -2] [  1,  2, -3] [  2,  2, -4] [  3,  2, -5]                 | (m3:sb1,cb1,cs1) (m3:cg1,sz1,cz1) (m3:cb1,cw1,cg1) (m3:cb1,cs1,ct1) (m3:sz1,cz1,ct1) (m3:sb2,cs1) (m3:ss1,sg2) (m3:cg3) (m3:cb1,ss1,cs1)
+       [ -5,  1,  4] [ -4,  1,  3] [ -3,  1,  2] [ -2,  1,  1] [ -1,  1,  0] [  0,  1, -1] [  1,  1, -2] [  2,  1, -3] [  3,  1, -4] [  4,  1, -5]          | (m3:sb1,sg1,ct1) (m3:cs1,sg1,ct1) (m3:cs1,sg1,sz1) (m3:cz2,ct1) (m3:sb1,sg1,sz1) (m3:ss1,cg1,cz1) (m3:sb1,cw1,sg1) (m3:sb1,cs2) (m3:sg1,cz1,ct1) (m3:sb1,cg1,sz1)
+[ -5,  0,  5] [ -4,  0,  4] [ -3,  0,  3] [ -2,  0,  2] [ -1,  0,  1] [  0,  0,  0] [  1,  0, -1] [  2,  0, -2] [  3,  0, -3] [  4,  0, -4] [  5,  0, -5]   | (m3:sb1,cb1,cs1) (m3:cg2,ct1) (m3:sb1,cw2) (m3:cz1,ct2) (m3:cw1,cg1,cz1) (m3:cz2,ct1) (m3:sz2,ct1) (m3:cb1,ct2) (G m3:cw1,cz1,ct1) (m3:sb1,cs1,cg1) (m3:sg1,cg1,cz1)
+       [ -4, -1,  5] [ -3, -1,  4] [ -2, -1,  3] [ -1, -1,  2] [  0, -1,  1] [  1, -1,  0] [  2, -1, -1] [  3, -1, -2] [  4, -1, -3] [  5, -1, -4]          | (m3:sb3) (m3:cb1,sg1,cg1) (m3:cw1,sg2) (m3:sb1,cb1,cw1) (m3:cb1,ct2) (m3:cb1,cs2) (m3:ss1,ct2) (m3:ss1,sz1,ct1) (R m3:cs2,ct1) (m3:sb1,cb1,sz1)
+              [ -3, -2,  5] [ -2, -2,  4] [ -1, -2,  3] [  0, -2,  2] [  1, -2,  1] [  2, -2,  0] [  3, -2, -1] [  4, -2, -2] [  5, -2, -3]                 | (m3:ss1,cs1,sz1) (m3:cb1,cg1,cz1) (m3:ss2,cz1) (m3:cg1,sz1,cz1) (m3:cb1,cz2) (m3:sb1,sg1,cg1) (m3:cw1,sg1,ct1) (m3:sb1,cs1,ct1) (G m3:ss3)
+                     [ -2, -3,  5] [ -1, -3,  4] [  0, -3,  3] [  1, -3,  2] [  2, -3,  1] [  3, -3,  0] [  4, -3, -1] [  5, -3, -2]                        | (m3:ss1,cg2) (m3:cs2,ct1) (m3:sz2,cz1) (m3:cb1,cs1,sz1) (m3:sb1,cz1,ct1) (m3:sb1,cb1,cz1) (m3:cs1,cw1,sz1) (m3:sb1,sg1,cz1)
+                            [ -1, -4,  5] [  0, -4,  4] [  1, -4,  3] [  2, -4,  2] [  3, -4,  1] [  4, -4,  0] [  5, -4, -1]                               | (m3:sb1,cs1,sg1) (m3:cb1,cw1,sg1) (m3:cs1,cg1,cz1) (m3:ss1,cs1,cw1) (m3:sb1,sz1,ct1) (m3:sg3) (m3:sb1,cs1,sz1)
+                                   [  0, -5,  5] [  1, -5,  4] [  2, -5,  3] [  3, -5,  2] [  4, -5,  1] [  5, -5,  0]                                      | (m3:cw1,sg1,cg1) (m3:sb1,cz2) (m3:sb1,cw1,cz1) (m3:cw1,cg1,cz1) (m3:cb1,cs1,cg1) (m3:ss1,cs1,sz1)
+
+--- Resources ---
+Red (ID:0):
+  Common: {}
+  Rare:   {}
+Green (ID:1):
+  Common: {}
+  Rare:   {}
+---------------
+
+player DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Mali_BaGame Constructor: START
+Mali_BaGame Constructor: Params read & checked
+Mali_BaGame Constructor: Using default player colors for 2 players.
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: Board contains 91 hexes.
+Mali_BaGame Constructor: Processing RNG seed...
+  Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
+  Storing time-based RNG seed: 1745059213906744238
+InitializeLookups: Successfully mapped 91 hexes.
+Mali_BaGame Constructor: END
+Deserialize JSON input: {"commonGoods":[{},{}],"currentPhase":1,"currentPlayerId":0,"hexMeeples":{"-1,-1,2":[4,1,0],"-1,-2,3":[2,2,8],"-1,-3,4":[3,3,9],"-1,-4,5":[5,0,3],"-1,0,1":[6,8,4],"-1,1,0":[5,7,0],"-1,2,-1":[7,9,8],"-...
+Mali_BaState Constructor: Seeding state RNG with 1745059213906744238
+Deserialize JSON: Successfully parsed state.
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Rewards: 0 0
+Returns: 0 0
+Sum Rewards: 0 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+chose action: 183 (PlaceToken@(4,0,-4))
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG DoApplyAction: START. Action=183, Current setup_phase_=0, Current player=0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 87 actions for phase kPlaceToken player 0
+DoApplyAction: Player Red applying move type kPlaceToken (Action: 183)
+Place token. Tokens placed:5, NumPlayers: 2
+DoApplyAction: Next player: Green (ID 1)
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG DoApplyAction: START. Action=183, Current setup_phase_=0, Current player=0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 87 actions for phase kPlaceToken player 0
+DoApplyAction: Player Red applying move type kPlaceToken (Action: 183)
+Place token. Tokens placed:5, NumPlayers: 2
+DoApplyAction: Next player: Green (ID 1)
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+State: 
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Current Player: Green (ID: 1)
+
+                                   [ -5,  5,  0] [ -4,  5, -1] [ -3,  5, -2] [ -2,  5, -3] [ -1,  5, -4] [  0,  5, -5]                                      | (m3:sb1,sz1,cz1) (m3:cb1,cg1,cz1) (m3:cw1,cz2) (m3:ss1,sg1,sz1) (m3:cs1,cw1,cz1) (m3:cb1,cg1,cz1)
+                            [ -5,  4,  1] [ -4,  4,  0] [ -3,  4, -1] [ -2,  4, -2] [ -1,  4, -3] [  0,  4, -4] [  1,  4, -5]                               | (m3:cw1,cg1,sz1) (R m3:sb1,sz1,cz1) (m3:sb1,sg1,cz1) (m3:sb2,sg1) (m3:sb1,cs1,sz1) (m3:cb1,cs1,cg1) (m3:ss1,cg1,cz1)
+                     [ -5,  3,  2] [ -4,  3,  1] [ -3,  3,  0] [ -2,  3, -1] [ -1,  3, -2] [  0,  3, -3] [  1,  3, -4] [  2,  3, -5]                        | (m3:ss1,sz1,cz1) (m3:cs1,cg1,sz1) (m3:cb1,sg1,cg1) (m3:cs1,sz1,ct1) (m3:cw1,sg1,cg1) (m3:cb2,cz1) (m3:ss1,cg1,sz1) (m3:ss1,sz1,cz1)
+              [ -5,  2,  3] [ -4,  2,  2] [ -3,  2,  1] [ -2,  2,  0] [ -1,  2, -1] [  0,  2, -2] [  1,  2, -3] [  2,  2, -4] [  3,  2, -5]                 | (m3:sb1,cb1,cs1) (m3:cg1,sz1,cz1) (m3:cb1,cw1,cg1) (m3:cb1,cs1,ct1) (m3:sz1,cz1,ct1) (m3:sb2,cs1) (m3:ss1,sg2) (m3:cg3) (m3:cb1,ss1,cs1)
+       [ -5,  1,  4] [ -4,  1,  3] [ -3,  1,  2] [ -2,  1,  1] [ -1,  1,  0] [  0,  1, -1] [  1,  1, -2] [  2,  1, -3] [  3,  1, -4] [  4,  1, -5]          | (m3:sb1,sg1,ct1) (m3:cs1,sg1,ct1) (m3:cs1,sg1,sz1) (m3:cz2,ct1) (m3:sb1,sg1,sz1) (m3:ss1,cg1,cz1) (m3:sb1,cw1,sg1) (m3:sb1,cs2) (m3:sg1,cz1,ct1) (m3:sb1,cg1,sz1)
+[ -5,  0,  5] [ -4,  0,  4] [ -3,  0,  3] [ -2,  0,  2] [ -1,  0,  1] [  0,  0,  0] [  1,  0, -1] [  2,  0, -2] [  3,  0, -3] [  4,  0, -4] [  5,  0, -5]   | (m3:sb1,cb1,cs1) (m3:cg2,ct1) (m3:sb1,cw2) (m3:cz1,ct2) (m3:cw1,cg1,cz1) (m3:cz2,ct1) (m3:sz2,ct1) (m3:cb1,ct2) (G m3:cw1,cz1,ct1) (R m3:sb1,cs1,cg1) (m3:sg1,cg1,cz1)
+       [ -4, -1,  5] [ -3, -1,  4] [ -2, -1,  3] [ -1, -1,  2] [  0, -1,  1] [  1, -1,  0] [  2, -1, -1] [  3, -1, -2] [  4, -1, -3] [  5, -1, -4]          | (m3:sb3) (m3:cb1,sg1,cg1) (m3:cw1,sg2) (m3:sb1,cb1,cw1) (m3:cb1,ct2) (m3:cb1,cs2) (m3:ss1,ct2) (m3:ss1,sz1,ct1) (R m3:cs2,ct1) (m3:sb1,cb1,sz1)
+              [ -3, -2,  5] [ -2, -2,  4] [ -1, -2,  3] [  0, -2,  2] [  1, -2,  1] [  2, -2,  0] [  3, -2, -1] [  4, -2, -2] [  5, -2, -3]                 | (m3:ss1,cs1,sz1) (m3:cb1,cg1,cz1) (m3:ss2,cz1) (m3:cg1,sz1,cz1) (m3:cb1,cz2) (m3:sb1,sg1,cg1) (m3:cw1,sg1,ct1) (m3:sb1,cs1,ct1) (G m3:ss3)
+                     [ -2, -3,  5] [ -1, -3,  4] [  0, -3,  3] [  1, -3,  2] [  2, -3,  1] [  3, -3,  0] [  4, -3, -1] [  5, -3, -2]                        | (m3:ss1,cg2) (m3:cs2,ct1) (m3:sz2,cz1) (m3:cb1,cs1,sz1) (m3:sb1,cz1,ct1) (m3:sb1,cb1,cz1) (m3:cs1,cw1,sz1) (m3:sb1,sg1,cz1)
+                            [ -1, -4,  5] [  0, -4,  4] [  1, -4,  3] [  2, -4,  2] [  3, -4,  1] [  4, -4,  0] [  5, -4, -1]                               | (m3:sb1,cs1,sg1) (m3:cb1,cw1,sg1) (m3:cs1,cg1,cz1) (m3:ss1,cs1,cw1) (m3:sb1,sz1,ct1) (m3:sg3) (m3:sb1,cs1,sz1)
+                                   [  0, -5,  5] [  1, -5,  4] [  2, -5,  3] [  3, -5,  2] [  4, -5,  1] [  5, -5,  0]                                      | (m3:cw1,sg1,cg1) (m3:sb1,cz2) (m3:sb1,cw1,cz1) (m3:cw1,cg1,cz1) (m3:cb1,cs1,cg1) (m3:ss1,cs1,sz1)
+
+--- Resources ---
+Red (ID:0):
+  Common: {}
+  Rare:   {}
+Green (ID:1):
+  Common: {}
+  Rare:   {}
+---------------
+
+player DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Mali_BaGame Constructor: START
+Mali_BaGame Constructor: Params read & checked
+Mali_BaGame Constructor: Using default player colors for 2 players.
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: Board contains 91 hexes.
+Mali_BaGame Constructor: Processing RNG seed...
+  Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
+  Storing time-based RNG seed: 1745059213911162583
+InitializeLookups: Successfully mapped 91 hexes.
+Mali_BaGame Constructor: END
+Deserialize JSON input: {"commonGoods":[{},{}],"currentPhase":1,"currentPlayerId":1,"hexMeeples":{"-1,-1,2":[4,1,0],"-1,-2,3":[2,2,8],"-1,-3,4":[3,3,9],"-1,-4,5":[5,0,3],"-1,0,1":[6,8,4],"-1,1,0":[5,7,0],"-1,2,-1":[7,9,8],"-...
+Mali_BaState Constructor: Seeding state RNG with 1745059213911162583
+Deserialize JSON: Successfully parsed state.
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Rewards: 0 0
+Returns: 0 0
+Sum Rewards: 0 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+chose action: 120 (PlaceToken@(-3,5,-2))
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG DoApplyAction: START. Action=120, Current setup_phase_=0, Current player=1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 86 actions for phase kPlaceToken player 1
+DoApplyAction: Player Green applying move type kPlaceToken (Action: 120)
+Place token. Tokens placed:6, NumPlayers: 2
+DoApplyAction: Next player: Red (ID 0)
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=1
+DEBUG CurrentPlayer: Returning current_player_id_ = 1
+DEBUG DoApplyAction: START. Action=120, Current setup_phase_=0, Current player=1
+DEBUG IsChanceNode() called. setup_phase_ = 0
+MaybeGenerateLegalActions: Generated 86 actions for phase kPlaceToken player 1
+DoApplyAction: Player Green applying move type kPlaceToken (Action: 120)
+Place token. Tokens placed:6, NumPlayers: 2
+DoApplyAction: Next player: Red (ID 0)
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+State: 
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Current Player: Red (ID: 0)
+
+                                   [ -5,  5,  0] [ -4,  5, -1] [ -3,  5, -2] [ -2,  5, -3] [ -1,  5, -4] [  0,  5, -5]                                      | (m3:sb1,sz1,cz1) (m3:cb1,cg1,cz1) (G m3:cw1,cz2) (m3:ss1,sg1,sz1) (m3:cs1,cw1,cz1) (m3:cb1,cg1,cz1)
+                            [ -5,  4,  1] [ -4,  4,  0] [ -3,  4, -1] [ -2,  4, -2] [ -1,  4, -3] [  0,  4, -4] [  1,  4, -5]                               | (m3:cw1,cg1,sz1) (R m3:sb1,sz1,cz1) (m3:sb1,sg1,cz1) (m3:sb2,sg1) (m3:sb1,cs1,sz1) (m3:cb1,cs1,cg1) (m3:ss1,cg1,cz1)
+                     [ -5,  3,  2] [ -4,  3,  1] [ -3,  3,  0] [ -2,  3, -1] [ -1,  3, -2] [  0,  3, -3] [  1,  3, -4] [  2,  3, -5]                        | (m3:ss1,sz1,cz1) (m3:cs1,cg1,sz1) (m3:cb1,sg1,cg1) (m3:cs1,sz1,ct1) (m3:cw1,sg1,cg1) (m3:cb2,cz1) (m3:ss1,cg1,sz1) (m3:ss1,sz1,cz1)
+              [ -5,  2,  3] [ -4,  2,  2] [ -3,  2,  1] [ -2,  2,  0] [ -1,  2, -1] [  0,  2, -2] [  1,  2, -3] [  2,  2, -4] [  3,  2, -5]                 | (m3:sb1,cb1,cs1) (m3:cg1,sz1,cz1) (m3:cb1,cw1,cg1) (m3:cb1,cs1,ct1) (m3:sz1,cz1,ct1) (m3:sb2,cs1) (m3:ss1,sg2) (m3:cg3) (m3:cb1,ss1,cs1)
+       [ -5,  1,  4] [ -4,  1,  3] [ -3,  1,  2] [ -2,  1,  1] [ -1,  1,  0] [  0,  1, -1] [  1,  1, -2] [  2,  1, -3] [  3,  1, -4] [  4,  1, -5]          | (m3:sb1,sg1,ct1) (m3:cs1,sg1,ct1) (m3:cs1,sg1,sz1) (m3:cz2,ct1) (m3:sb1,sg1,sz1) (m3:ss1,cg1,cz1) (m3:sb1,cw1,sg1) (m3:sb1,cs2) (m3:sg1,cz1,ct1) (m3:sb1,cg1,sz1)
+[ -5,  0,  5] [ -4,  0,  4] [ -3,  0,  3] [ -2,  0,  2] [ -1,  0,  1] [  0,  0,  0] [  1,  0, -1] [  2,  0, -2] [  3,  0, -3] [  4,  0, -4] [  5,  0, -5]   | (m3:sb1,cb1,cs1) (m3:cg2,ct1) (m3:sb1,cw2) (m3:cz1,ct2) (m3:cw1,cg1,cz1) (m3:cz2,ct1) (m3:sz2,ct1) (m3:cb1,ct2) (G m3:cw1,cz1,ct1) (R m3:sb1,cs1,cg1) (m3:sg1,cg1,cz1)
+       [ -4, -1,  5] [ -3, -1,  4] [ -2, -1,  3] [ -1, -1,  2] [  0, -1,  1] [  1, -1,  0] [  2, -1, -1] [  3, -1, -2] [  4, -1, -3] [  5, -1, -4]          | (m3:sb3) (m3:cb1,sg1,cg1) (m3:cw1,sg2) (m3:sb1,cb1,cw1) (m3:cb1,ct2) (m3:cb1,cs2) (m3:ss1,ct2) (m3:ss1,sz1,ct1) (R m3:cs2,ct1) (m3:sb1,cb1,sz1)
+              [ -3, -2,  5] [ -2, -2,  4] [ -1, -2,  3] [  0, -2,  2] [  1, -2,  1] [  2, -2,  0] [  3, -2, -1] [  4, -2, -2] [  5, -2, -3]                 | (m3:ss1,cs1,sz1) (m3:cb1,cg1,cz1) (m3:ss2,cz1) (m3:cg1,sz1,cz1) (m3:cb1,cz2) (m3:sb1,sg1,cg1) (m3:cw1,sg1,ct1) (m3:sb1,cs1,ct1) (G m3:ss3)
+                     [ -2, -3,  5] [ -1, -3,  4] [  0, -3,  3] [  1, -3,  2] [  2, -3,  1] [  3, -3,  0] [  4, -3, -1] [  5, -3, -2]                        | (m3:ss1,cg2) (m3:cs2,ct1) (m3:sz2,cz1) (m3:cb1,cs1,sz1) (m3:sb1,cz1,ct1) (m3:sb1,cb1,cz1) (m3:cs1,cw1,sz1) (m3:sb1,sg1,cz1)
+                            [ -1, -4,  5] [  0, -4,  4] [  1, -4,  3] [  2, -4,  2] [  3, -4,  1] [  4, -4,  0] [  5, -4, -1]                               | (m3:sb1,cs1,sg1) (m3:cb1,cw1,sg1) (m3:cs1,cg1,cz1) (m3:ss1,cs1,cw1) (m3:sb1,sz1,ct1) (m3:sg3) (m3:sb1,cs1,sz1)
+                                   [  0, -5,  5] [  1, -5,  4] [  2, -5,  3] [  3, -5,  2] [  4, -5,  1] [  5, -5,  0]                                      | (m3:cw1,sg1,cg1) (m3:sb1,cz2) (m3:sb1,cw1,cz1) (m3:cw1,cg1,cz1) (m3:cb1,cs1,cg1) (m3:ss1,cs1,sz1)
+
+--- Resources ---
+Red (ID:0):
+  Common: {}
+  Rare:   {}
+Green (ID:1):
+  Common: {}
+  Rare:   {}
+---------------
+
+player DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Mali_BaGame Constructor: START
+Mali_BaGame Constructor: Params read & checked
+Mali_BaGame Constructor: Using default player colors for 2 players.
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: Board contains 91 hexes.
+Mali_BaGame Constructor: Processing RNG seed...
+  Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
+  Storing time-based RNG seed: 1745059213915666867
+InitializeLookups: Successfully mapped 91 hexes.
+Mali_BaGame Constructor: END
+Deserialize JSON input: {"commonGoods":[{},{}],"currentPhase":2,"currentPlayerId":0,"hexMeeples":{"-1,-1,2":[4,1,0],"-1,-2,3":[2,2,8],"-1,-3,4":[3,3,9],"-1,-4,5":[5,0,3],"-1,0,1":[6,8,4],"-1,1,0":[5,7,0],"-1,2,-1":[7,9,8],"-...
+Mali_BaState Constructor: Seeding state RNG with 1745059213915666867
+Deserialize JSON: Successfully parsed state.
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+Rewards: 0 0
+Returns: 0 0
+Sum Rewards: 0 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+DEBUG IsChanceNode() called. setup_phase_ = 0
+chose action: 155 (PlaceToken@(1,-1,0))
+DEBUG CurrentPlayer: Checkpoint Start. setup_phase_=0, is_terminal_=0, current_player_id_=0
+DEBUG CurrentPlayer: Returning current_player_id_ = 0
+DEBUG DoApplyAction: START. Action=155, Current setup_phase_=0, Current player=0
+Spiel Fatal Error: Cannot perform placement action 155 in play phase.
