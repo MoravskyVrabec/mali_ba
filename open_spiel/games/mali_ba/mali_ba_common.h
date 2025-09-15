@@ -1,5 +1,5 @@
 // Copyright 2025 DeepMind Technologies Limited
-//
+//queue size
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -100,13 +100,28 @@ namespace open_spiel
 
     inline constexpr int NumDistinctActions() { return kMaxActions; }
 
-
     // Observation tensor shape
+    /* -----------------------------------------------------
+    Mali-Ba Observation Tensor Planes (Total: 47)
+
+    The tensor shape is (47, 11, 11). Each cell (plane, row, col) corresponds to a specific piece of information about a hex on the board.
+    Plane Index(es)	Count	Purpose	Value Represents	Notes
+    0 - 4	5	Player Tokens	1.0 if a token of the corresponding player is present on the hex, 0.0 otherwise.	Plane 0 = Player 0 (Red), Plane 1 = Player 1 (Green), etc. A hex can only have one token, so only one of these planes will be non-zero at any hex.
+    5 - 14	10	Meeple Counts	The number of meeples of a specific color on the hex (e.g., 3.0 if there are 3 Solid Black meeples).	Plane 5 = Solid Black, Plane 6 = Clear Black, ..., Plane 14 = Clear Tan. Allows the network to see resource density.
+    15 - 19	5	Trading Posts	1.0 if a Trading Post of the corresponding player is present, 0.0 otherwise.	Plane 15 = Player 0's Posts, Plane 16 = Player 1's Posts, etc.
+    20 - 24	5	Trading Centers	1.0 if a Trading Center of the corresponding player is present, 0.0 otherwise.	Plane 20 = Player 0's Centers, Plane 21 = Player 1's Centers, etc. Separated from posts for strategic importance.
+    25	1	Cities	1.0 if the hex contains a City, 0.0 otherwise.	Highlights strategically critical locations on the board.
+    26	1	Current Player's Turn	1.0 everywhere if it is this player's turn to act, 0.0 otherwise.	This is a "uniform" plane. It tells the network "this observation is from your perspective."
+    27 - 31	5	Player's Total Common Goods	The total number of common goods owned by the corresponding player (e.g., 7.0).	Plane 27 = Player 0's total common goods. A uniform plane providing non-spatial info about a player's economic state.
+    32 - 36	5	Player's Total Rare Goods	The total number of rare goods owned by the corresponding player (e.g., 2.0).	Plane 32 = Player 0's total rare goods. A uniform plane providing non-spatial info about a player's victory progress.
+    37 - 41	5	Potential Trade Routes (Posts & Centers)	1.0 if the hex has a Post, 2.0 if it has a Center, for the corresponding player.	Plane 37 = Player 0's potential routes. Lets the CNN "see" the shape of a player's network and potential connections.
+    42 - 46	5	Active Trade Routes	1.0 if the hex is part of an active trade route for the corresponding player.	Plane 42 = Player 0's active routes. Shows currently scoring/valid routes, a direct indicator of strategic success.
+    -------------------------------------------------------- */
     inline const std::vector<int> &ObservationTensorShape()
     {
       static std::vector<int> shape = {
-          37,    // Including resource planes for kMaxPlayers
-          11, 11 // Board dimensions
+        47,    // See above for information
+        11, 11 // Board dimensions
       };
       return shape;
     }
@@ -482,6 +497,29 @@ namespace open_spiel
     struct LegalActionsResult {
         std::vector<Action> actions;
         LegalActionCounts counts;
+    };
+
+    class GoodsManager {
+    public:
+        // Singleton access pattern
+        static const GoodsManager& GetInstance() {
+            static GoodsManager instance;
+            return instance;
+        }
+
+        int GetCommonGoodIndex(const std::string& good_name) const;
+        int GetRareGoodIndex(const std::string& good_name) const;
+        const std::vector<std::string>& GetCommonGoodsList() const { return common_goods_list_; }
+        const std::vector<std::string>& GetRareGoodsList() const { return rare_goods_list_; }
+
+    private:
+        // Private constructor for singleton pattern
+        GoodsManager();
+
+        std::vector<std::string> common_goods_list_;
+        std::vector<std::string> rare_goods_list_;
+        std::map<std::string, int> common_good_to_index_;
+        std::map<std::string, int> rare_good_to_index_;
     };
 
   } // namespace mali_ba

@@ -3,8 +3,8 @@
 Mali_BaGame Constructor: START
 Mali_BaGame Constructor: Params read & checked
 Mali_BaGame Constructor: Using default player colors for 2 players.
-Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
-Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini not found. Generating regular board...
 Mali_BaGame Constructor: Board contains 91 hexes.
 Mali_BaGame Constructor: Processing RNG seed...
   Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
@@ -15,8 +15,8 @@ Mali_BaGame Constructor: END
 Mali_BaGame Constructor: START
 Mali_BaGame Constructor: Params read & checked
 Mali_BaGame Constructor: Using default player colors for 2 players.
-Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
-Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini not found. Generating regular board...
 Mali_BaGame Constructor: Board contains 91 hexes.
 Mali_BaGame Constructor: Processing RNG seed...
   Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
@@ -60,8 +60,8 @@ DEBUG IsChanceNode() called. setup_phase_ = 1
 Mali_BaGame Constructor: START
 Mali_BaGame Constructor: Params read & checked
 Mali_BaGame Constructor: Using default player colors for 2 players.
-Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
-Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini not found. Generating regular board...
 Mali_BaGame Constructor: Board contains 91 hexes.
 Mali_BaGame Constructor: Processing RNG seed...
   Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
@@ -143,8 +143,8 @@ DEBUG IsChanceNode() called. setup_phase_ = 0
 Mali_BaGame Constructor: START
 Mali_BaGame Constructor: Params read & checked
 Mali_BaGame Constructor: Using default player colors for 2 players.
-Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
-Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini not found. Generating regular board...
 Mali_BaGame Constructor: Board contains 91 hexes.
 Mali_BaGame Constructor: Processing RNG seed...
   Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
@@ -256,8 +256,8 @@ DEBUG IsChanceNode() called. setup_phase_ = 0
 Mali_BaGame Constructor: START
 Mali_BaGame Constructor: Params read & checked
 Mali_BaGame Constructor: Using default player colors for 2 players.
-Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
-Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini not found. Generating regular board...
 Mali_BaGame Constructor: Board contains 91 hexes.
 Mali_BaGame Constructor: Processing RNG seed...
   Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
@@ -369,8 +369,8 @@ DEBUG IsChanceNode() called. setup_phase_ = 0
 Mali_BaGame Constructor: START
 Mali_BaGame Constructor: Params read & checked
 Mali_BaGame Constructor: Using default player colors for 2 players.
-Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
-Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini not found. Generating regular board...
 Mali_BaGame Constructor: Board contains 91 hexes.
 Mali_BaGame Constructor: Processing RNG seed...
   Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
@@ -482,8 +482,8 @@ DEBUG IsChanceNode() called. setup_phase_ = 0
 Mali_BaGame Constructor: START
 Mali_BaGame Constructor: Params read & checked
 Mali_BaGame Constructor: Using default player colors for 2 players.
-Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
-Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini not found. Generating regular board...
 Mali_BaGame Constructor: Board contains 91 hexes.
 Mali_BaGame Constructor: Processing RNG seed...
   Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
@@ -595,8 +595,8 @@ DEBUG IsChanceNode() called. setup_phase_ = 0
 Mali_BaGame Constructor: START
 Mali_BaGame Constructor: Params read & checked
 Mali_BaGame Constructor: Using default player colors for 2 players.
-Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
-Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini not found. Generating regular board...
 Mali_BaGame Constructor: Board contains 91 hexes.
 Mali_BaGame Constructor: Processing RNG seed...
   Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
@@ -708,8 +708,8 @@ DEBUG IsChanceNode() called. setup_phase_ = 0
 Mali_BaGame Constructor: START
 Mali_BaGame Constructor: Params read & checked
 Mali_BaGame Constructor: Using default player colors for 2 players.
-Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
-Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini not found. Generating regular board...
 Mali_BaGame Constructor: Board contains 91 hexes.
 Mali_BaGame Constructor: Processing RNG seed...
   Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)
@@ -821,8 +821,8 @@ DEBUG IsChanceNode() called. setup_phase_ = 0
 Mali_BaGame Constructor: START
 Mali_BaGame Constructor: Params read & checked
 Mali_BaGame Constructor: Using default player colors for 2 players.
-Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini
-Mali_BaGame Constructor: Config file /media/robp/UD/Projects/open_spiel/build/games/mali_ba.ini not found. Generating regular board...
+Mali_BaGame Constructor: No config file specified, defaulting to /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini
+Mali_BaGame Constructor: Config file /media/robp/UD/Projects/mali_ba/build/games/mali_ba.ini not found. Generating regular board...
 Mali_BaGame Constructor: Board contains 91 hexes.
 Mali_BaGame Constructor: Processing RNG seed...
   Parameter 'rng_seed' resolved to: -1 (using default -1 if not provided)

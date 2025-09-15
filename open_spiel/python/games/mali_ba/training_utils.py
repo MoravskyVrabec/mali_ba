@@ -297,20 +297,20 @@ def create_mali_ba_policy_network(observation_shape, num_actions):
     """Creates the policy network."""
     inputs = layers.Input(shape=observation_shape)
     # Use a slightly simpler body for the policy net
-    x = layers.Conv2D(64, 3, padding='same')(inputs)
+    x = layers.Conv2D(128, 3, padding='same')(inputs)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('relu')(x)
-    for _ in range(3): # Fewer residual blocks
+    for _ in range(5): # Fewer residual blocks
         residual = x
-        x = layers.Conv2D(64, 3, padding='same')(x)
+        x = layers.Conv2D(128, 3, padding='same')(x)
         x = layers.BatchNormalization()(x)
         x = layers.Activation('relu')(x)
-        x = layers.Conv2D(64, 3, padding='same')(x)
+        x = layers.Conv2D(128, 3, padding='same')(x)
         x = layers.BatchNormalization()(x)
         x = layers.add([x, residual])
         x = layers.Activation('relu')(x)
     
-    policy_head = layers.Conv2D(2, 1, padding='same')(x)
+    policy_head = layers.Conv2D(4, 1, padding='same')(x)
     policy_head = layers.BatchNormalization()(policy_head)
     policy_head = layers.Activation('relu')(policy_head)
     policy_head = layers.Flatten()(policy_head)

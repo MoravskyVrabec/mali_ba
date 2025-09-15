@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "open_spiel/games/mali_ba/mali_ba_common.h"
 #include "open_spiel/games/mali_ba/mali_ba_observer.h"
 #include "open_spiel/games/mali_ba/mali_ba_game.h"
 #include "open_spiel/games/mali_ba/mali_ba_state.h"
@@ -104,14 +105,23 @@ namespace open_spiel
       plane_idx += kMaxPlayers;
       const int city_plane = plane_idx++;            // Plane 25
       const int current_player_plane = plane_idx++;  // Plane 26
-      const int common_goods_total_base = plane_idx; // Planes 27-(27+P-1)
+      const int common_goods_total_base = plane_idx;     // Planes 27-31
       plane_idx += kMaxPlayers;
-      const int rare_goods_total_base = plane_idx; // Planes (27+P)-(27+2P-1)
+      const int rare_goods_total_base = plane_idx;       // Planes 32-36
       plane_idx += kMaxPlayers;
+      const int player_potential_route_base = plane_idx; // Planes 37-41
+      plane_idx += kMaxPlayers;
+      const int player_active_route_base = plane_idx;    // Planes 42-46
+      plane_idx += kMaxPlayers;
+      // --- INDIVIDUAL GOODS PLANES ---
+      const int individual_common_good_base = plane_idx; // Planes 47-61 (15 planes)
+      plane_idx += 15;
+      const int individual_rare_good_base = plane_idx;   // Planes 62-76 (15 planes)
+      plane_idx += 15;
 
       // Check if calculated planes match expected shape
       SPIEL_CHECK_LE(plane_idx, num_planes);
-      int expected_total_planes = 5 + 10 + kMaxPlayers + kMaxPlayers + 1 + 1 + kMaxPlayers + kMaxPlayers;
+      int expected_total_planes = 5 + 10 + kMaxPlayers + kMaxPlayers + 1 + 1 + kMaxPlayers + kMaxPlayers + kMaxPlayers + kMaxPlayers + 15 + 15;
       SPIEL_CHECK_EQ(plane_idx, expected_total_planes);
       SPIEL_CHECK_EQ(expected_total_planes, num_planes); // Ensure matches shape definition
 
@@ -178,7 +188,7 @@ namespace open_spiel
           }
 
           // ==================================================================
-          // 3. Trade Posts & Centers (Corrected Logic)
+          // 3. Trade Posts & Centers
           // ==================================================================
           const auto &posts_at_hex = mali_ba_state->GetTradePostsAt(hex); // Get the vector of posts
 
@@ -234,7 +244,7 @@ namespace open_spiel
             } // end if (post is valid)
           } // end for loop over posts_at_hex
           // ==================================================================
-          // End Corrected Trade Post / Center Logic
+          // End Trade Post / Center Logic
           // ==================================================================
 
           // 4. Cities
@@ -317,6 +327,38 @@ namespace open_spiel
           std::cerr << "WriteTensor WARNING: Invalid plane index for rare goods total for player " << p << std::endl;
         }
       }
+
+      // Note: We only fill these planes for the player whose perspective this is ('player').
+      // The network doesn't need to know the exact inventory of opponents, just their totals
+      // (which we already provide in planes 27-36).
+
+      // 7. Individual Common Goods
+      const auto& common_goods_map = mali_ba_state->GetPlayerCommonGoods(player);
+      for (const auto& [good_name, count] : common_goods_map) {
+          int good_index = GoodsManager::GetInstance().GetCommonGoodIndex(good_name);
+          if (good_index != -1) {
+              int plane = individual_common_good_base + good_index;
+              int plane_offset = plane * HxW;
+              // Fill the entire plane with the count for this good
+              for (int i = 0; i < HxW; ++i) {
+                  values[plane_offset + i] = static_cast<float>(count);
+              }
+          }
+      }
+      
+      // 8. Individual Rare Goods
+      const auto& rare_goods_map = mali_ba_state->GetPlayerRareGoods(player);
+      for (const auto& [good_name, count] : rare_goods_map) {
+          int good_index = GoodsManager::GetInstance().GetRareGoodIndex(good_name);
+          if (good_index != -1) {
+              int plane = individual_rare_good_base + good_index;
+              int plane_offset = plane * HxW;
+              // Fill the entire plane with the count for this good
+              for (int i = 0; i < HxW; ++i) {
+                  values[plane_offset + i] = static_cast<float>(count);
+              }
+          }
+      }      
     } // End WriteTensor
 
     // Implement the StringFrom method required by the Observer base class

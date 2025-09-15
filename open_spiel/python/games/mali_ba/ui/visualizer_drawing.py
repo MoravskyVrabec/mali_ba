@@ -1,6 +1,6 @@
 # --- START OF FILE visualizer_drawing.py ---
 import sys
-sys.path.append("/media/robp/UD/Projects/open_spiel/open_spiel/python/games") # allow debugging in vs code
+sys.path.append("/media/robp/UD/Projects/mali_ba/open_spiel/python/games") # allow debugging in vs code
 import pygame
 import os
 import math

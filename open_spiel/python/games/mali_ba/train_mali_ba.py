@@ -705,7 +705,7 @@ def main(args):
 
 
         if total_games_processed % 10 == 0:
-            log(LogLevel.INFO, f"Queue sizes - Jobs: {job_queue.qsize()}, "
+            log(LogLevel.DEBUG, f"Queue sizes - Jobs: {job_queue.qsize()}, "
                             f"Results: {result_queue.qsize()}, "
                             f"Replay: {replay_buffer_queue.qsize()}")
 
@@ -899,7 +899,7 @@ if __name__ == "__main__":
     # ... (all args are the same) ...
     parser.add_argument('--num_actors', type=int, default=max(1, os.cpu_count() - 2), help="Number of actor processes to run in parallel.")
     parser.add_argument('--game_name', type=str, default="mali_ba")
-    parser.add_argument('--config_file', type=str, default="/home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini")
+    parser.add_argument('--config_file', type=str, default="/home/robp/Projects/mali_ba/open_spiel/games/mali_ba/mali_ba.ini")
     parser.add_argument('--players', type=int, default=None, choices=range(2, 6))
     parser.add_argument('--grid_radius', type=int, default=None)
     parser.add_argument('--num_episodes', type=int, default=1000)

@@ -1,7 +1,7 @@
 # --- START OF FILE game_state.py ---
 
 import sys
-sys.path.append("/media/robp/UD/Projects/open_spiel/open_spiel/python/games") # allow debugging in vs code
+sys.path.append("/media/robp/UD/Projects/mali_ba/open_spiel/python/games") # allow debugging in vs code
 from typing import Dict, List, Set, Optional, Tuple
 from mali_ba.config import PlayerColor, MeepleColor, Phase
 from mali_ba.classes.classes_other import TradePost, City, HexCoord, TradeRoute

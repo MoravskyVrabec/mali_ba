@@ -36,7 +36,10 @@ namespace open_spiel
       int MaxChanceOutcomes() const override;
       std::unique_ptr<open_spiel::State> NewInitialState() const override;
       std::unique_ptr<State> NewInitialState(const std::string &str) const override;
-      std::vector<int> ObservationTensorShape() const override;
+      //std::vector<int> ObservationTensorShape() const override;
+      // Make this override non-const so it can cache the result, or calculate it on the fly.
+      // For simplicity, we will calculate it and store it during construction.
+      std::vector<int> ObservationTensorShape() const override { return observation_tensor_shape_; }
       std::unique_ptr<State> DeserializeState(const std::string &str) const override;
       std::shared_ptr<Observer> MakeObserver(
           absl::optional<IIGObservationType> iig_obs_type,
@@ -95,6 +98,7 @@ namespace open_spiel
       void InitializeLookups();
 
       // --- Game Configuration (read from parameters and INI) ---
+      std::vector<int> observation_tensor_shape_; // Will store the dynamically calculated shape
       GameRules rules_;
       HeuristicWeights heuristic_weights_;
       TrainingParameters training_params_;

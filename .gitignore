@@ -23,6 +23,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 temp.sh
+*.h5
 open_spiel/games/mali_ba/models
 open_spiel/games/amazons
 open_spiel/games/backgammon

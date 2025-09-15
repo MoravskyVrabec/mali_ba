@@ -4,6 +4,7 @@
 #include "open_spiel/games/mali_ba/mali_ba_common.h"
 #include "open_spiel/games/mali_ba/mali_ba_state.h"
 #include "open_spiel/games/mali_ba/mali_ba_game.h"
+#include "open_spiel/games/mali_ba/mali_ba_observer.h"
 #include "open_spiel/games/mali_ba/hex_grid.h"
 
 #include <algorithm>
@@ -16,7 +17,9 @@
 #include "open_spiel/abseil-cpp/absl/strings/str_cat.h"
 #include "open_spiel/spiel.h"
 #include "open_spiel/spiel_globals.h"
+#include "open_spiel/observer.h"
 #include "open_spiel/spiel_utils.h"
+#include "open_spiel/utils/tensor_view.h" // THIS INCLUDE for DataType
 
 namespace open_spiel
 {
@@ -26,6 +29,29 @@ namespace open_spiel
             // Max values needed for plane indexing (match observer)
             constexpr int kMaxPlayersObs = 5;
             constexpr int kNumMeepleColorsObs = 10;
+
+            class VectorTensorAllocator : public Allocator {
+            public:
+                static int GetSize(const absl::InlinedVector<int, 4>& shape) { // Pass by const ref here is fine
+                    if (shape.empty()) return 0;
+                    return std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int>());
+                }
+
+                SpanTensor Get(absl::string_view name,
+                                const absl::InlinedVector<int, 4>& shape) override {
+                    SPIEL_CHECK_EQ(name, "observation");
+                    buffer_.resize(GetSize(shape));
+
+                    SpanTensorInfo info(name, shape);
+
+                    return SpanTensor(info, absl::MakeSpan(buffer_));
+                }
+
+                const std::vector<float>& GetBuffer() const { return buffer_; }
+
+            private:
+                std::vector<float> buffer_;
+            };
         } // namespace
 
         // --- State Constructor ---
@@ -1437,73 +1463,22 @@ namespace open_spiel
 
 
         void Mali_BaState::ObservationTensor(Player player, absl::Span<float> values) const {
-            // Clear all values first
-            std::fill(values.begin(), values.end(), 0.0f);
+            // 1. Get the game object.
+            std::shared_ptr<const Game> game = State::GetGame();
+            SPIEL_CHECK_TRUE(game != nullptr);
             
-            // Basic state encoding - this will give your network meaningful input
-            int idx = 0;
-            
-            // Encode current player
-            if (idx < values.size()) {
-                values[idx++] = static_cast<float>(current_player_id_);
-            }
-            
-            // Encode current phase
-            if (idx < values.size()) {
-                values[idx++] = static_cast<float>(current_phase_);
-            }
-            
-            // Encode player-specific information
-            if (idx < values.size()) {
-                values[idx++] = (current_player_id_ == player) ? 1.0f : 0.0f;
-            }
-            
-            // Encode some game state (meeples and trade posts)
-            const Mali_BaGame* mali_ba_game = GetGame();
-            if (mali_ba_game) {
-                // Encode hex information
-                for (const auto& hex : mali_ba_game->GetValidHexes()) {
-                    if (idx >= values.size()) break;
-                    
-                    // Number of meeples at this hex
-                    auto meeple_it = hex_meeples_.find(hex);
-                    if (meeple_it != hex_meeples_.end()) {
-                        values[idx++] = static_cast<float>(meeple_it->second.size());
-                    } else {
-                        values[idx++] = 0.0f;
-                    }
-                    
-                    if (idx >= values.size()) break;
-                    
-                    // Number of trade posts at this hex
-                    auto trade_it = trade_posts_locations_.find(hex);
-                    if (trade_it != trade_posts_locations_.end()) {
-                        values[idx++] = static_cast<float>(trade_it->second.size());
-                    } else {
-                        values[idx++] = 0.0f;
-                    }
-                }
-                
-                // Encode player resources (common goods)
-                if (player >= 0 && player < common_goods_.size()) {
-                    for (const auto& [good_name, count] : common_goods_[player]) {
-                        if (idx >= values.size()) break;
-                        values[idx++] = static_cast<float>(count);
-                    }
-                }
-                
-                // Encode player resources (rare goods)
-                if (player >= 0 && player < rare_goods_.size()) {
-                    for (const auto& [good_name, count] : rare_goods_[player]) {
-                        if (idx >= values.size()) break;
-                        values[idx++] = static_cast<float>(count);
-                    }
-                }
-            }
-            
-            // Note: This is a basic implementation. You can expand it to match
-            // the full complexity of your MaliBaObserver later, but this should
-            // give your neural network meaningful, non-zero inputs to learn from.
+            // 2. Create the observer.
+            std::shared_ptr<Observer> observer = game->MakeObserver(absl::nullopt, {});
+            SPIEL_CHECK_TRUE(observer != nullptr);
+
+            // 3. Use our local allocator to get the tensor from the observer.
+            VectorTensorAllocator allocator;
+            observer->WriteTensor(*this, player, &allocator);
+
+            // 4. Copy the data from the allocator's buffer into the provided span.
+            const std::vector<float>& tensor_data = allocator.GetBuffer();
+            SPIEL_CHECK_EQ(tensor_data.size(), values.size());
+            std::copy(tensor_data.begin(), tensor_data.end(), values.begin());
         }
 
         void Mali_BaState::ClearCaches() {

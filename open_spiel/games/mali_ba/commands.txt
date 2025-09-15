@@ -1,11 +1,11 @@
 =================================================================
 Python
 =================================================================
-cd /media/robp/UD/Projects/open_spiel/open_spiel/python/games
-cd /home/robp/Projects/open_spiel/open_spiel/python/games
+cd /media/robp/UD/Projects/mali_ba/open_spiel/python/games
+cd /home/robp/Projects/mali_ba/open_spiel/python/games
 python mali_ba/main.py --mode gui_replay --replay_file /tmp/mali_ba.states.20250708_150403.log
 
-python mali_ba/main.py --mode cpp_sync_gui --config_file /home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini
+python mali_ba/main.py --mode cpp_sync_gui --config_file /home/robp/Projects/mali_ba/open_spiel/games/mali_ba/mali_ba.ini
 
 ** Python debug set args in launch.json (click debug, then gear)
 
@@ -19,16 +19,16 @@ grep -r "GameType(open_spiel::GameType const" --include=\*.{cc,h} .
 
 conda activate open_spiel
 
-cd /media/robp/UD/Projects/open_spiel/open_spiel/games/mali_ba
+cd /media/robp/UD/Projects/mali_ba/open_spiel/games/mali_ba
 
-export PYTHONPATH="/home/robp/Projects/open_spiel/build/python:/home/robp/Projects/open_spiel/open_spiel/python/games:${PYTHONPATH}" # Adjust if pyspiel.so is elsewhere
-export PYTHONPATH="/home/robp/Projects/open_spiel/open_spiel/python/games:${PYTHONPATH}" # For mali_ba package
-export PYTHONPATH="/media/robp/UD/Projects/open_spiel/build/python:${PYTHONPATH}" # Adjust if pyspiel.so is elsewhere
-export PYTHONPATH="/media/robp/UD/Projects/open_spiel/open_spiel/python/games:${PYTHONPATH}" # For mali_ba package
+export PYTHONPATH="/home/robp/Projects/mali_ba/build/python:/home/robp/Projects/mali_ba/open_spiel/python/games:${PYTHONPATH}" # Adjust if pyspiel.so is elsewhere
+export PYTHONPATH="/home/robp/Projects/mali_ba/open_spiel/python/games:${PYTHONPATH}" # For mali_ba package
+export PYTHONPATH="/media/robp/UD/Projects/mali_ba/build/python:${PYTHONPATH}" # Adjust if pyspiel.so is elsewhere
+export PYTHONPATH="/media/robp/UD/Projects/mali_ba/open_spiel/python/games:${PYTHONPATH}" # For mali_ba package
 
 python mali_ba/main.py --mode gui_replay --game_file mali_ba.states.20250711_170032.log
 
-python mali_ba/main.py --mode cpp_sync_gui  --players 3 --config_file /home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini
+python mali_ba/main.py --mode cpp_sync_gui  --players 3 --config_file /home/robp/Projects/mali_ba/open_spiel/games/mali_ba/mali_ba.ini
 
 # TRAINING: 
 # ---------------------------
@@ -53,9 +53,9 @@ python open_spiel/python/games/mali_ba/train_mali_ba.py --bootstrap 50 --num_epi
 
 python open_spiel/python/games/mali_ba/train_mali_ba.py --bootstrap 10 --num_episodes 1000 --max_simulations 16 --uct_c 1.4 --learning_rate 0.0003 --batch_size 64 --replay_buffer_size 50000 --max_diversity
 
-python open_spiel/python/games/mali_ba/train_mali_ba.py  --uct_c 1.4 --batch_size 128 --replay_buffer_size 50000 --config_file "/home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini"       --save_model_path "/home/robp/Projects/open_spiel/mali_ba_agent_v03.weights.h5" --load_model_path "/home/robp/Projects/open_spiel/mali_ba_agent_v02.weights.h5" --save_every 5 --learning_rate 0.0002    --max_simulations 100 --num_actors 20 --bootstrap_episodes 200 --num_episodes 400 
+python open_spiel/python/games/mali_ba/train_mali_ba.py  --uct_c 1.4 --batch_size 128 --replay_buffer_size 50000 --config_file "/home/robp/Projects/mali_ba/open_spiel/games/mali_ba/mali_ba.ini"       --save_model_path "/home/robp/Projects/mali_ba/mali_ba_agent_v03.weights.h5" --load_model_path "/home/robp/Projects/mali_ba/mali_ba_agent_v02.weights.h5" --save_every 5 --learning_rate 0.0002    --max_simulations 100 --num_actors 20 --bootstrap_episodes 200 --num_episodes 400 
 
-python open_spiel/python/games/mali_ba/train_mali_ba.py  --uct_c 1.0  --batch_size 64 --replay_buffer_size 5000 --config_file "/home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini"  --save_model_path "/home/robp/Projects/open_spiel/mali_ba_agent_v01.weights.h5" --load_model_path "/home/robp/Projects/open_spiel/mali_ba_agent_vxx.weights.h5" --save_every 4 --learning_rate 0.001  --max_simulations 50 --num_actors 5 --games_per_actor 2 --bootstrap_episodes 24  --num_episodes 48
+python open_spiel/python/games/mali_ba/train_mali_ba.py  --uct_c 1.0  --batch_size 64 --replay_buffer_size 5000 --config_file "/home/robp/Projects/mali_ba/open_spiel/games/mali_ba/mali_ba.ini"  --save_model_path "/home/robp/Projects/mali_ba/mali_ba_agent_v01.weights.h5" --load_model_path "/home/robp/Projects/mali_ba/mali_ba_agent_vxx.weights.h5" --save_every 4 --learning_rate 0.001  --max_simulations 50 --num_actors 5 --games_per_actor 2 --bootstrap_episodes 24  --num_episodes 48
 
 
 # ---------------------------
@@ -89,13 +89,13 @@ CXX=clang++ cmake -DCMAKE_BUILD_TYPE=Debug   -DPython3_EXECUTABLE=$(which python
 C++ test
 =================================================================
 games/mali_ba_test
-games/mali_ba_test --log_moves --config_file /home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini
+games/mali_ba_test --log_moves --config_file /home/robp/Projects/mali_ba/open_spiel/games/mali_ba/mali_ba.ini
 
 =================================================================
 C++ debug
 =================================================================
 
-LD_PRELOAD=/home/robp/miniconda3/envs/open_spiel/lib/libasan.so python /media/robp/UD/Projects/open_spiel/open_spiel/python/games/mali_ba/main.py --mode cpp_sync_gui --players 3 --grid_radius 5
+LD_PRELOAD=/home/robp/miniconda3/envs/open_spiel/lib/libasan.so python /media/robp/UD/Projects/mali_ba/open_spiel/python/games/mali_ba/main.py --mode cpp_sync_gui --players 3 --grid_radius 5
 ===========================
 # Find your ASan runtime again (same as above)
 ASAN_LIB_PATH=/home/robp/miniconda3/envs/open_spiel/lib/libasan.so
@@ -107,10 +107,10 @@ gdb python
 # Inside GDB:
 (gdb) 
 set env LD_PRELOAD=/home/robp/miniconda3/envs/open_spiel/lib/libasan.so
-set env PYTHONPATH=/home/robp/Projects/open_spiel/build/python:/home/robp/Projects/open_spiel/open_spiel/python/games:
-set args /home/robp/Projects/open_spiel/open_spiel/python/games/mali_ba/main.py --mode cpp_sync_gui --players 3 --grid_radius 5
-set args /home/robp/Projects/open_spiel/open_spiel/python/games/mali_ba/main.py --mode cpp_sync_gui --config_file /home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini
-set args --log_moves --config_file /home/robp/Projects/open_spiel/open_spiel/games/mali_ba/mali_ba.ini
+set env PYTHONPATH=/home/robp/Projects/mali_ba/build/python:/home/robp/Projects/mali_ba/open_spiel/python/games:
+set args /home/robp/Projects/mali_ba/open_spiel/python/games/mali_ba/main.py --mode cpp_sync_gui --players 3 --grid_radius 5
+set args /home/robp/Projects/mali_ba/open_spiel/python/games/mali_ba/main.py --mode cpp_sync_gui --config_file /home/robp/Projects/mali_ba/open_spiel/games/mali_ba/mali_ba.ini
+set args --log_moves --config_file /home/robp/Projects/mali_ba/open_spiel/games/mali_ba/mali_ba.ini
 (gdb) run
 bt (after seg fault)
 

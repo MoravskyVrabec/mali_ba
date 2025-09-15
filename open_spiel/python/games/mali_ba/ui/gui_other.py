@@ -1,5 +1,5 @@
 import sys
-sys.path.append("/media/robp/UD/Projects/open_spiel/open_spiel/python/games") # allow debugging in vs code
+sys.path.append("/media/robp/UD/Projects/mali_ba/open_spiel/python/games") # allow debugging in vs code
 import pygame
 from typing import List, Dict, Optional, Tuple
 from mali_ba.classes.game_state import GameStateCache

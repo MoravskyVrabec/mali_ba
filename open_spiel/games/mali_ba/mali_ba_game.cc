@@ -109,7 +109,61 @@ namespace open_spiel
                 }
                 return result;
             }
+
+            // --- Helper to calculate the board radius needed to contain a particular
+            // board made up of custom hexes ---
+            int CalculateEffectiveRadius(const std::set<HexCoord>& hexes) {
+                if (hexes.empty()) {
+                    return 0; // Or a default radius like 3
+                }
+                int max_abs_coord = 0;
+                for (const auto& hex : hexes) {
+                    max_abs_coord = std::max({max_abs_coord, std::abs(hex.x), std::abs(hex.y), std::abs(hex.z)});
+                }
+                return max_abs_coord;
+            }
         } // namespace
+
+        // =====================================================================
+        // --- GoodsManager Implementation ---
+        // =====================================================================
+        GoodsManager::GoodsManager() {
+            // Use a set to gather unique good names, which also sorts them alphabetically
+            std::set<std::string> common_goods_set;
+            std::set<std::string> rare_goods_set;
+
+            for (const auto& [id, details] : kCityDetailsMap) {
+                common_goods_set.insert(details.common_good);
+                rare_goods_set.insert(details.rare_good);
+            }
+
+            // Copy from sorted sets to the final vectors
+            common_goods_list_.assign(common_goods_set.begin(), common_goods_set.end());
+            rare_goods_list_.assign(rare_goods_set.begin(), rare_goods_set.end());
+
+            // Create the fast lookup maps
+            for (int i = 0; i < common_goods_list_.size(); ++i) {
+                common_good_to_index_[common_goods_list_[i]] = i;
+            }
+            for (int i = 0; i < rare_goods_list_.size(); ++i) {
+                rare_good_to_index_[rare_goods_list_[i]] = i;
+            }
+
+            // Sanity check
+            SPIEL_CHECK_EQ(common_goods_list_.size(), 15);
+            SPIEL_CHECK_EQ(rare_goods_list_.size(), 15);
+        }
+
+        int GoodsManager::GetCommonGoodIndex(const std::string& good_name) const {
+            auto it = common_good_to_index_.find(good_name);
+            return (it != common_good_to_index_.end()) ? it->second : -1;
+        }
+
+        int GoodsManager::GetRareGoodIndex(const std::string& good_name) const {
+            auto it = rare_good_to_index_.find(good_name);
+            return (it != rare_good_to_index_.end()) ? it->second : -1;
+        }
+        // =====================================================================
 
         const GameType kGameType{
             "mali_ba",
@@ -151,12 +205,21 @@ namespace open_spiel
             }
         };
 
+        // =====================================================================
+        // --- Factory ---
+        // =====================================================================
         std::shared_ptr<const Game> Factory(const GameParameters &params) {
             return std::make_shared<Mali_BaGame>(params);
         }
         
+        // =====================================================================
+        // --- Register game ---
+        // =====================================================================
         REGISTER_SPIEL_GAME(kGameType, Factory);
 
+        // =====================================================================
+        // --- Constructor ---
+        // =====================================================================
         Mali_BaGame::Mali_BaGame(const GameParameters &params)
             : Game(kGameType, params)
         {
@@ -165,6 +228,7 @@ namespace open_spiel
             GameParameters effective_params = params;
             std::string config_file_path = ParameterValue<std::string>("config_file");
 
+            // Lambda function
             auto get_effective_param = [&](const std::string& key, auto default_value) {
                 using T = decltype(default_value);
                 auto it_effective = effective_params.find(key);
@@ -180,7 +244,6 @@ namespace open_spiel
             std::map<std::string, std::string> board_section_params;
             std::map<std::string, std::string> heuristics_section_params;
             std::map<std::string, std::string> training_section_params; 
-
 
             if (!config_file_path.empty()) {
                 LOG_DEBUG("Found 'config_file', attempting to parse: ", config_file_path);
@@ -319,10 +382,25 @@ namespace open_spiel
             LOG_DEBUG("DEBUG: rng_seed_ = ", rng_seed_, "seed_val = ", seed_val);
             LOG_DEBUG("Mali_BaGame: Configuring game from effective parameters...");
             
+            // Check if the INI file included hexes to create a custom board.  If not, make a hexagonal
+            // board.  If there are hexes for a custom board, make that board and also calculate the
+            // radius of a regular hexagonal board that would contain the custom board. This info will 
+            // be used when building the observation tensor.
             if (!custom_board_defined) {
                 LOG_WARN("No regional 'custom_hexesX' found. Generating regular board with radius: ", grid_radius_);
                 valid_hexes_ = GenerateRegularBoard(grid_radius_);
             } else {
+                // If a custom board was defined, we calculate its true radius.
+                int effective_radius = CalculateEffectiveRadius(valid_hexes_);
+                
+                LOG_INFO("Mali_BaGame: Custom board detected. Calculating effective radius...");
+                LOG_INFO("Mali_BaGame:   INI grid_radius (will be ignored): ", grid_radius_);
+                LOG_INFO("Mali_BaGame:   Calculated effective radius: ", effective_radius);
+                
+                // Overwrite the member variable with the calculated radius.
+                // This is now the single source of truth for the board's dimensions.
+                grid_radius_ = effective_radius;
+
                 LOG_DEBUG("Constructed board from ", hex_to_region_map_.size(), " hexes across custom regions.");
             }
 
@@ -525,6 +603,18 @@ namespace open_spiel
             if (num_players_ > 3) player_colors_.push_back(PlayerColor::kViolet);
             if (num_players_ > 4) player_colors_.push_back(PlayerColor::kPink);
 
+            // Dynamically build the observation tensor
+            int dimension = grid_radius_ * 2 + 1;
+            constexpr int kNumPlanes = 77; // see mali_ba_observer.cc for info
+            observation_tensor_shape_ = {kNumPlanes, dimension, dimension};
+
+            LOG_INFO("Mali_BaGame: Dynamically configured observation tensor shape to: {",
+                    observation_tensor_shape_[0], ", ",
+                    observation_tensor_shape_[1], ", ",
+                    observation_tensor_shape_[2], "} based on effective grid radius of ",
+                    grid_radius_);
+
+
             LOG_INFO("Mali_BaGame: Final configuration complete.");
             InitializeLookups();
         }
@@ -548,10 +638,6 @@ namespace open_spiel
 
         std::unique_ptr<State> Mali_BaGame::NewInitialState(const std::string &str) const {
             return DeserializeState(str);
-        }
-
-        std::vector<int> Mali_BaGame::ObservationTensorShape() const {
-            return mali_ba::ObservationTensorShape();
         }
         
         std::shared_ptr<Observer> Mali_BaGame::MakeObserver(
