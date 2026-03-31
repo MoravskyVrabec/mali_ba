@@ -1,0 +1,6 @@
+# These are edits made to open_spiel-specific files in the Projects/open_spiel folder so that my mali_ba game will compile
+
+File: /media/robp/UD/Projects/open_spiel/open_spiel/CMakeLists.txt
+
+
+File: /media/robp/UD/Projects/open_spiel/open_spiel/python/pybind11/pyspiel.cc

@@ -1,3 +1,16 @@
+/media/robp/UD/Projects/
+    open_spiel/          ← the official repo you already cloned
+    mali_ba/             ← your lean repo, mirroring the OpenSpiel structure
+        open_spiel/
+            python/
+                games/
+                    mali_ba*.py
+            games/
+                mali_ba/
+                    mali_ba*.cc
+                    mali_ba*.h
+                CMakeLists.txt  ← your edits
+        OPENSPIEL_EDITS.txt
 =================================================================
 Python
 =================================================================
