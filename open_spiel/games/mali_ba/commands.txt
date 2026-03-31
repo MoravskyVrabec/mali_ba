@@ -7,6 +7,8 @@ python mali_ba/main.py --mode gui_replay --replay_file /tmp/mali_ba.states.20250
 
 python mali_ba/main.py --mode cpp_sync_gui --config_file /home/robp/Projects/mali_ba/open_spiel/games/mali_ba/mali_ba.ini
 
+python mali_ba/main.py --mode gui_sync_cpp --config_file /home/robp/Projects/mali_ba/open_spiel/games/mali_ba/mali_ba.ini python main.py --player_types human,ai,ai --ai_models models/strong_ai.weights.h5,models/weak_ai.weights.h5 --ai_thinking_times 1.5,1.0  --ai_strengths 1.5,0.8
+
 ** Python debug set args in launch.json (click debug, then gear)
 
 =================================================================

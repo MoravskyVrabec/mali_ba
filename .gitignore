@@ -24,6 +24,12 @@ __pycache__/
 Thumbs.db
 temp.sh
 *.h5
+*.jpeg
+*.jpg
+*.psd
+*.xcf
+*.png
+open_spiel/games/mali_ba/non-code_docs
 open_spiel/games/mali_ba/models
 open_spiel/games/amazons
 open_spiel/games/backgammon

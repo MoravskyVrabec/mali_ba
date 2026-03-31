@@ -5,12 +5,12 @@ from mali_ba.classes.classes_other import TradePost, City, HexCoord, TradePostTy
 from mali_ba.classes.game_state import GameStateCache
 from mali_ba.ui.gui_other import InteractiveObject, InteractiveObjectManager, ControlPanel, Sidebar, DialogBox
 from mali_ba.utils.cpp_interface import GameInterface
+from mali_ba.ui.visualizer_other import BoardVisualizerHelpers, parse_and_update_state_from_json, can_start_mancala_at, is_valid_mancala_step, can_select_for_upgrade, can_add_to_trade_route
 
 # Import the new drawing and parsing modules
 from mali_ba.ui.visualizer_drawing import draw_board_state, load_background_map
-# THIS IS THE CORRECTED IMPORT:
-from mali_ba.ui.visualizer_other import BoardVisualizerHelpers, parse_and_update_state_from_json, can_start_mancala_at, is_valid_mancala_step, can_select_for_upgrade, can_add_to_trade_route
 
+import pygame
 import json
 import math
 import os

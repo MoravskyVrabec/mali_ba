@@ -28,9 +28,16 @@ except ImportError:
 
 # --- Project Module Imports ---
 from mali_ba.utils.cpp_interface import GameInterface
+from mali_ba.utils.simple_ai_integration import create_game_interface_with_ai
 from mali_ba.config import PlayerColor, DEFAULT_PLAYERS
 from mali_ba.ui.visualizer import BoardVisualizer
 from mali_ba.utils.board_config import add_board_config_args
+from mali_ba.utils.player_config import (
+    get_player_config, 
+    parse_player_config_args, 
+    GamePlayerConfig,
+    PlayerType
+)
 from mali_ba.classes.classes_other import SimpleReplayManager
 
 # --- Mode Constants ---
@@ -132,12 +139,13 @@ def main():
     parser.add_argument('--replay_file', type=str, help='Path to the replay log file for gui_replay mode.')
 
     # Add the player_types argument
-    parser.add_argument(
-        '--player_types', 
-        type=str, 
-        default='human,ai', 
-        help='Comma-separated list of player types (human, ai, heuristic). E.g., "human,ai,ai"'
-    )
+    parse_player_config_args(parser)  # This adds all the player config arguments
+    # parser.add_argument(
+    #     '--player_types', 
+    #     type=str, 
+    #     default='human,ai', 
+    #     help='Comma-separated list of player types (human, ai, heuristic). E.g., "human,ai,ai"'
+    # )
 
     args = parser.parse_args()
 
@@ -168,10 +176,37 @@ def main():
 
         else:
             # --- Live C++ Modes ---
-            game_interface = GameInterface(config_file_path=args.config_file,
+            # First, create a temporary game interface to get number of players
+            temp_interface = GameInterface(config_file_path=args.config_file)
+            num_players = temp_interface.get_num_players()
+            del temp_interface  # Clean up
+            
+            # Get player configuration
+            print(f"Configuring {num_players} players...")
+            player_config = get_player_config(num_players, args)
+            
+            if not player_config:
+                print("No player configuration provided. Using defaults.")
+                # Create default config (first player human, rest AI)
+                from mali_ba.utils.player_config import create_default_config
+                player_config = create_default_config(num_players)
+            
+            # Display configuration
+            print("\nPlayer Configuration:")
+            for player in player_config.players:
+                print(f"  Player {player.player_id + 1}: {player.player_type.value}")
+                if player.player_type == PlayerType.AI:
+                    print(f"    Model: {player.model_path or 'default'}")
+                    print(f"    Think Time: {player.thinking_time}s")
+                    print(f"    Strength: {player.ai_strength}")
+            print()
+            
+            # Use the game interface that can include AI players:
+            game_interface = create_game_interface_with_ai(
+                config_file_path=args.config_file,
                 enable_move_logging=args.enable_move_logging,
                 prune_moves_for_ai=False,  # No AI so don't reduce the move space
-                player_types=args.player_types
+                player_config=player_config
             )
             
             num_players = game_interface.get_num_players()
