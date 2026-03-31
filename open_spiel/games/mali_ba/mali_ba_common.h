@@ -45,6 +45,42 @@ namespace open_spiel
     constexpr Action kChanceSetupAction = 0;
     // Some constants for readability
     constexpr int kUnlimitedPosts = -1;
+    // --- CONSTANTS FOR THE SEQUENTIAL ACTION SPACE ---
+    constexpr Action kPassAction = 0;           // Pass turn / Decline optional action
+    constexpr Action kIncomeAction = 1;         // Take Income
+    constexpr Action kPlacePostAction = 2;      // Accept placing a trading post
+
+    // 6 Directions for Mancala stepping
+    constexpr int kMancalaDirectionBase = 3;    
+    // Select hex to start a Mancala move (Size: kMaxHexes)
+    constexpr int kMancalaStartBase = kMancalaDirectionBase + 6; 
+    // Select hex to upgrade a post to a center (Size: kMaxHexes)
+    constexpr int kUpgradeBase = kMancalaStartBase + kMaxHexes; 
+    // Select which common good to spend if placing a post without a meeple (Size: 15)
+    constexpr int kPaymentBase = kUpgradeBase + kMaxHexes; 
+    // Select which trade route to declare (Size: 300)
+    constexpr int kRouteBase = kPaymentBase + 15; 
+    // Total maximum actions is vastly smaller
+    constexpr int kMaxActions = kRouteBase + 300; 
+
+    inline constexpr int NumDistinctActions() { return kMaxActions; }
+
+    // --- THE SEQUENTIAL PHASES ---
+    enum class Phase {
+      kEmpty = -1,
+      kSetup = 0,
+      kPlaceToken = 1,
+      
+      kPlay = 2,               // Base phase: Income, Upgrade, or Start Mancala
+      kMancalaStep = 3,        // Moving the hand: dropping meeples
+      kMancalaTokenStep = 4,   // Moving the hand: dropping the player token
+      kOptionalPost = 5,       // Ask to place a post at the token's landing spot
+      kOptionalPostPayment = 6,// Ask which good to spend (if no meeple present)
+      kOptionalRoute = 7,      // Ask to declare a route
+
+      kEndRound = 8,
+      kGameOver = 9
+    };
 
     // Enum to describe the type of a Move struct.
     // This is now independent of the Action's integer value.

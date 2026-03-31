@@ -208,6 +208,27 @@ std::string Mali_BaState::Serialize() const {
         }
         j["tradeRoutes"] = j_routes;
 
+        // --- Part 11. Mid-Turn State ---
+        json j_mid_turn = json::object();
+        
+        json j_hand = json::array();
+        for (MeepleColor mc : meeples_in_hand_) {
+            j_hand.push_back(static_cast<int>(mc));
+        }
+        j_mid_turn["meeplesInHand"] = j_hand;
+
+        json j_path = json::array();
+        for (const HexCoord& hc : current_mancala_path_) {
+            j_path.push_back(HexCoordToJsonString(hc));
+        }
+        j_mid_turn["mancalaPath"] = j_path;
+        
+        // Use your existing helper to safely serialize the coordinates
+        j_mid_turn["mancalaHex"] = HexCoordToJsonString(current_mancala_hex_);
+        j_mid_turn["lastActionHex"] = HexCoordToJsonString(last_action_hex_);
+        
+        j["midTurnState"] = j_mid_turn;
+
         // Convert the JSON object to a string (compact version)
         return j.dump();
 

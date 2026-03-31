@@ -160,126 +160,120 @@ namespace open_spiel
         // =============================================================================
         // This function is now the source of truth for legal action generation.
         LegalActionsResult Mali_BaState::GetLegalActionsAndCounts() const {
-            if (cached_legal_actions_result_) {
-                return *cached_legal_actions_result_;
-            }
+            if (cached_legal_actions_result_) return *cached_legal_actions_result_;
 
             LegalActionsResult result;
-            if (IsTerminal()) {
-                cached_legal_actions_result_ = result;
-                return result;
-            }
+            if (IsTerminal()) return result;
 
-            // --- SETUP PHASE ---
             if (IsChanceNode()) {
                 result.actions.push_back(kChanceSetupAction);
                 cached_legal_actions_result_ = result;
                 return result;
             }
 
-            // --- PLACE TOKEN PHASE ---
-            if (current_phase_ == Phase::kPlaceToken) {
-                // The action ID for placing a token must be distinct from other actions.
-                // We will use a simple mapping: Action = hex_index.
-                // This is safe because kMancalaActionBase, kUpgradeActionBase etc. are large numbers.
-                for (int i = 0; i < GetGame()->NumHexes(); ++i) {
-                    HexCoord hex = GetGame()->IndexToCoord(i);
-                    // Check if the hex is a valid placement target
-                    if (player_token_locations_.find(hex) == player_token_locations_.end() &&
-                        GetGame()->GetCityAt(hex) == nullptr) {
+            // AI/Heuristic Player Types
+            PlayerType current_player_type = GetGame()->GetPlayerTypes()[current_player_id_];
 
-                        // The action IS the hex index added to the base. 
-                        // This is fine as long as other actions have large IDs.
-                        Action place_action = kPlaceTokenActionBase + i;
-                        
-                        SPIEL_CHECK_LT(place_action, kUpgradeActionBase); // Ensure no overlap
-                        
-                        result.actions.push_back(place_action);
-                        result.counts.place_token_moves++;
-                    }
-                }
-                cached_legal_actions_result_ = result;
-                return result;
-            }
-
-            // --- PLAY PHASE ---
-            // Now, we call the helper functions to generate each type of move.
-
-            // Get the type of the CURRENT player for rule applications.
-            const auto& player_types = GetGame()->GetPlayerTypes();
-            SPIEL_CHECK_GE(current_player_id_, 0); // This must be a player decision node.
-            SPIEL_CHECK_LT(current_player_id_, player_types.size());
-            PlayerType current_player_type = player_types[current_player_id_];
-            
-            // 1. Pass Action - only for human players
-            if (current_player_type == PlayerType::kHuman) {
-                result.actions.push_back(kPassAction);
-                result.counts.pass_moves++;
-            }
-
-            // 2. Mancala Moves
-            std::vector<Move> mancala_moves = GenerateMancalaMoves();
-            for (const auto& move : mancala_moves) {
-                // This part needs a proper Action encoding. We will fix this in the next step.
-                // For now, let's assume a function MoveToAction exists.
-                Action action = MoveToAction(move); // We will create this function
-                if (action != kInvalidAction) {
-                    result.actions.push_back(action);
-                    result.counts.mancala_moves++;
-                }
-            }
-
-            // 3. Upgrade Moves (including compound moves with FREE trade routes)
-            std::vector<Move> upgrade_moves = GenerateTradePostUpgradeMoves();
-            for (const auto& move : upgrade_moves) {
-                Action action = MoveToAction(move);
-                if (action != kInvalidAction) {
-                    result.actions.push_back(action);
-                    result.counts.upgrade_moves++;
-                }
-            }
-            
-            // 4. Income Moves
-            // Prevent AI/Heuristic players from choosing 'income' twice in a row.
-            bool allow_income_move = true; // By default, income moves are allowed.
-
-            // The rule only applies to non-human players.
-            if (current_player_type != PlayerType::kHuman) {
-                // Search backwards through history to find the last move by this player.
-                // We use a reverse iterator for efficiency.
-                for (auto it = moves_history_.rbegin(); it != moves_history_.rend(); ++it) {
-                    const Move& previous_move = *it;
-                    if (previous_move.player == current_player_color_) {
-                        // This is the last move this player made. Was it an income action?
-                        if (previous_move.type == ActionType::kIncome) {
-                            allow_income_move = false; // Disallow income this turn.
-                            // LOG_INFO("Player ", PlayerColorToString(current_player_color_), 
-                            //         " (AI/Heuristic) previously played income. Disabling income action.");
+            switch (current_phase_) {
+                case Phase::kPlaceToken: {
+                    for (int i = 0; i < GetGame()->NumHexes(); ++i) {
+                        HexCoord hex = GetGame()->IndexToCoord(i);
+                        if (player_token_locations_.find(hex) == player_token_locations_.end() &&
+                            GetGame()->GetCityAt(hex) == nullptr) {
+                            result.actions.push_back(kPlaceTokenActionBase + i); // Use legacy base for setup
+                            result.counts.place_token_moves++;
                         }
-                        // We found the last move by this player, so we can stop searching.
-                        break; 
                     }
+                    break;
                 }
-            }
-            // Only generate income moves if they are allowed for this player type and situation.
-            if (allow_income_move) {
-                std::vector<Move> income_moves = GenerateIncomeMoves();
-                for (const auto& move : income_moves) {
-                    Action action = MoveToAction(move);
-                    if (action != kInvalidAction) {
-                        result.actions.push_back(action);
+
+                case Phase::kPlay: {
+                    if (current_player_type == PlayerType::kHuman) {
+                        result.actions.push_back(kPassAction);
+                    }
+                    
+                    // 1. Income Action (Only if last action wasn't income)
+                    if (CanTakeIncome()) {
+                        result.actions.push_back(kIncomeAction);
                         result.counts.income_moves++;
                     }
-                }
-            }
 
-            // 5. STANDALONE Trade Route Moves
-            std::vector<Move> trade_route_moves = GenerateTradeRouteMoves();
-            for (const auto& move : trade_route_moves) {
-                Action action = MoveToAction(move);
-                if (action != kInvalidAction) {
-                    result.actions.push_back(action);
-                    result.counts.trade_route_create_moves++;
+                    // 2. Mancala Starts
+                    for (int i = 0; i < GetGame()->NumHexes(); ++i) {
+                        HexCoord hex = GetGame()->IndexToCoord(i);
+                        if (HasTokenAt(hex, current_player_color_)) {
+                            result.actions.push_back(kMancalaStartBase + i);
+                            result.counts.mancala_moves++;
+                        }
+                    }
+
+                    // 3. Upgrades
+                    if (HasSufficientResourcesForUpgrade(current_player_id_)) {
+                        for (int i = 0; i < GetGame()->NumHexes(); ++i) {
+                            HexCoord hex = GetGame()->IndexToCoord(i);
+                            if (HasPlayerPostOrCenterAt(hex, current_player_color_) && 
+                                GetPlayerPostType(hex, current_player_color_) == TradePostType::kPost) {
+                                result.actions.push_back(kUpgradeBase + i);
+                                result.counts.upgrade_moves++;
+                            }
+                        }
+                    }
+                    break;
+                }
+
+                case Phase::kMancalaStep:
+                case Phase::kMancalaTokenStep: {
+                    // MCTS naturally learns pathfinding via these 6 directional choices
+                    for (int i = 0; i < 6; ++i) {
+                        HexCoord target = current_mancala_hex_ + kHexDirections[i];
+                        
+                        // Rule 1: Must be on the board
+                        if (!IsValidHex(target)) continue;
+                        
+                        // Rule 2: Cannot revisit a hex in the current path
+                        if (std::find(current_mancala_path_.begin(), current_mancala_path_.end(), target) 
+                            != current_mancala_path_.end()) {
+                            continue;
+                        }
+                        
+                        result.actions.push_back(kMancalaDirectionBase + i);
+                    }
+                    break;
+                }
+
+                case Phase::kOptionalPost: {
+                    result.actions.push_back(kPassAction); // Decline
+                    
+                    // Can only place post if a meeple is present, or player has resources
+                    if (CanPlaceTradingPostAt(last_action_hex_, current_player_color_)) {
+                        result.actions.push_back(kPlacePostAction);
+                    }
+                    break;
+                }
+
+                case Phase::kOptionalPostPayment: {
+                    // Populate with valid resources the player can spend
+                    // (e.g., 0-14 representing the common goods)
+                    const auto& common_goods = GetPlayerCommonGoods(current_player_id_);
+                    for (const auto& [name, count] : common_goods) {
+                        if (count > 0) {
+                            int good_id = GoodsManager::GetInstance().GetCommonGoodIndex(name);
+                            result.actions.push_back(kPaymentBase + good_id);
+                        }
+                    }
+                    break;
+                }
+
+                case Phase::kOptionalRoute: {
+                    result.actions.push_back(kPassAction); // Decline / End Turn
+                    
+                    // Generate valid routes originating from `last_action_hex_`
+                    auto possible_routes = FindPossibleTradeRoutes(current_player_color_, true, &last_action_hex_, 5);
+                    for (size_t i = 0; i < std::min(possible_routes.size(), (size_t)300); ++i) {
+                        result.actions.push_back(kRouteBase + i);
+                        result.counts.trade_route_create_moves++;
+                    }
+                    break;
                 }
             }
 
@@ -680,106 +674,132 @@ namespace open_spiel
             PushStateToUndoStack();
             is_terminal_ = false;
 
-            Player player_who_moved = current_player_id_;
-            Phase old_phase = current_phase_;
-
             if (IsChanceNode()) {
-                SPIEL_CHECK_EQ(action, kChanceSetupAction);
                 ApplyChanceSetup();
                 SetCurrentPhase(Phase::kPlaceToken);
                 current_player_id_ = 0;
                 current_player_color_ = GetPlayerColor(current_player_id_);
-            } 
-            else if (current_phase_ == Phase::kPlaceToken) {
-                // This block is ONLY for placing tokens.
-                SPIEL_CHECK_GE(action, kPlaceTokenActionBase);
-                SPIEL_CHECK_LT(action, kUpgradeActionBase); // Sanity check the action range
-                
-                int hex_index = action - kPlaceTokenActionBase;
-                
-                SPIEL_CHECK_LT(hex_index, GetGame()->NumHexes());
-                
-                HexCoord hex = GetGame()->IndexToCoord(hex_index);
+                return;
+            }
 
-                Move place_token_move;
-                place_token_move.type = ActionType::kPlaceToken;
-                place_token_move.player = current_player_color_;
-                place_token_move.start_hex = hex;
-                
-                ApplyPlaceTokenMove(place_token_move);
-                moves_history_.push_back(place_token_move);
-            } 
-            else if (current_phase_ == Phase::kPlay) {
-                // This block is ONLY for playing the game.
-                // It should not be possible for a PlaceToken action to get here.
-                SPIEL_CHECK_FALSE(action >= kPlaceTokenActionBase && action < kUpgradeActionBase);
-
-                Move move = ActionToMove(action);
-                
-            switch (move.type) {
-                case ActionType::kPass:
-                    // No state change needed.
-                    break;
-                
-                case ActionType::kMancala:
-                    // First, apply the core mancala move.
-                    ApplyMancalaMove(move);
-                    // THEN, check for the compound part.
-                    if (move.place_trading_post) {
-                        ApplyPlacePostFromMancala(move); // New, simplified helper
-
-                        // If, after placing the post, we also declare a route.
-                        if (move.declares_trade_route) {
-                            // If city_free_upgrade is true, a post in a city that's part of
-                            // the route needs to become a center. That logic is in CreateTradeRoute()
-
-                            LOG_DEBUG("Applying compound mancala action: creating trade route.");
-                            CreateTradeRoute(move.trade_route_path, move.player);
+            switch (current_phase_) {
+                case Phase::kPlay: {
+                    if (action == kIncomeAction) {
+                        ApplyIncomeCollection("income"); 
+                        EndTurn();
+                    } 
+                    else if (action >= kUpgradeBase && action < kPaymentBase) {
+                        int hex_index = action - kUpgradeBase;
+                        last_action_hex_ = GetGame()->IndexToCoord(hex_index);
+                        
+                        ApplyTradingPostUpgrade(last_action_hex_); // (You'll need to adapt this to take HexCoord directly)
+                        
+                        // Proceed to optional route declaration
+                        current_phase_ = Phase::kOptionalRoute;
+                    }
+                    else if (action >= kMancalaStartBase && action < kUpgradeBase) {
+                        int hex_index = action - kMancalaStartBase;
+                        current_mancala_hex_ = GetGame()->IndexToCoord(hex_index);
+                        current_mancala_path_.clear();
+                        current_mancala_path_.push_back(current_mancala_hex_);
+                        
+                        // Pick up tokens and meeples
+                        RemoveTokenAt(current_mancala_hex_, current_player_color_);
+                        meeples_in_hand_ = GetMeeplesAt(current_mancala_hex_);
+                        hex_meeples_[current_mancala_hex_].clear();
+                        
+                        if (meeples_in_hand_.empty()) {
+                            current_phase_ = Phase::kMancalaTokenStep;
+                        } else {
+                            current_phase_ = Phase::kMancalaStep;
                         }
                     }
                     break;
+                }
 
-                case ActionType::kPlaceTCenter: // This is an upgrade
-                    // First, apply the core upgrade.
-                    ApplyTradingPostUpgrade(move);
-                    // THEN, check for the compound part.
-                    if (move.declares_trade_route) {
-                        LOG_DEBUG("Applying compound action: creating trade route.");
-                        CreateTradeRoute(move.trade_route_path, move.player);
+                case Phase::kMancalaStep: {
+                    int dir = action - kMancalaDirectionBase;
+                    current_mancala_hex_ = current_mancala_hex_ + kHexDirections[dir];
+                    current_mancala_path_.push_back(current_mancala_hex_);
+                    
+                    // Drop a meeple
+                    MeepleColor dropped = meeples_in_hand_.back();
+                    meeples_in_hand_.pop_back();
+                    hex_meeples_[current_mancala_hex_].push_back(dropped);
+                    
+                    if (meeples_in_hand_.empty()) {
+                        current_phase_ = Phase::kMancalaTokenStep;
                     }
                     break;
+                }
 
-                case ActionType::kIncome:
-                    ApplyIncomeCollection(move.action_string);
-                    break;
-
-                case ActionType::kTradeRouteCreate:
-                    ApplyTradeRouteCreate(move);
-                    break;
+                case Phase::kMancalaTokenStep: {
+                    int dir = action - kMancalaDirectionBase;
+                    current_mancala_hex_ = current_mancala_hex_ + kHexDirections[dir];
+                    current_mancala_path_.push_back(current_mancala_hex_);
                     
-                default:
-                    SpielFatalError(absl::StrCat("DoApplyAction: Unhandled or invalid move type ",
-                                                static_cast<int>(move.type), " for action ", action));
+                    // Drop player token
+                    AddTokenAt(current_mancala_hex_, current_player_color_);
+                    last_action_hex_ = current_mancala_hex_;
+                    
+                    current_phase_ = Phase::kOptionalPost;
                     break;
-            }
-                moves_history_.push_back(move);
-                ValidateTradeRoutes();
-            }
-            
-            // Player switching logic
-            if (current_phase_ == old_phase) {
-                current_player_color_ = GetNextPlayerColor(current_player_color_);
-                current_player_id_ = GetPlayerId(current_player_color_);
+                }
+
+                case Phase::kOptionalPost: {
+                    if (action == kPassAction) {
+                        current_phase_ = Phase::kOptionalRoute;
+                    } else if (action == kPlacePostAction) {
+                        // If there's a meeple, consume it immediately
+                        if (!GetMeeplesAt(last_action_hex_).empty()) {
+                            RemoveMeepleAt(last_action_hex_, 0);
+                            AddTradingPost(last_action_hex_, current_player_color_, TradePostType::kPost);
+                            current_phase_ = Phase::kOptionalRoute;
+                        } else {
+                            // Ask which resource to pay with
+                            current_phase_ = Phase::kOptionalPostPayment;
+                        }
+                    }
+                    break;
+                }
+
+                case Phase::kOptionalPostPayment: {
+                    int good_id = action - kPaymentBase;
+                    std::string good_name = GoodsManager::GetInstance().GetCommonGoodsList()[good_id];
+                    
+                    // Deduct the good
+                    common_goods_[current_player_id_][good_name]--;
+                    AddTradingPost(last_action_hex_, current_player_color_, TradePostType::kPost);
+                    
+                    current_phase_ = Phase::kOptionalRoute;
+                    break;
+                }
+
+                case Phase::kOptionalRoute: {
+                    if (action != kPassAction) {
+                        int route_id = action - kRouteBase;
+                        auto possible_routes = FindPossibleTradeRoutes(current_player_color_, true, &last_action_hex_, 5);
+                        CreateTradeRoute(possible_routes[route_id], current_player_color_);
+                    }
+                    
+                    EndTurn();
+                    break;
+                }
             }
 
-            // After the action is applied, get the immediate rewards for that action.
-            std::vector<double> rewards = Rewards();
-            for (int i = 0; i < game_->NumPlayers(); ++i) {
-                cumulative_returns_[i] += rewards[i];
-            }
-
+            // Recalculate game-end conditions if necessary
             ClearCaches();
             RefreshTerminalStatus();
+        }
+
+        // Simple helper to cleanly hand over the turn and reset mid-turn variables
+        void Mali_BaState::EndTurn() {
+            current_player_color_ = GetNextPlayerColor(current_player_color_);
+            current_player_id_ = GetPlayerId(current_player_color_);
+            current_phase_ = Phase::kPlay;
+            
+            meeples_in_hand_.clear();
+            current_mancala_path_.clear();
         }
 
         std::string Mali_BaState::ActionToString(Player player, Action action) const {

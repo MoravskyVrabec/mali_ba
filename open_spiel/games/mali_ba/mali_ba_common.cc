@@ -24,7 +24,7 @@ void SetLogLevel(LogLevel level) {
     g_mali_ba_log_level = level;
 }
 
-// Logging ethod we can call from Python
+// Logging method we can call from Python
 void LogFromPython(LogLevel level, const std::string& message) {
     // We call the core logging function, but pass "Python" and 0
     // for the file and line, as we don't have that info from the Python side.

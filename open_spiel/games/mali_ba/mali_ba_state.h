@@ -238,6 +238,17 @@ namespace mali_ba
         static bool move_logging_initialized_;
         static bool move_logging_enabled_;
 
+        // --- Mid-Turn State Variables ---
+        // Standard containers ensure state->Clone() is blazingly fast and memory-safe.
+        std::vector<MeepleColor> meeples_in_hand_;
+        std::vector<HexCoord> current_mancala_path_;
+        HexCoord current_mancala_hex_;
+        HexCoord last_action_hex_; // Tracks where token landed or post upgraded
+        bool pending_route_declaration_ = false;
+
+        // Helper to end a turn and pass to the next player
+        void EndTurn();
+
         // Private income/move generation helpers 
         struct IncomeChoice {
             HexCoord center_hex;
