@@ -97,10 +97,15 @@ MEEPLE_COLOR_DICT = {
 
 class Phase(Enum):
     EMPTY = -1
-    START = 0
+    SETUP = 0
     PLACE_TOKEN = 1
     PLAY = 2
-    END_ROUND = 3
+    MANCALA_STEP = 3
+    MANCALA_TOKEN_STEP = 4
+    OPTIONAL_POST = 5
+    OPTIONAL_POST_PAYMENT = 6
+    OPTIONAL_ROUTE = 7
+    END_ROUND = 8
     GAME_OVER = 9
 
     @classmethod

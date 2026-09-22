@@ -94,7 +94,7 @@ def parse_and_update_state_from_json(state_str: str, cache: GameStateCache) -> b
         # Parse basic game state
         cache.current_player_id = data.get("currentPlayerId", -1)
         cache.current_phase = Phase.from_int(data.get("currentPhase", -1))
-        cache.is_terminal = cache.current_player_id == -2 # pyspiel.kTerminalPlayerId
+        cache.is_terminal = cache.current_player_id == -4  # pyspiel.PlayerId.TERMINAL
         
         if 0 <= cache.current_player_id < num_players:
             cache.current_player_color = cache.game_player_colors[cache.current_player_id]
@@ -1434,7 +1434,7 @@ class BoardVisualizerHelpers:
         """Updates the control panel status based on the current state cache."""
         if self.visualizer.state_cache.is_terminal:
              self.visualizer.control_panel.update_status("Game Over.")
-        elif self.visualizer.state_cache.current_phase == Phase.START:
+        elif self.visualizer.state_cache.current_phase == Phase.SETUP:
              self.visualizer.control_panel.update_status("Ready for Chance Setup action.")
         else:
              player_id = self.visualizer.state_cache.current_player_id

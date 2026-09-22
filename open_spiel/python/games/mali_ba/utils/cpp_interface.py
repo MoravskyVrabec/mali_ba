@@ -10,10 +10,11 @@ from typing import Dict, List, Optional, Tuple, Set
 # Ensure pyspiel is available
 try:
     import pyspiel
-    import pyspiel.mali_ba  # Import the game's C++ bindings
+    # Access the submodule as an attribute to verify it exists
+    _ = pyspiel.mali_ba  
     _pyspiel_is_available = True
     print("cpp_interface: pyspiel module successfully imported.")
-except ImportError:
+except (ImportError, AttributeError):
     print("=" * 60)
     print("WARNING (cpp_interface): Pyspiel module not found.")
     print("C++ backend modes will not be available.")

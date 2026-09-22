@@ -1,3 +1,5 @@
+# Usage: python analyze_log.py /home/robp/Downloads/train_run5.log
+ 
 import tensorflow as tf
 from tensorflow.keras import layers, models
 import numpy as np
@@ -76,17 +78,111 @@ def monitor_memory(func):
 
 # A simple replay buffer
 class ReplayBuffer:
-    def __init__(self, buffer_size):
-        self.buffer = collections.deque(maxlen=buffer_size)
+    """Replay buffer with four pools: bootstrap, MCTS-natural, MCTS-near-win, MCTS-rare-goods.
 
-    def add(self, experience):
-        self.buffer.append(experience)
+    mcts_buffer_fraction controls both the MCTS capacity share (vs bootstrap) and
+    the target batch sampling ratio.  near_win_pool_fraction controls what fraction
+    of the MCTS capacity is reserved for near-win timeout games.
+    raregoods_pool_fraction controls what fraction is reserved for Rare goods natural wins
+    (guaranteeing Rare goods exposure each batch regardless of self-play frequency).
+    The natural pool gets the remaining MCTS fraction (Timbuktu wins).
+
+    When any pool is short, the others compensate so the batch always reaches the
+    full requested size.
+    """
+    def __init__(self, buffer_size, mcts_buffer_fraction: float = 0.8,
+                 near_win_pool_fraction: float = 0.30,
+                 raregoods_pool_fraction: float = 0.15,
+                 replace_bootstrap_with_mcts: bool = False):
+        mcts_cap         = max(1, int(buffer_size * mcts_buffer_fraction))
+        bootstrap_cap    = max(1, buffer_size - mcts_cap)
+        nearwin_cap      = max(1, int(mcts_cap * near_win_pool_fraction))
+        raregoods_cap    = max(1, int(mcts_cap * raregoods_pool_fraction))
+        natural_cap      = max(1, mcts_cap - nearwin_cap - raregoods_cap)
+
+        self.bootstrap_buffer      = collections.deque(maxlen=bootstrap_cap)
+        self.mcts_natural_buffer   = collections.deque(maxlen=natural_cap)
+        self.mcts_nearwin_buffer   = collections.deque(maxlen=nearwin_cap)
+        self.mcts_raregoods_buffer = collections.deque(maxlen=raregoods_cap)
+
+        self.mcts_fraction               = mcts_buffer_fraction
+        self.near_win_pool_fraction      = near_win_pool_fraction
+        self.raregoods_pool_fraction     = raregoods_pool_fraction
+        self.replace_bootstrap_with_mcts = replace_bootstrap_with_mcts
+
+    def add(self, experience, is_bootstrap: bool = False, is_near_win: bool = False,
+            is_rare_goods: bool = False):
+        if is_bootstrap:
+            self.bootstrap_buffer.append(experience)
+        elif is_near_win:
+            self.mcts_nearwin_buffer.append(experience)
+        elif is_rare_goods:
+            self.mcts_raregoods_buffer.append(experience)
+        else:
+            if (self.replace_bootstrap_with_mcts
+                    and len(self.mcts_natural_buffer) == self.mcts_natural_buffer.maxlen):
+                # Natural pool is full. Promote the oldest natural win into the bootstrap
+                # pool before the deque evicts it — seeds bootstrap from scratch if empty.
+                self.bootstrap_buffer.append(self.mcts_natural_buffer[0])
+            self.mcts_natural_buffer.append(experience)
 
     def sample(self, batch_size):
-        return np.array(random.sample(self.buffer, batch_size), dtype=object)
+        have_bootstrap  = len(self.bootstrap_buffer) > 0
+        have_natural    = len(self.mcts_natural_buffer) > 0
+        have_nearwin    = len(self.mcts_nearwin_buffer) > 0
+        have_raregoods  = len(self.mcts_raregoods_buffer) > 0
+        have_mcts       = have_natural or have_nearwin or have_raregoods
+
+        # Target counts based on configured fractions.
+        n_mcts_target      = max(1, round(batch_size * self.mcts_fraction))
+        n_nearwin_target   = max(0, round(n_mcts_target * self.near_win_pool_fraction))
+        n_raregoods_target = max(0, round(n_mcts_target * self.raregoods_pool_fraction))
+        n_natural_target   = n_mcts_target - n_nearwin_target - n_raregoods_target
+
+        samples = []
+
+        if have_mcts and have_bootstrap:
+            # Draw from each MCTS sub-pool; let bootstrap fill any shortfall.
+            n_natural   = min(n_natural_target,   len(self.mcts_natural_buffer))   if have_natural   else 0
+            n_nearwin   = min(n_nearwin_target,   len(self.mcts_nearwin_buffer))   if have_nearwin   else 0
+            n_raregoods = min(n_raregoods_target, len(self.mcts_raregoods_buffer)) if have_raregoods else 0
+            n_mcts      = n_natural + n_nearwin + n_raregoods
+            n_bootstrap = min(batch_size - n_mcts, len(self.bootstrap_buffer))
+            if n_natural   > 0: samples += random.sample(list(self.mcts_natural_buffer),   n_natural)
+            if n_nearwin   > 0: samples += random.sample(list(self.mcts_nearwin_buffer),   n_nearwin)
+            if n_raregoods > 0: samples += random.sample(list(self.mcts_raregoods_buffer), n_raregoods)
+            if n_bootstrap > 0: samples += random.sample(list(self.bootstrap_buffer),      n_bootstrap)
+        elif have_mcts:
+            # Bootstrap is empty; MCTS pools must fill the full batch_size.
+            n_natural   = min(n_natural_target,   len(self.mcts_natural_buffer))   if have_natural   else 0
+            n_nearwin   = min(n_nearwin_target,   len(self.mcts_nearwin_buffer))   if have_nearwin   else 0
+            n_raregoods = min(n_raregoods_target, len(self.mcts_raregoods_buffer)) if have_raregoods else 0
+            shortfall   = batch_size - n_natural - n_nearwin - n_raregoods
+            # Distribute shortfall to pools with remaining capacity, priority: natural → nearwin → raregoods.
+            if shortfall > 0 and have_natural:
+                extra = min(shortfall, len(self.mcts_natural_buffer) - n_natural)
+                n_natural += extra; shortfall -= extra
+            if shortfall > 0 and have_nearwin:
+                extra = min(shortfall, len(self.mcts_nearwin_buffer) - n_nearwin)
+                n_nearwin += extra; shortfall -= extra
+            if shortfall > 0 and have_raregoods:
+                extra = min(shortfall, len(self.mcts_raregoods_buffer) - n_raregoods)
+                n_raregoods += extra; shortfall -= extra
+            if n_natural   > 0: samples += random.sample(list(self.mcts_natural_buffer),   n_natural)
+            if n_nearwin   > 0: samples += random.sample(list(self.mcts_nearwin_buffer),   n_nearwin)
+            if n_raregoods > 0: samples += random.sample(list(self.mcts_raregoods_buffer), n_raregoods)
+        else:
+            n = min(batch_size, len(self.bootstrap_buffer))
+            samples = random.sample(list(self.bootstrap_buffer), n)
+
+        random.shuffle(samples)
+        return np.array(samples, dtype=object)
 
     def __len__(self):
-        return len(self.buffer)
+        return (len(self.bootstrap_buffer) +
+                len(self.mcts_natural_buffer) +
+                len(self.mcts_nearwin_buffer) +
+                len(self.mcts_raregoods_buffer))
 
 class SimpleAgent:
     # ** Accept num_players in constructor **
@@ -225,12 +321,12 @@ class SimpleAgent:
 class AlphaZeroEvaluator:
     """An evaluator for MCTS that uses a trained neural network."""
 
-    def __init__(self, game, policy_model, value_model): # Takes two models now
+    def __init__(self, game, policy_model, value_model, heuristic_guidance_weight=0.40):
         self._game = game
-        self._policy_model = policy_model # Store policy model
-        self._value_model = value_model   # Store value model
+        self._policy_model = policy_model
+        self._value_model = value_model
         self._shape = game.observation_tensor_shape()
-        self.heuristic_guidance_weight = 0.25
+        self.heuristic_guidance_weight = heuristic_guidance_weight
 
     def evaluate(self, state):
         if state.is_terminal():

@@ -89,7 +89,7 @@ class InteractiveObjectManager:
 #         # Current Player Info
 #         player_id = state_cache.current_player_id
 #         phase = state_cache.current_phase
-#         player_str = "Chance" if phase == Phase.START else ( "Terminal" if state_cache.is_terminal else f"Player {player_id + 1}" )
+#         player_str = "Chance" if phase == Phase.SETUP else ( "Terminal" if state_cache.is_terminal else f"Player {player_id + 1}" )
 #         player_color_enum = state_cache.current_player_color
 #         player_color_name = player_color_enum.name if player_color_enum != PlayerColor.EMPTY else "N/A"
 #         player_color_rgb = PLAYER_COLOR_DICT.get(player_color_enum, GRAY)
@@ -115,8 +115,8 @@ class InteractiveObjectManager:
 
 #             panel_rect = pygame.Rect(self.rect.x + 5, y_offset, self.rect.width - 10, self.info_panel_height)
 #             # Highlight current player's panel
-#             border_color = YELLOW if p_id == player_id and phase != Phase.START and not state_cache.is_terminal else BLACK
-#             border_width = 3 if p_id == player_id and phase != Phase.START and not state_cache.is_terminal else 1
+#             border_color = YELLOW if p_id == player_id and phase != Phase.SETUP and not state_cache.is_terminal else BLACK
+#             border_width = 3 if p_id == player_id and phase != Phase.SETUP and not state_cache.is_terminal else 1
 
 #             pygame.draw.rect(surface, color_rgb, panel_rect, border_radius=5)
 #             pygame.draw.rect(surface, border_color, panel_rect, border_width, border_radius=5)
@@ -231,7 +231,7 @@ class Sidebar:
         # Current Player Info
         player_id = state_cache.current_player_id
         phase = state_cache.current_phase
-        player_str = "Chance" if phase == Phase.START else ("Terminal" if state_cache.is_terminal else f"Player {player_id + 1}")
+        player_str = "Chance" if phase == Phase.SETUP else ("Terminal" if state_cache.is_terminal else f"Player {player_id + 1}")
         player_color_enum = state_cache.current_player_color
         player_color_name = player_color_enum.name if player_color_enum != PlayerColor.EMPTY else "N/A"
         player_color_rgb = PLAYER_COLOR_DICT.get(player_color_enum, GRAY)
@@ -293,8 +293,8 @@ class Sidebar:
             panel_rect = pygame.Rect(5, y_offset, self.rect.width - 20, panel_height)
             
             # Highlight current player's panel
-            border_color = YELLOW if p_id == player_id and phase != Phase.START and not state_cache.is_terminal else BLACK
-            border_width = 3 if p_id == player_id and phase != Phase.START and not state_cache.is_terminal else 1
+            border_color = YELLOW if p_id == player_id and phase != Phase.SETUP and not state_cache.is_terminal else BLACK
+            border_width = 3 if p_id == player_id and phase != Phase.SETUP and not state_cache.is_terminal else 1
             
             # Now draw the correctly sized panel
             pygame.draw.rect(self.content_surface, color_rgb, panel_rect, border_radius=5)

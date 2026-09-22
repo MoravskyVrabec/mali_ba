@@ -13,7 +13,7 @@ class GameStateCache:
         self.current_player_id: int = -1 # Start with chance/invalid
         self.current_player_color: PlayerColor = PlayerColor.EMPTY
         self.setup_phase: bool = True # Flag from C++ state
-        self.current_phase: Phase = Phase.START
+        self.current_phase: Phase = Phase.SETUP
         self.is_terminal: bool = False
 
         self.player_token_locations: Dict[HexCoord, List[PlayerColor]] = {}

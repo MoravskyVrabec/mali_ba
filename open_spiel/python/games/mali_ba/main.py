@@ -15,7 +15,8 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
-build_dir = os.path.join(os.path.dirname(os.path.dirname(project_root)), "build", "python")
+# Point directly to the new, pristine OpenSpiel build directory!
+build_dir = "/media/robp/UD/Projects/open_spiel/build/python"
 if build_dir not in sys.path:
     sys.path.insert(0, build_dir)
 
@@ -101,13 +102,27 @@ def run_cpp_sync_gui_loop(game_interface: GameInterface, visualizer: BoardVisual
             print("\n--- GAME IS TERMINAL ---")
             game_is_over = True
             paused = True # Pause the simulation automatically
-            
-            # --- THIS IS THE CRUCIAL PART ---
-            # Call the C++ Returns() function to trigger the score calculation and logging.
-            print("--- Requesting Final Scores from C++ Backend... ---")
+
             final_returns = game_interface.spiel_state.returns()
-            print(f"--- Python received final training returns: {final_returns} ---")
-            
+            print(f"Final returns: {final_returns}")
+
+            mali_ba_state = pyspiel.mali_ba.downcast_state(game_interface.spiel_state)
+            if mali_ba_state is not None:
+                reason = mali_ba_state.get_game_end_reason()
+                triggered_by = mali_ba_state.get_game_end_triggering_player()
+                print(f"End reason: {reason}")
+                # Determine winner from returns (1.0 = winner, handles max-length games too)
+                winners = [i for i, r in enumerate(final_returns) if r >= 1.0 - 1e-6]
+                if len(winners) == 1:
+                    print(f"Winner: Player {winners[0] + 1}")
+                elif len(winners) > 1:
+                    print(f"Tie between players: {[w + 1 for w in winners]}")
+                else:
+                    print("Result: No winner")
+                if triggered_by >= 0:
+                    print(f"Triggered by: Player {triggered_by + 1}")
+                print(mali_ba_state.get_score_breakdown_string())
+
             visualizer.control_panel.update_status(f"GAME OVER. Final Returns: {final_returns}")
 
         visualizer.draw()
@@ -162,6 +177,48 @@ def main():
             if not replay_manager.load_replay_file(replay_file_path):
                 print(f"Could not load replay file: {replay_file_path}. Exiting.")
                 return
+
+            # TEMPORARY FALLBACK (2026-07-19): replay files written by the
+            # training pipeline's [setup] section go through the generic
+            # state serializer (mali_ba_state_serialize.cc), not
+            # CreateSetupJson() (mali_ba_state_moves.cc) -- so valid_hexes/
+            # cities/grid_radius/num_players are missing from every replay
+            # file, not just this one. Since the board is procedurally fixed
+            # by mali_ba.ini for a whole run (not per-game), load a throwaway
+            # game instance from the same config (args.config_file, which is
+            # unused in replay mode except as this fallback) and backfill
+            # whatever the replay file's own [setup] section is missing.
+            # The real fix is correcting the writer to call the equivalent of
+            # CreateSetupJson() for the [setup] section; remove this once
+            # that's done.
+            if replay_manager.setup_data is not None and (
+                "valid_hexes" not in replay_manager.setup_data
+                or "cities" not in replay_manager.setup_data
+                or "grid_radius" not in replay_manager.setup_data
+                or "num_players" not in replay_manager.setup_data
+            ):
+                print("⚠️  Replay [setup] section is missing board-layout data "
+                      f"(known writer bug) -- backfilling from {args.config_file}.")
+                try:
+                    _fallback_interface = GameInterface(config_file_path=args.config_file)
+                    _fb_hexes, _fb_cities, _fb_radius = _fallback_interface.get_board_config_data()
+                    _fb_num_players = _fallback_interface.get_num_players()
+                    replay_manager.setup_data.setdefault(
+                        "valid_hexes", [str(h) for h in _fb_hexes])
+                    replay_manager.setup_data.setdefault("cities", [
+                        {
+                            "id": c.id, "name": c.name, "cultural_group": c.culture,
+                            "location": str(c.location),
+                            "common_good": c.common_good, "rare_good": c.rare_good,
+                        }
+                        for c in _fb_cities
+                    ])
+                    replay_manager.setup_data.setdefault("grid_radius", _fb_radius)
+                    replay_manager.setup_data.setdefault("num_players", _fb_num_players)
+                    del _fallback_interface
+                    print("✅ Backfilled board layout from config for this replay session.")
+                except Exception as _fb_exc:
+                    print(f"⚠️  Could not backfill board layout: {_fb_exc}")
 
             num_players = replay_manager.get_num_players() or DEFAULT_PLAYERS
             game_player_colors = [PlayerColor.from_int(i) for i in range(num_players)]

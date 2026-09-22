@@ -24,7 +24,7 @@ if mali_ba_root not in sys.path:
     sys.path.insert(0, mali_ba_root)
 
 # Add the specific OpenSpiel python path BEFORE trying imports
-openspiel_python_path = "/home/robp/Projects/mali_ba/open_spiel/python"
+openspiel_python_path = "/media/robp/UD/Projects/open_spiel/open_spiel/python"
 if openspiel_python_path not in sys.path:
     sys.path.insert(0, openspiel_python_path)
 
