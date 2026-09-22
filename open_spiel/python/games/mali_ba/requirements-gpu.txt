@@ -1,0 +1,21 @@
+# Python environment for the GCP main-vm (learner + trainer + queue_server).
+# Captured from the working desktop WSL `mali_ba` conda env (Python 3.11).
+#
+# TensorFlow's CUDA support comes entirely from the pip nvidia-*-cu12 wheels
+# pulled in by the [and-cuda] extra below -- no system CUDA toolkit or nvcc
+# install is required, only an NVIDIA driver on the host (see main_vm_setup.sh).
+#
+# IMPORTANT: do NOT `pip install open_spiel` / `open-spiel` in this environment.
+# That is a real PyPI package that will shadow the custom-built pyspiel.so via
+# PYTHONPATH resolution order. Only the build in build/python/ should ever be
+# importable as `pyspiel` here. See dev_approach_2026-04-02.md for the failure
+# mode this causes (pyspiel.mali_ba AttributeError).
+
+tensorflow[and-cuda]==2.21.0
+keras==3.14.0
+numpy==2.4.4
+absl-py==2.2.2
+# mali_ba/__init__.py unconditionally imports its ui submodule (board
+# visualizer), which needs pygame, even on a headless trainer. Without this,
+# `from mali_ba.training_utils import ...` fails with ModuleNotFoundError.
+pygame==2.6.1

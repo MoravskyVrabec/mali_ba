@@ -1,0 +1,20 @@
+# Python environment for GCP spot worker VMs (remote_actors.py / MCTS actors).
+# Same package set as requirements-gpu.txt minus the [and-cuda] extra -- no GPU
+# or NVIDIA driver is needed on these machines at all. Actors run TF inference
+# on CPU; pass --cpu_only to remote_actors.py to force CUDA_VISIBLE_DEVICES=-1.
+#
+# IMPORTANT: do NOT `pip install open_spiel` / `open-spiel` in this environment.
+# That is a real PyPI package that will shadow the custom-built pyspiel.so via
+# PYTHONPATH resolution order. Only the build in build/python/ should ever be
+# importable as `pyspiel` here. See dev_approach_2026-04-02.md for the failure
+# mode this causes (pyspiel.mali_ba AttributeError).
+
+tensorflow==2.21.0
+keras==3.14.0
+numpy==2.4.4
+absl-py==2.2.2
+# mali_ba/__init__.py unconditionally imports its ui submodule (board
+# visualizer), which needs pygame, even though headless actor processes never
+# touch it. Without this, `from mali_ba.training_utils import ...` (used by
+# actor_process in train_mali_ba.py) fails with ModuleNotFoundError.
+pygame==2.6.1
