@@ -54,6 +54,75 @@ namespace open_spiel
             };
         } // namespace
 
+        int Mali_BaState::PlayMoveCount() const {
+            return std::max(0, (int)history_.size() - GetGame()->NumSetupMoves());
+        }
+
+        // Returns true if any player is in a near-win state:
+        // 1. Has rare goods from >= rare_region_threshold different regions, OR
+        // 2. Has a trading center in Timbuktu AND a trading center in a desert city (Agadez/Oudane), OR
+        // 3. Has a trading center in Timbuktu AND a trading center in any coastal city.
+        bool Mali_BaState::IsNearWin(int rare_region_threshold) const {
+            static const int timbuktu_id = GetCityID("Timbuktu");
+            static const int agadez_id   = GetCityID("Agadez");
+            static const int oudane_id   = GetCityID("Oudane");
+
+            // Pre-build a map: city location -> city id for fast lookup
+            std::map<HexCoord, int> city_loc_to_id;
+            for (const auto& city : GetGame()->GetCities()) {
+                city_loc_to_id[city.location] = city.id;
+            }
+
+            const std::set<HexCoord>& coastal_hexes = GetGame()->GetCoastalHexes();
+
+            // Build set of city IDs on coastal hexes
+            std::set<int> coastal_city_ids;
+            for (const auto& city : GetGame()->GetCities()) {
+                if (coastal_hexes.count(city.location)) {
+                    coastal_city_ids.insert(city.id);
+                }
+            }
+
+            for (Player p = 0; p < NumPlayers(); ++p) {
+                // --- Condition 1: rare goods from N regions ---
+                std::set<int> regions_covered;
+                if (p < (int)rare_goods_.size()) {
+                    for (const auto& [good_name, good_count] : rare_goods_[p]) {
+                        if (good_count > 0) {
+                            for (const auto& city : GetGame()->GetCities()) {
+                                if (city.rare_good == good_name) {
+                                    int rid = GetGame()->GetRegionForHex(city.location);
+                                    if (rid != -1) regions_covered.insert(rid);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if ((int)regions_covered.size() >= rare_region_threshold) return true;
+
+                // --- Conditions 2 & 3: center in Timbuktu AND center in desert or coastal city ---
+                PlayerColor pc = GetPlayerColor(p);
+                bool has_timbuktu_center = false;
+                bool has_desert_center   = false;
+                bool has_coastal_center  = false;
+                for (const auto& [hex, posts] : trade_posts_locations_) {
+                    auto it = city_loc_to_id.find(hex);
+                    if (it == city_loc_to_id.end()) continue;
+                    int cid = it->second;
+                    for (const auto& post : posts) {
+                        if (post.owner == pc && post.type == TradePostType::kCenter) {
+                            if (cid == timbuktu_id) has_timbuktu_center = true;
+                            if (cid == agadez_id || cid == oudane_id) has_desert_center = true;
+                            if (coastal_city_ids.count(cid)) has_coastal_center = true;
+                        }
+                    }
+                }
+                if (has_timbuktu_center && (has_desert_center || has_coastal_center)) return true;
+            }
+            return false;
+        }
+
         // --- State Constructor ---
         Mali_BaState::Mali_BaState(std::shared_ptr<const Game> game)
             : State(game),
@@ -62,18 +131,22 @@ namespace open_spiel
               current_player_color_(PlayerColor::kEmpty),
               next_route_id_(1)
         {
-            LOG_DEBUG("Mali_BaState::Constructor: ENTRY");
+            // LOG_INFO("Mali_BaState::Constructor: ENTRY");  // already exists as DEBUG, change to INFO
             rng_.seed(GetGame()->GetRNGSeed());
+            // LOG_INFO("Mali_BaState::Constructor: rng seeded");
             
             int num_players = game_->NumPlayers();
+            // LOG_INFO("Mali_BaState::Constructor: num_players=", num_players);
             common_goods_.resize(num_players);
             rare_goods_.resize(num_players);
             player_posts_supply_.resize(num_players);
             // Initialize cumulative_returns_
             cumulative_returns_.resize(game_->NumPlayers(), 0.0);
 
+            // LOG_INFO("Mali_BaState::Constructor: vectors resized, calling InitializeBoard");
+
             InitializeBoard();
-            LOG_DEBUG("Mali_BaState::Constructor: EXIT");
+            //LOG_INFO("Mali_BaState::Constructor: EXIT");
         }
 
         // --- State Copy Constructor ---
@@ -96,7 +169,12 @@ namespace open_spiel
               undo_stack_(other.undo_stack_),
               game_end_triggered_by_player_(other.game_end_triggered_by_player_),
               winning_player_(other.winning_player_),
-              game_end_reason_(other.game_end_reason_)
+              game_end_reason_(other.game_end_reason_),
+              meeples_in_hand_(other.meeples_in_hand_),
+              current_mancala_path_(other.current_mancala_path_),
+              current_mancala_hex_(other.current_mancala_hex_),
+              last_action_hex_(other.last_action_hex_),
+              pending_route_declaration_(other.pending_route_declaration_)
         {
             // Caches are intentionally NOT copied. They will be regenerated on the clone when needed.
             // Copy the cumulative returns
@@ -126,6 +204,22 @@ namespace open_spiel
           return GetGame()->GetValidHexes().count(hex) > 0;
         }
 
+        TradePostType Mali_BaState::GetPlayerPostType(const HexCoord& hex, PlayerColor color) const {
+            for (const auto& post : GetTradePostsAt(hex)) {
+                if (post.owner == color) return post.type;
+            }
+            return TradePostType::kNone;
+        }
+
+        bool Mali_BaState::CanTakeIncome() const {
+            // Player can take income if they have at least one trade post or center anywhere
+            for (const auto& [hex, posts] : trade_posts_locations_) {
+                for (const auto& post : posts) {
+                    if (post.owner == current_player_color_) return true;
+                }
+            }
+            return false;
+        }
 
         void Mali_BaState::InitializeBoard() {
             const GameRules& rules = GetGame()->GetRules();
@@ -160,6 +254,7 @@ namespace open_spiel
         // =============================================================================
         // This function is now the source of truth for legal action generation.
         LegalActionsResult Mali_BaState::GetLegalActionsAndCounts() const {
+            // LOG_INFO("GetLegalActionsAndCounts: ENTRY, phase=", (int)current_phase_);
             if (cached_legal_actions_result_) return *cached_legal_actions_result_;
 
             LegalActionsResult result;
@@ -180,7 +275,8 @@ namespace open_spiel
                         HexCoord hex = GetGame()->IndexToCoord(i);
                         if (player_token_locations_.find(hex) == player_token_locations_.end() &&
                             GetGame()->GetCityAt(hex) == nullptr) {
-                            result.actions.push_back(kPlaceTokenActionBase + i); // Use legacy base for setup
+                            // CHANGED: Use the new dynamic hex selection base
+                            result.actions.push_back(kHexSelectionBase + i); 
                             result.counts.place_token_moves++;
                         }
                     }
@@ -192,8 +288,11 @@ namespace open_spiel
                         result.actions.push_back(kPassAction);
                     }
                     
-                    // 1. Income Action (Only if last action wasn't income)
-                    if (CanTakeIncome()) {
+                    // 1. Income Action
+                    // NOTE: consecutive-income restriction is a training heuristic only,
+                    // not an actual game rule. Remove when no longer needed.
+                    bool income_blocked = last_was_income_[current_player_id_];
+                    if (CanTakeIncome() && !income_blocked) {
                         result.actions.push_back(kIncomeAction);
                         result.counts.income_moves++;
                     }
@@ -202,8 +301,43 @@ namespace open_spiel
                     for (int i = 0; i < GetGame()->NumHexes(); ++i) {
                         HexCoord hex = GetGame()->IndexToCoord(i);
                         if (HasTokenAt(hex, current_player_color_)) {
-                            result.actions.push_back(kMancalaStartBase + i);
-                            result.counts.mancala_moves++;
+                            // total_steps = meeples in hand + 1 for the token landing
+                            const int total_steps = static_cast<int>(GetMeeplesAt(hex).size()) + 1;
+                            
+                            // A fast DFS to check if a valid non-self-intersecting path exists.
+                            // This guarantees the agent won't get trapped mid-move.
+                            auto has_valid_mancala_path = [&](const HexCoord& start_pos, int steps) {
+                                std::vector<HexCoord> path = {start_pos};
+                                
+                                // Recursive lambda for depth-first search
+                                std::function<bool(const HexCoord&, int)> dfs = [&](const HexCoord& current, int depth) -> bool {
+                                    if (depth == 0) return true; // Found a complete path!
+                                    
+                                    for (int d = 0; d < 6; ++d) {
+                                        HexCoord next_hex = current + kHexDirections[d];
+                                        
+                                        // Must be on-board and not already visited in this path
+                                        if (IsValidHex(next_hex) && 
+                                            std::find(path.begin(), path.end(), next_hex) == path.end()) {
+                                            
+                                            path.push_back(next_hex);
+                                            if (dfs(next_hex, depth - 1)) {
+                                                return true;
+                                            }
+                                            path.pop_back(); // Backtrack
+                                        }
+                                    }
+                                    return false;
+                                };
+                                
+                                return dfs(start_pos, steps);
+                            };
+
+                            // Only allow the move if a complete path is physically possible
+                            if (has_valid_mancala_path(hex, total_steps)) {
+                                result.actions.push_back(kMancalaStartBase + i);
+                                result.counts.mancala_moves++;
+                            }
                         }
                     }
 
@@ -223,20 +357,69 @@ namespace open_spiel
 
                 case Phase::kMancalaStep:
                 case Phase::kMancalaTokenStep: {
-                    // MCTS naturally learns pathfinding via these 6 directional choices
+                    // How many more steps does the mancala need to complete?
+                    // meeples_in_hand_ holds meeples still to place; each step places one.
+                    const int steps_needed = static_cast<int>(meeples_in_hand_.size());
+
                     for (int i = 0; i < 6; ++i) {
                         HexCoord target = current_mancala_hex_ + kHexDirections[i];
-                        
+
                         // Rule 1: Must be on the board
                         if (!IsValidHex(target)) continue;
-                        
+
                         // Rule 2: Cannot revisit a hex in the current path
-                        if (std::find(current_mancala_path_.begin(), current_mancala_path_.end(), target) 
+                        if (std::find(current_mancala_path_.begin(), current_mancala_path_.end(), target)
                             != current_mancala_path_.end()) {
                             continue;
                         }
-                        
+
+                        // Rule 3: BFS reachability check — prune directions where there
+                        // aren't enough reachable unvisited hexes to complete the mancala.
+                        // For meeple steps: need steps_needed reachable hexes (including
+                        // one for the token to land after all meeples are placed).
+                        // steps_needed - 1 because moving to target counts as one step.
+                        // We always check (even steps_needed==1) to ensure the token
+                        // has at least one landing hex after the final meeple step.
+                        {
+                        const int needed_after_target = (current_phase_ == Phase::kMancalaTokenStep)
+                            ? 0  // token step: just needs a valid hex to land on (rules 1&2 suffice)
+                            : steps_needed; // meeple steps: need room for remaining meeples + token
+                            // BFS from target, blocked by current_mancala_path_ and current_mancala_hex_
+                            std::vector<HexCoord> blocked = current_mancala_path_;
+                            blocked.push_back(current_mancala_hex_);
+
+                            std::vector<HexCoord> frontier = {target};
+                            std::vector<HexCoord> visited = {target};
+                            int reachable = 0;
+                            const int needed = needed_after_target;
+
+                            while (!frontier.empty() && reachable < needed) {
+                                std::vector<HexCoord> next_frontier;
+                                for (const HexCoord& h : frontier) {
+                                    for (int d = 0; d < 6; ++d) {
+                                        HexCoord nb = h + kHexDirections[d];
+                                        if (!IsValidHex(nb)) continue;
+                                        if (std::find(visited.begin(), visited.end(), nb) != visited.end()) continue;
+                                        if (std::find(blocked.begin(), blocked.end(), nb) != blocked.end()) continue;
+                                        visited.push_back(nb);
+                                        next_frontier.push_back(nb);
+                                        ++reachable;
+                                        if (reachable >= needed) break;
+                                    }
+                                    if (reachable >= needed) break;
+                                }
+                                frontier = next_frontier;
+                            }
+
+                            if (reachable < needed) continue; // not enough room — prune
+                        }
+
                         result.actions.push_back(kMancalaDirectionBase + i);
+                    }
+                    // If the token is completely boxed in, allow passing to end the mancala
+                    // turn early (remaining meeples drop on current hex, token stays).
+                    if (result.actions.empty()) {
+                        result.actions.push_back(kPassAction);
                     }
                     break;
                 }
@@ -278,6 +461,20 @@ namespace open_spiel
             }
 
             cached_legal_actions_result_ = result;
+
+            // // Diagnostic: log when the only legal action is Pass
+            // if (result.actions.size() == 1 && result.actions[0] == kPassAction) {
+            //     int supply = (current_player_id_ >= 0 && current_player_id_ < (int)player_posts_supply_.size())
+            //         ? player_posts_supply_[current_player_id_] : -1;
+            //     LOG_INFO("[PASS_ONLY] Player ", current_player_id_,
+            //         " has only Pass. phase=", (int)current_phase_,
+            //         " posts_supply=", supply,
+            //         " income_ok=", CanTakeIncome(),
+            //         " upgrade_ok=", HasSufficientResourcesForUpgrade(current_player_id_),
+            //         " mancala_hex=", current_mancala_hex_.ToString(),
+            //         " path_len=", (int)current_mancala_path_.size());
+            // }
+
             return result;
         }
 
@@ -404,24 +601,22 @@ namespace open_spiel
             }
         }
 
-        void Mali_BaState::ApplyTradingPostUpgrade(const Move& move) {
-            SPIEL_CHECK_EQ(move.type, ActionType::kPlaceTCenter);
-            
+        void Mali_BaState::ApplyTradingPostUpgrade(const HexCoord& hex) {
             // Check if the player actually has a post to upgrade.
             bool has_player_post = false;
-            const auto& posts = GetTradePostsAt(move.start_hex);
+            const auto& posts = GetTradePostsAt(hex);
             for (const auto& post : posts) {
-                if (post.owner == move.player && post.type == TradePostType::kPost) {
+                if (post.owner == current_player_color_ && post.type == TradePostType::kPost) {
                     has_player_post = true;
                     break;
                 }
             }
             if (!has_player_post) {
-                LOG_WARN("ApplyTradingPostUpgrade ERROR: No trading post to upgrade at ", move.start_hex.ToString());
+                LOG_WARN("ApplyTradingPostUpgrade ERROR: No trading post to upgrade at ", hex.ToString());
                 return;
             }
 
-            Player player_id = GetPlayerId(move.player);
+            Player player_id = GetPlayerId(current_player_color_);
             const GameRules& rules = GetGame()->GetRules();
             const int common_cost = rules.upgrade_cost_common;
             const int rare_cost = rules.upgrade_cost_rare;
@@ -572,7 +767,7 @@ namespace open_spiel
             }
             
             // If payment was successful, perform the state change.
-            UpgradeTradingPost(move.start_hex, move.player);
+            UpgradeTradingPost(hex, current_player_color_);
             LOG_DEBUG("Trading post upgraded to center successfully.");
         }
 
@@ -679,23 +874,68 @@ namespace open_spiel
                 SetCurrentPhase(Phase::kPlaceToken);
                 current_player_id_ = 0;
                 current_player_color_ = GetPlayerColor(current_player_id_);
+
+                ClearCaches();
+                RefreshTerminalStatus();
                 return;
             }
 
             switch (current_phase_) {
+                case Phase::kPlaceToken: {
+                    int hex_index = action - kHexSelectionBase;
+                    HexCoord hex = GetGame()->IndexToCoord(hex_index);
+                    
+                    AddTokenAt(hex, current_player_color_);
+
+                    // Check if all players have placed their required tokens
+                    int required_tokens = GetGame()->GetTokensPerPlayer();
+                    bool all_placed = true;
+                    
+                    for (Player p = 0; p < game_->NumPlayers(); ++p) {
+                        PlayerColor c = GetPlayerColor(p);
+                        int count = 0;
+                        for (const auto& [h, colors] : player_token_locations_) {
+                            for (PlayerColor pc : colors) {
+                                if (pc == c) count++;
+                            }
+                        }
+                        if (count < required_tokens) {
+                            all_placed = false;
+                            break;
+                        }
+                    }
+
+                    if (all_placed) {
+                        current_phase_ = Phase::kPlay;
+                        current_player_id_ = 0;
+                        current_player_color_ = GetPlayerColor(current_player_id_);
+                    } else {
+                        // Advance to next player
+                        current_player_color_ = GetNextPlayerColor(current_player_color_);
+                        current_player_id_ = GetPlayerId(current_player_color_);
+                    }
+                    break;
+                }
+
                 case Phase::kPlay: {
+                    // Track consecutive income for training heuristic (not an actual game rule).
+                    last_was_income_[current_player_id_] = (action == kIncomeAction);
                     if (action == kIncomeAction) {
-                        ApplyIncomeCollection("income"); 
-                        EndTurn();
+                        ApplyIncomeCollection("income");
+                        // End Turn
+                        current_player_color_ = GetNextPlayerColor(current_player_color_);
+                        current_player_id_ = GetPlayerId(current_player_color_);
                     } 
                     else if (action >= kUpgradeBase && action < kPaymentBase) {
                         int hex_index = action - kUpgradeBase;
                         last_action_hex_ = GetGame()->IndexToCoord(hex_index);
                         
-                        ApplyTradingPostUpgrade(last_action_hex_); // (You'll need to adapt this to take HexCoord directly)
-                        
-                        // Proceed to optional route declaration
-                        current_phase_ = Phase::kOptionalRoute;
+                        ApplyTradingPostUpgrade(last_action_hex_);
+
+                        {
+                            auto possible = FindPossibleTradeRoutes(current_player_color_, true, &last_action_hex_, 5);
+                            if (possible.empty()) { EndTurn(); } else { current_phase_ = Phase::kOptionalRoute; }
+                        }
                     }
                     else if (action >= kMancalaStartBase && action < kUpgradeBase) {
                         int hex_index = action - kMancalaStartBase;
@@ -703,7 +943,6 @@ namespace open_spiel
                         current_mancala_path_.clear();
                         current_mancala_path_.push_back(current_mancala_hex_);
                         
-                        // Pick up tokens and meeples
                         RemoveTokenAt(current_mancala_hex_, current_player_color_);
                         meeples_in_hand_ = GetMeeplesAt(current_mancala_hex_);
                         hex_meeples_[current_mancala_hex_].clear();
@@ -714,19 +953,38 @@ namespace open_spiel
                             current_phase_ = Phase::kMancalaStep;
                         }
                     }
+                    else if (action == kPassAction) {
+                        // End Turn
+                        current_player_color_ = GetNextPlayerColor(current_player_color_);
+                        current_player_id_ = GetPlayerId(current_player_color_);
+                    }
                     break;
                 }
 
                 case Phase::kMancalaStep: {
+                    if (action == kPassAction) {
+                        // Token is boxed in: drop all remaining meeples on current hex.
+                        for (MeepleColor m : meeples_in_hand_) {
+                            hex_meeples_[current_mancala_hex_].push_back(m);
+                        }
+                        meeples_in_hand_.clear();
+                        last_action_hex_ = current_mancala_hex_;
+                        if (!CanPlaceTradingPostAt(last_action_hex_, current_player_color_)) {
+                            auto possible = FindPossibleTradeRoutes(current_player_color_, true, &last_action_hex_, 5);
+                            if (possible.empty()) { EndTurn(); } else { current_phase_ = Phase::kOptionalRoute; }
+                        } else {
+                            current_phase_ = Phase::kOptionalPost;
+                        }
+                        break;
+                    }
                     int dir = action - kMancalaDirectionBase;
                     current_mancala_hex_ = current_mancala_hex_ + kHexDirections[dir];
                     current_mancala_path_.push_back(current_mancala_hex_);
-                    
-                    // Drop a meeple
+
                     MeepleColor dropped = meeples_in_hand_.back();
                     meeples_in_hand_.pop_back();
                     hex_meeples_[current_mancala_hex_].push_back(dropped);
-                    
+
                     if (meeples_in_hand_.empty()) {
                         current_phase_ = Phase::kMancalaTokenStep;
                     }
@@ -734,29 +992,44 @@ namespace open_spiel
                 }
 
                 case Phase::kMancalaTokenStep: {
+                    if (action == kPassAction) {
+                        // Token is boxed in: stay on current hex.
+                        last_action_hex_ = current_mancala_hex_;
+                        if (!CanPlaceTradingPostAt(last_action_hex_, current_player_color_)) {
+                            auto possible = FindPossibleTradeRoutes(current_player_color_, true, &last_action_hex_, 5);
+                            if (possible.empty()) { EndTurn(); } else { current_phase_ = Phase::kOptionalRoute; }
+                        } else {
+                            current_phase_ = Phase::kOptionalPost;
+                        }
+                        break;
+                    }
                     int dir = action - kMancalaDirectionBase;
                     current_mancala_hex_ = current_mancala_hex_ + kHexDirections[dir];
                     current_mancala_path_.push_back(current_mancala_hex_);
-                    
-                    // Drop player token
+
                     AddTokenAt(current_mancala_hex_, current_player_color_);
                     last_action_hex_ = current_mancala_hex_;
-                    
-                    current_phase_ = Phase::kOptionalPost;
+
+                    if (!CanPlaceTradingPostAt(last_action_hex_, current_player_color_)) {
+                        auto possible = FindPossibleTradeRoutes(current_player_color_, true, &last_action_hex_, 5);
+                        if (possible.empty()) { EndTurn(); } else { current_phase_ = Phase::kOptionalRoute; }
+                    } else {
+                        current_phase_ = Phase::kOptionalPost;
+                    }
                     break;
                 }
 
                 case Phase::kOptionalPost: {
                     if (action == kPassAction) {
-                        current_phase_ = Phase::kOptionalRoute;
+                        auto possible = FindPossibleTradeRoutes(current_player_color_, true, &last_action_hex_, 5);
+                        if (possible.empty()) { EndTurn(); } else { current_phase_ = Phase::kOptionalRoute; }
                     } else if (action == kPlacePostAction) {
-                        // If there's a meeple, consume it immediately
                         if (!GetMeeplesAt(last_action_hex_).empty()) {
                             RemoveMeepleAt(last_action_hex_, 0);
                             AddTradingPost(last_action_hex_, current_player_color_, TradePostType::kPost);
-                            current_phase_ = Phase::kOptionalRoute;
+                            auto possible = FindPossibleTradeRoutes(current_player_color_, true, &last_action_hex_, 5);
+                            if (possible.empty()) { EndTurn(); } else { current_phase_ = Phase::kOptionalRoute; }
                         } else {
-                            // Ask which resource to pay with
                             current_phase_ = Phase::kOptionalPostPayment;
                         }
                     }
@@ -767,11 +1040,13 @@ namespace open_spiel
                     int good_id = action - kPaymentBase;
                     std::string good_name = GoodsManager::GetInstance().GetCommonGoodsList()[good_id];
                     
-                    // Deduct the good
                     common_goods_[current_player_id_][good_name]--;
                     AddTradingPost(last_action_hex_, current_player_color_, TradePostType::kPost);
                     
-                    current_phase_ = Phase::kOptionalRoute;
+                    {
+                        auto possible = FindPossibleTradeRoutes(current_player_color_, true, &last_action_hex_, 5);
+                        if (possible.empty()) { EndTurn(); } else { current_phase_ = Phase::kOptionalRoute; }
+                    }
                     break;
                 }
 
@@ -779,17 +1054,29 @@ namespace open_spiel
                     if (action != kPassAction) {
                         int route_id = action - kRouteBase;
                         auto possible_routes = FindPossibleTradeRoutes(current_player_color_, true, &last_action_hex_, 5);
-                        CreateTradeRoute(possible_routes[route_id], current_player_color_);
+                        
+                        // Safety check in case heuristic route building mismatches
+                        if (route_id < possible_routes.size()) {
+                            CreateTradeRoute(possible_routes[route_id], current_player_color_);
+                        }
                     }
                     
-                    EndTurn();
+                    // End Turn
+                    current_player_color_ = GetNextPlayerColor(current_player_color_);
+                    current_player_id_ = GetPlayerId(current_player_color_);
+                    current_phase_ = Phase::kPlay;
+                    meeples_in_hand_.clear();
+                    current_mancala_path_.clear();
                     break;
                 }
+                default:
+                    break;
             }
 
             // Recalculate game-end conditions if necessary
             ClearCaches();
             RefreshTerminalStatus();
+            // LogHeuristicEndGameDiagnostic(); // disabled during MCTS (fires on every simulation rollout)
         }
 
         // Simple helper to cleanly hand over the turn and reset mid-turn variables
@@ -803,49 +1090,39 @@ namespace open_spiel
         }
 
         std::string Mali_BaState::ActionToString(Player player, Action action) const {
-            if (IsChanceNode()) {
-                if (action == kChanceSetupAction) return "ChanceSetup";
-                return absl::StrCat("Unknown chance action: ", action);
+            if (action == kPassAction) return "Pass";
+            if (action == kIncomeAction) return "TakeIncome";
+            if (action == kPlacePostAction) return "PlacePost";
+
+            if (action >= kMancalaDirectionBase && action < kMancalaStartBase) {
+                return absl::StrCat("MancalaDir_", action - kMancalaDirectionBase);
+            }
+            if (action >= kMancalaStartBase && action < kHexSelectionBase) {
+                int hex_index = action - kMancalaStartBase;
+                if (hex_index >= 0 && hex_index < GetGame()->NumHexes()) {
+                    return absl::StrCat("StartMancala_", GetGame()->IndexToCoord(hex_index).ToString());
+                }
+            }
+            if (action >= kHexSelectionBase && action < kUpgradeBase) {
+                int hex_index = action - kHexSelectionBase;
+                if (hex_index >= 0 && hex_index < GetGame()->NumHexes()) {
+                    return absl::StrCat("PlaceToken_", GetGame()->IndexToCoord(hex_index).ToString());
+                }
+            }
+            if (action >= kUpgradeBase && action < kPaymentBase) {
+                int hex_index = action - kUpgradeBase;
+                if (hex_index >= 0 && hex_index < GetGame()->NumHexes()) {
+                    return absl::StrCat("UpgradePost_", GetGame()->IndexToCoord(hex_index).ToString());
+                }
+            }
+            if (action >= kPaymentBase && action < kRouteBase) {
+                return absl::StrCat("PayGood_", action - kPaymentBase);
+            }
+            if (action >= kRouteBase) {
+                return absl::StrCat("DeclareRoute_", action - kRouteBase);
             }
 
-            // Handle PlaceToken phase directly, as its action encoding is simple.
-            if (current_phase_ == Phase::kPlaceToken) {
-                if (action >= kPlaceTokenActionBase && action < kUpgradeActionBase) {
-                    int hex_index = action - kPlaceTokenActionBase;
-                    SPIEL_CHECK_LT(hex_index, GetGame()->NumHexes());
-                    HexCoord hex = GetGame()->IndexToCoord(hex_index);
-                    return absl::StrCat("place_token ", hex.ToString());
-                }
-            }
-
-            Move move = ActionToMove(action);
-
-            switch (move.type) {
-                case ActionType::kPass:
-                    return "pass";
-                case ActionType::kIncome:
-                    return "income";
-                case ActionType::kPlaceTCenter: {
-                    return move.action_string;
-                }
-                case ActionType::kMancala: {
-                    std::string action_str = absl::StrCat("mancala ", move.start_hex.ToString(), "->", move.path.front().ToString());
-                    if (move.place_trading_post) {
-                        absl::StrAppend(&action_str, " post");
-                    }
-                    return action_str;
-                }
-                case ActionType::kTradeRouteCreate: {
-                    std::string path_str;
-                    for (size_t i = 0; i < move.path.size(); ++i) {
-                        if (i > 0) path_str += ":";
-                        path_str += move.path[i].ToString();
-                    }
-                    return absl::StrCat("route_create ", path_str);
-                }
-                default:
-                    return absl::StrCat("Unknown(action_id=", action, ",type=", static_cast<int>(move.type),")");
-            }
+            return absl::StrCat("UnknownAction_", action);
         }
         
         void Mali_BaState::PushStateToUndoStack() {
@@ -862,7 +1139,8 @@ namespace open_spiel
                 next_route_id_,
                 moves_history_,
                 cumulative_returns_,
-                is_terminal_
+                is_terminal_,
+                last_was_income_
             });
         }
 
@@ -882,6 +1160,7 @@ namespace open_spiel
             next_route_id_ = last_state.next_route_id_;
             moves_history_ = last_state.moves_history_;
             cumulative_returns_ = last_state.cumulative_returns_;
+            last_was_income_ = last_state.last_was_income_;
 
             undo_stack_.pop_back();
 
@@ -902,18 +1181,29 @@ namespace open_spiel
         bool Mali_BaState::IsTerminal() const {
             if (is_terminal_) return true;
 
-            // Check for game length limit BEFORE checking for win conditions.
-            // This makes it a hard limit.
-            if (history_.size() >= MaxGameLength()) {
+            // Hard limit: max game length (including near-win extension).
+            if (PlayMoveCount() >= GetGame()->GetMaxPlayMoves() + GetGame()->GetNearWinExtensionMoves()) {
                 const_cast<Mali_BaState*>(this)->is_terminal_ = true;
-                // Optionally set the reason for debugging
                 const_cast<Mali_BaState*>(this)->game_end_reason_ = "Max game length reached";
-                const_cast<Mali_BaState*>(this)->winning_player_ = -1; // -1 for draw
+                const_cast<Mali_BaState*>(this)->winning_player_ = -1;
                 return true;
             }
 
-            // This checks for player-driven win conditions
-            if (MaybeFinalReturns().has_value() || history_.size() >= MaxGameLength()) {
+            // Rule: game ends if a player has no legal moves at the start of their turn.
+            // We check the cache only (never call LegalActions() from inside IsTerminal()
+            // — that would recurse). The cache is populated by GetLegalActionsAndCounts()
+            // during normal game-loop evaluation.
+            if (current_phase_ == Phase::kPlay && cached_legal_actions_result_.has_value()) {
+                if (cached_legal_actions_result_->actions.empty()) {
+                    const_cast<Mali_BaState*>(this)->is_terminal_ = true;
+                    const_cast<Mali_BaState*>(this)->game_end_reason_ = "No legal moves";
+                    const_cast<Mali_BaState*>(this)->winning_player_ = -1;
+                    return true;
+                }
+            }
+
+            // Player-driven win conditions.
+            if (MaybeFinalReturns().has_value()) {
                 const_cast<Mali_BaState*>(this)->is_terminal_ = true;
                 return true;
             }
@@ -942,10 +1232,10 @@ namespace open_spiel
                 // If the rule is active...
                 if (rules.end_game_req_num_routes > 0) {
                     if (player_route_count < rules.end_game_req_num_routes) {
-                        // LOG_DEBUG("Player ", p, " needs ", rules.end_game_req_num_routes - player_route_count, " more routes for other victory conditions");
+                        LOG_DEBUG("Player ", p, " needs ", rules.end_game_req_num_routes - player_route_count, " more routes for other victory conditions");
                         continue;
                     }
-                    // LOG_DEBUG("Player ", p, " has ", player_route_count, " active trade routes");
+                    LOG_DEBUG("Player ", p, " has ", player_route_count, " active trade routes");
                 }
 
                 // =============================================================
@@ -957,19 +1247,27 @@ namespace open_spiel
                 // === this end-game condition does not apply
                 if (rules.end_game_cond_num_rare_goods > 0) {
                     int unique_rare_count = 0;
+                    std::string rare_goods_debug;
                     for (const auto& [good_name, good_count] : rare_goods_[p]) {
                         if (good_count > 0) {
                             unique_rare_count++;
+                            rare_goods_debug += good_name + ":" + std::to_string(good_count) + " ";
                         }
                     }
-                    //LOG_DEBUG("Player ", p, " has ", unique_rare_count, " unique rare goods: [", rare_goods_debug, "]");
+                    // Log when approaching win condition (helps diagnose missed triggers)
+                    if (unique_rare_count >= (rules.end_game_cond_num_rare_goods - 2) &&
+                        current_phase_ == Phase::kPlay) {
+                        LOG_WARN("WIN CHECK: Player ", p, " has ", player_route_count, " routes and ",
+                                 unique_rare_count, "/", rules.end_game_cond_num_rare_goods,
+                                 " unique rare goods. [", rare_goods_debug, "]");
+                    }
 
                     if (unique_rare_count >= rules.end_game_cond_num_rare_goods) {
                         game_end_triggered_by_player_ = p;
                         game_end_reason_ = "Rare goods victory condition";
-                        LOG_DEBUG("🎉 GAME END TRIGGER: Player ", p, " has reached the rare good victory condition (", 
-                                unique_rare_count, "/", rules.end_game_cond_num_rare_goods, ")! 🎉");
-                        LOG_DEBUG("Total moves in history: ", history_.size());
+                        LOG_WARN("GAME END TRIGGER: Player ", p, " has reached the rare good victory condition (",
+                                unique_rare_count, "/", rules.end_game_cond_num_rare_goods, ")!");
+                        LOG_WARN("Total moves in history: ", history_.size());
                         return std::vector<double>();
                     }
                 }
@@ -1062,9 +1360,22 @@ namespace open_spiel
                             total_regions++;
                         }
                     }                    
-                    // LOG_DEBUG("DEBUG: Player ", p, " has rare goods from ", 
-                    //     regions_with_rare_goods.size(), " regions! 🎉");
-                    // LOG_DEBUG("DEBUG: Regions covered: ", regions_with_rare_goods.size(), "/", total_regions);
+                    // WIN CHECK: log when approaching the region win condition
+                    // if ((int)regions_with_rare_goods.size() >= (num_regions_needed - 2) &&
+                    // current_phase_ == Phase::kPlay) {
+                    // std::string covered_str, missing_str;
+                    // for (int rid : regions_with_rare_goods)
+                    // covered_str += GetGame()->GetRegionName(rid) + " ";
+                    // for (int i = 1; i <= 6; ++i) {
+                    // std::string rname = GetGame()->GetRegionName(i);
+                    // if (!rname.empty() && rname.find("Unknown") == std::string::npos &&
+                    // regions_with_rare_goods.find(i) == regions_with_rare_goods.end())
+                    // missing_str += rname + " ";
+                    // }
+                    // LOG_WARN("REGION WIN CHECK: Player ", p, " has ", player_route_count,
+                    // " routes and ", regions_with_rare_goods.size(), "/", num_regions_needed,
+                    // " regions. Covered=[", covered_str, "] Missing=[", missing_str, "]");
+                    // }
                     // Check if player has rare goods from all regions
                     if ((int)regions_with_rare_goods.size() >= std::min(total_regions, num_regions_needed)) {
                         LOG_DEBUG("🎉 GAME END TRIGGER: Player ", p, " has rare goods from ", 
@@ -1086,16 +1397,185 @@ namespace open_spiel
                 }                
             }
 
-            // === 999. Player-independent end-game condition. 
-            // Check to see if we've exceeded the maximum game length
-            if (history_.size() >= MaxGameLength()) {
-                LOG_DEBUG("GAME END TRIGGER: Maximum game length of ", MaxGameLength(), " moves has been reached.");
+            // === 999. Player-independent end-game condition.
+            // Check to see if we've exceeded the maximum game length (including near-win extension).
+            if (PlayMoveCount() >= GetGame()->GetMaxPlayMoves() + GetGame()->GetNearWinExtensionMoves()) {
+                LOG_DEBUG("GAME END TRIGGER: Maximum game length of ", GetGame()->GetMaxPlayMoves() + GetGame()->GetNearWinExtensionMoves(), " moves has been reached.");
                 return std::vector<double>();
             }
 
             return absl::nullopt;
         }
 
+        std::string Mali_BaState::GetScoreBreakdownString() const {
+            const GameRules& rules = GetGame()->GetRules();
+            const int n = NumPlayers();
+
+            std::vector<double> infrastructure_scores(n, 0.0);
+            std::vector<int>    post_counts(n, 0);
+            std::vector<int>    center_counts(n, 0);
+            std::vector<double> unique_goods_scores(n, 0.0);
+            std::vector<double> longest_route_scores(n, 0.0);
+            std::vector<double> region_control_scores(n, 0.0);
+            std::vector<double> regions_crossed_scores(n, 0.0);
+
+            // Infrastructure
+            for (Player p = 0; p < n; ++p) {
+                PlayerColor pc = GetPlayerColor(p);
+                for (const auto& [hex, posts] : trade_posts_locations_) {
+                    for (const auto& post : posts) {
+                        if (post.owner != pc) continue;
+                        if (post.type == TradePostType::kPost) {
+                            post_counts[p]++;
+                            infrastructure_scores[p] += rules.score_trading_post;
+                        } else if (post.type == TradePostType::kCenter) {
+                            center_counts[p]++;
+                            infrastructure_scores[p] += rules.score_trading_center;
+                        }
+                    }
+                }
+            }
+
+            // Unique goods sets
+            for (Player p = 0; p < n; ++p) {
+                std::map<std::string, int> all_goods;
+                for (const auto& [name, count] : GetPlayerCommonGoods(p))
+                    if (count > 0) all_goods[name] = count;
+                for (const auto& [name, count] : GetPlayerRareGoods(p))
+                    if (count > 0) all_goods[name] += count;
+
+                while (!all_goods.empty()) {
+                    int set_size = (int)all_goods.size();
+                    if (set_size >= 12) {
+                        int extras = set_size - 11;
+                        unique_goods_scores[p] += rules.score_unique_goods.rbegin()->second
+                                                + extras * rules.score_unique_goods_bonus;
+                    } else {
+                        auto it = rules.score_unique_goods.find(set_size);
+                        if (it != rules.score_unique_goods.end())
+                            unique_goods_scores[p] += it->second;
+                    }
+                    std::vector<std::string> to_remove;
+                    for (auto& [name, count] : all_goods) {
+                        if (--count == 0) to_remove.push_back(name);
+                    }
+                    for (const auto& name : to_remove) all_goods.erase(name);
+                }
+            }
+
+            // Longest route ranking
+            std::vector<std::pair<int, Player>> route_lengths;
+            std::vector<int> route_counts(n, 0);
+            std::vector<int> longest_route(n, 0);
+            for (Player p = 0; p < n; ++p) {
+                for (const auto& route : trade_routes_) {
+                    if (route.owner == GetPlayerColor(p) && route.active) {
+                        route_counts[p]++;
+                        longest_route[p] = std::max(longest_route[p], (int)route.hexes.size());
+                    }
+                }
+                route_lengths.push_back({longest_route[p], p});
+            }
+            std::sort(route_lengths.rbegin(), route_lengths.rend());
+            for (int i = 0; i < (int)route_lengths.size() &&
+                            i < (int)rules.score_longest_routes.size(); ++i) {
+                if (route_lengths[i].first == 0) break;
+                longest_route_scores[route_lengths[i].second] += rules.score_longest_routes[i];
+                int j = i + 1;
+                while (j < (int)route_lengths.size() &&
+                       route_lengths[j].first == route_lengths[i].first) {
+                    longest_route_scores[route_lengths[j].second] += rules.score_longest_routes[i];
+                    j++;
+                }
+                i = j - 1;
+            }
+
+            // Region control
+            std::vector<int> valid_region_ids = GetGame()->GetValidRegionIds();
+            for (int region_id : valid_region_ids) {
+                std::vector<std::pair<int, Player>> rc;
+                for (Player p = 0; p < n; ++p) {
+                    int cnt = 0;
+                    for (const auto& [hex, posts] : trade_posts_locations_) {
+                        if (GetGame()->GetRegionForHex(hex) != region_id) continue;
+                        for (const auto& post : posts)
+                            if (post.owner == GetPlayerColor(p) && post.type == TradePostType::kCenter)
+                                cnt++;
+                    }
+                    rc.push_back({cnt, p});
+                }
+                std::sort(rc.rbegin(), rc.rend());
+                for (int i = 0; i < (int)rc.size() && i < (int)rules.score_region_control.size(); ++i) {
+                    if (rc[i].first == 0) break;
+                    region_control_scores[rc[i].second] += rules.score_region_control[i];
+                    int j = i + 1;
+                    while (j < (int)rc.size() && rc[j].first == rc[i].first) {
+                        region_control_scores[rc[j].second] += rules.score_region_control[i];
+                        j++;
+                    }
+                    i = j - 1;
+                }
+            }
+
+            // Regions crossed per route
+            for (Player p = 0; p < n; ++p) {
+                for (const auto& route : trade_routes_) {
+                    if (route.owner != GetPlayerColor(p) || !route.active) continue;
+                    std::set<int> crossed;
+                    for (const auto& hex : route.hexes) {
+                        int rid = GetGame()->GetRegionForHex(hex);
+                        if (rid != -1) crossed.insert(rid);
+                    }
+                    int num_r = (int)crossed.size();
+                    auto it = rules.score_regions_crossed.find(num_r);
+                    if (it != rules.score_regions_crossed.end())
+                        regions_crossed_scores[p] += it->second;
+                }
+            }
+
+            // Rare goods per player (for display)
+            std::vector<std::map<std::string,int>> rare(n);
+            std::vector<int> unique_rare_count(n, 0);
+            for (Player p = 0; p < n; ++p) {
+                for (const auto& [name, count] : GetPlayerRareGoods(p))
+                    if (count > 0) { rare[p][name] = count; unique_rare_count[p]++; }
+            }
+
+            // Build string
+            std::string out;
+            out += "\n========== FINAL SCORE BREAKDOWN ==========\n";
+            for (Player p = 0; p < n; ++p) {
+                double total = infrastructure_scores[p] + unique_goods_scores[p]
+                             + longest_route_scores[p] + region_control_scores[p]
+                             + regions_crossed_scores[p];
+                out += absl::StrCat("Player ", p + 1, " (", PlayerColorToString(GetPlayerColor(p)), ")"
+                                    "  TOTAL: ", total, "\n");
+                out += absl::StrCat("  Posts (", post_counts[p], "x", rules.score_trading_post,
+                                    ") + Centers (", center_counts[p], "x", rules.score_trading_center,
+                                    "):  ", infrastructure_scores[p], " pts\n");
+                out += absl::StrCat("  Routes: ", route_counts[p],
+                                    "  (longest=", longest_route[p], " hexes)\n");
+                out += absl::StrCat("  Unique goods sets:            ", unique_goods_scores[p], " pts\n");
+                out += absl::StrCat("  Longest route ranking:        ", longest_route_scores[p], " pts\n");
+                out += absl::StrCat("  Regions crossed (per route):  ", regions_crossed_scores[p], " pts\n");
+                out += absl::StrCat("  Region control:               ", region_control_scores[p], " pts\n");
+                // Rare goods inventory
+                if (!rare[p].empty()) {
+                    out += "  Rare goods (";
+                    out += std::to_string(unique_rare_count[p]);
+                    out += " unique):  ";
+                    bool first = true;
+                    for (const auto& [name, cnt] : rare[p]) {
+                        if (!first) out += ", ";
+                        out += name + " x" + std::to_string(cnt);
+                        first = false;
+                    }
+                    out += "\n";
+                }
+            }
+            out += "============================================\n";
+            return out;
+        }
 
         std::vector<double> Mali_BaState::Returns() const {
             if (!IsTerminal()) {
@@ -1105,12 +1585,8 @@ namespace open_spiel
 
             const auto& training_params = GetGame()->GetTrainingParameters();
 
-            // First, check if the game ended because of the max length rule.
-            if (history_.size() >= MaxGameLength()) {
-                LOG_DEBUG("======== GAME END: MAX LENGTH REACHED ========");
-                LOG_DEBUG("Game ended due to reaching max length. Declaring a draw.");
-                // Return max game penalty for all players, for stalling to a draw.
-                return std::vector<double>(NumPlayers(), training_params.max_moves_penalty);
+            if (PlayMoveCount() >= GetGame()->GetMaxPlayMoves()) {
+                LOG_DEBUG("======== GAME END: MAX LENGTH REACHED — scoring normally ========");
             }
 
             LOG_DEBUG("======== FINAL SCORE CALCULATION ========");
@@ -1118,148 +1594,165 @@ namespace open_spiel
             std::vector<double> scores(NumPlayers(), 0.0);
             const GameRules& rules = GetGame()->GetRules();
 
-            std::vector<double> route_scores(NumPlayers(), 0.0);
-            std::vector<double> rare_good_scores(NumPlayers(), 0.0);
-            std::vector<double> center_scores(NumPlayers(), 0.0);
-            std::vector<double> common_good_set_scores(NumPlayers(), 0.0);
+            std::vector<double> infrastructure_scores(NumPlayers(), 0.0);
+            std::vector<double> unique_goods_scores(NumPlayers(), 0.0);
             std::vector<double> longest_route_scores(NumPlayers(), 0.0);
             std::vector<double> region_control_scores(NumPlayers(), 0.0);
             std::vector<double> regions_crossed_scores(NumPlayers(), 0.0);
 
-            // Calculate the scores received for longest route(s)
-            std::vector<std::pair<int, Player>> player_route_lengths;
+            // --- 1. Trading posts (4 pts) and centers (8 pts) ---
             for (Player p = 0; p < NumPlayers(); ++p) {
-                int longest_single_route = 0;
-                for (const auto& route : trade_routes_) {
-                    if (route.owner == GetPlayerColor(p) && route.active) {
-                        longest_single_route = std::max(longest_single_route, (int)route.hexes.size());
+                PlayerColor p_color = GetPlayerColor(p);
+                for (const auto& [hex, posts] : trade_posts_locations_) {
+                    for (const auto& post : posts) {
+                        if (post.owner != p_color) continue;
+                        if (post.type == TradePostType::kPost)
+                            infrastructure_scores[p] += rules.score_trading_post;
+                        else if (post.type == TradePostType::kCenter)
+                            infrastructure_scores[p] += rules.score_trading_center;
                     }
-                }
-                player_route_lengths.push_back({longest_single_route, p});
-            }
-            std::sort(player_route_lengths.rbegin(), player_route_lengths.rend());
-            for(int i = 0; i < player_route_lengths.size() && i < rules.score_longest_routes.size(); ++i) {
-                if (player_route_lengths[i].first > 0) {
-                    longest_route_scores[player_route_lengths[i].second] += rules.score_longest_routes[i];
-                    int j = i + 1;
-                    while(j < player_route_lengths.size() && player_route_lengths[j].first == player_route_lengths[i].first) {
-                        longest_route_scores[player_route_lengths[j].second] += rules.score_longest_routes[i];
-                        j++;
-                    }
-                    i = j - 1;
                 }
             }
 
-            // Give out scores for region control (most Trad. Centers in the region)
+            // --- 2. Unique resource sets (common + rare goods combined) ---
+            // Count how many distinct resource types each player holds at least 1 of,
+            // then apply the exponential scoring table repeatedly for each full set.
+            for (Player p = 0; p < NumPlayers(); ++p) {
+                std::set<std::string> held_types;
+                for (const auto& [name, count] : GetPlayerCommonGoods(p))
+                    if (count > 0) held_types.insert(name);
+                for (const auto& [name, count] : GetPlayerRareGoods(p))
+                    if (count > 0) held_types.insert(name);
+
+                // Build a frequency map: how many of each resource type
+                std::map<std::string, int> all_goods;
+                for (const auto& [name, count] : GetPlayerCommonGoods(p))
+                    if (count > 0) all_goods[name] = count;
+                for (const auto& [name, count] : GetPlayerRareGoods(p))
+                    if (count > 0) all_goods[name] += count;
+
+                // Score each complete "set" of unique resources.
+                // A set is the largest collection where every type is represented.
+                // Repeat until all resources are exhausted.
+                bool has_goods = !all_goods.empty();
+                while (has_goods) {
+                    // Find the minimum count across all held types (size of next set)
+                    int set_size = static_cast<int>(all_goods.size());
+                    if (set_size == 0) break;
+
+                    // Score this set
+                    if (set_size >= 12) {
+                        // 11 + extras beyond 11
+                        int extras = set_size - 11;
+                        unique_goods_scores[p] += rules.score_unique_goods.rbegin()->second
+                                                + extras * rules.score_unique_goods_bonus;
+                    } else {
+                        auto it = rules.score_unique_goods.find(set_size);
+                        if (it != rules.score_unique_goods.end())
+                            unique_goods_scores[p] += it->second;
+                    }
+
+                    // Consume one unit of each type; remove exhausted types
+                    std::vector<std::string> to_remove;
+                    for (auto& [name, count] : all_goods) {
+                        count--;
+                        if (count == 0) to_remove.push_back(name);
+                    }
+                    for (const auto& name : to_remove) all_goods.erase(name);
+                    has_goods = !all_goods.empty();
+                }
+            }
+
+            // --- 3. Longest route bonus (1st=11, 2nd=7, 3rd=4; ties share) ---
+            std::vector<std::pair<int, Player>> player_route_lengths;
+            for (Player p = 0; p < NumPlayers(); ++p) {
+                int longest = 0;
+                for (const auto& route : trade_routes_) {
+                    if (route.owner == GetPlayerColor(p) && route.active)
+                        longest = std::max(longest, (int)route.hexes.size());
+                }
+                player_route_lengths.push_back({longest, p});
+            }
+            std::sort(player_route_lengths.rbegin(), player_route_lengths.rend());
+            for (int i = 0; i < (int)player_route_lengths.size() &&
+                            i < (int)rules.score_longest_routes.size(); ++i) {
+                if (player_route_lengths[i].first == 0) break;
+                longest_route_scores[player_route_lengths[i].second] += rules.score_longest_routes[i];
+                // Ties: award same rank score to all tied players
+                int j = i + 1;
+                while (j < (int)player_route_lengths.size() &&
+                       player_route_lengths[j].first == player_route_lengths[i].first) {
+                    longest_route_scores[player_route_lengths[j].second] += rules.score_longest_routes[i];
+                    j++;
+                }
+                i = j - 1;
+            }
+
+            // --- 4. Region control: most centers per region (11/7/4) ---
             std::vector<int> valid_region_ids = GetGame()->GetValidRegionIds();
             for (int region_id : valid_region_ids) {
                 std::vector<std::pair<int, Player>> region_control;
                 for (Player p = 0; p < NumPlayers(); ++p) {
                     int centers_in_region = 0;
                     for (const auto& [hex, posts] : trade_posts_locations_) {
-                        if (GetGame()->GetRegionForHex(hex) == region_id) {
-                            for (const auto& post : posts) {
-                                if (post.owner == GetPlayerColor(p) && post.type == TradePostType::kCenter) {
-                                    centers_in_region++;
-                                }
-                            }
+                        if (GetGame()->GetRegionForHex(hex) != region_id) continue;
+                        for (const auto& post : posts) {
+                            if (post.owner == GetPlayerColor(p) &&
+                                post.type == TradePostType::kCenter)
+                                centers_in_region++;
                         }
                     }
                     region_control.push_back({centers_in_region, p});
                 }
                 std::sort(region_control.rbegin(), region_control.rend());
-                for(int i = 0; i < region_control.size() && i < rules.score_region_control.size(); ++i) {
-                    if (region_control[i].first > 0) {
-                        region_control_scores[region_control[i].second] += rules.score_region_control[i];
-                        int j = i + 1;
-                        while(j < region_control.size() && region_control[j].first == region_control[i].first) {
-                            region_control_scores[region_control[j].second] += rules.score_region_control[i];
-                            j++;
-                        }
-                        i = j - 1;
+                for (int i = 0; i < (int)region_control.size() &&
+                                i < (int)rules.score_region_control.size(); ++i) {
+                    if (region_control[i].first == 0) break;
+                    region_control_scores[region_control[i].second] += rules.score_region_control[i];
+                    int j = i + 1;
+                    while (j < (int)region_control.size() &&
+                           region_control[j].first == region_control[i].first) {
+                        region_control_scores[region_control[j].second] += rules.score_region_control[i];
+                        j++;
                     }
+                    i = j - 1;
                 }
             }
 
-            // Give out score for having the most trading routes
+            // --- 5. Regions crossed per route ---
             for (Player p = 0; p < NumPlayers(); ++p) {
                 PlayerColor p_color = GetPlayerColor(p);
-
-                int active_routes = 0;
                 for (const auto& route : trade_routes_) {
-                    if (route.owner == p_color && route.active) {
-                        active_routes++;
-                        route_scores[p] += route.hexes.size();
+                    if (route.owner != p_color || !route.active) continue;
+                    std::set<int> regions_crossed;
+                    for (const auto& hex : route.hexes) {
+                        int region_id = GetGame()->GetRegionForHex(hex);
+                        if (region_id != -1) regions_crossed.insert(region_id);
                     }
-                }
-                if (active_routes >= 3) route_scores[p] += 5;
-
-                for (const auto& [name, count] : GetPlayerRareGoods(p)) {
-                    rare_good_scores[p] += count;
-                }
-
-                for (const auto& [hex, posts] : trade_posts_locations_) {
-                    for (const auto& post : posts) {
-                        if (post.owner == p_color && post.type == TradePostType::kCenter) {
-                            center_scores[p] += 2.0;
-                        }
-                    }
-                }
-
-                // Give out score for sets of unique common goods
-                int unique_common_count = 0;
-                for (const auto& [name, count] : GetPlayerCommonGoods(p)) {
-                    if (count > 0) unique_common_count++;
-                }
-                if (unique_common_count > 0) {
-                    if (unique_common_count >= 12) {
-                        common_good_set_scores[p] += rules.score_unique_common_goods_bonus;
-                        common_good_set_scores[p] += rules.score_unique_common_goods.rbegin()->second;
-                    } else {
-                        auto it = rules.score_unique_common_goods.find(unique_common_count);
-                        if (it != rules.score_unique_common_goods.end()) {
-                            common_good_set_scores[p] += it->second;
-                        }
-                    }
-                }
-
-                // Give out score for trading routes crossing regions
-                for (const auto& route : trade_routes_) {
-                    if (route.owner == p_color && route.active) {
-                        std::set<int> regions_crossed;
-                        for (const auto& hex : route.hexes) {
-                            int region_id = GetGame()->GetRegionForHex(hex);
-                            if (region_id != -1) regions_crossed.insert(region_id);
-                        }
-                        int num_regions = regions_crossed.size();
-                        if (num_regions > 0) {
-                            auto it = rules.score_regions_crossed.find(num_regions);
-                            if (it != rules.score_regions_crossed.end()) {
-                                regions_crossed_scores[p] += it->second;
-                            }
-                        }
+                    int num_regions = (int)regions_crossed.size();
+                    if (num_regions > 0) {
+                        auto it = rules.score_regions_crossed.find(num_regions);
+                        if (it != rules.score_regions_crossed.end())
+                            regions_crossed_scores[p] += it->second;
                     }
                 }
             }
 
+            // --- Combine ---
             for (Player p = 0; p < NumPlayers(); ++p) {
-                scores[p] = route_scores[p] +
-                            rare_good_scores[p] +
-                            center_scores[p] +
-                            common_good_set_scores[p] +
+                scores[p] = infrastructure_scores[p] +
+                            unique_goods_scores[p] +
                             longest_route_scores[p] +
                             region_control_scores[p] +
                             regions_crossed_scores[p];
-                
+
                 LOG_DEBUG("--- Player ", p, " (", PlayerColorToString(GetPlayerColor(p)), ") Score: ", scores[p], " ---");
-                LOG_DEBUG("  - Route Hexes & Bonus: ", route_scores[p]);
-                LOG_DEBUG("  - Rare Goods Total:    ", rare_good_scores[p]);
-                LOG_DEBUG("  - Trading Centers:     ", center_scores[p]);
-                LOG_DEBUG("  - Unique Common Sets:  ", common_good_set_scores[p]);
+                LOG_DEBUG("  - Posts & Centers:     ", infrastructure_scores[p]);
+                LOG_DEBUG("  - Unique Goods Sets:   ", unique_goods_scores[p]);
                 LOG_DEBUG("  - Longest Route Bonus: ", longest_route_scores[p]);
-                LOG_DEBUG("  - Region Control Bonus:", region_control_scores[p]);
-                LOG_DEBUG("  - Regions Crossed Bonus: ", regions_crossed_scores[p]);
-            }           
+                LOG_DEBUG("  - Region Control:      ", region_control_scores[p]);
+                LOG_DEBUG("  - Regions Crossed:     ", regions_crossed_scores[p]);
+            }
             LOG_DEBUG("========================================");
             
             double max_score = -1.0 * std::numeric_limits<double>::infinity();
@@ -1283,6 +1776,13 @@ namespace open_spiel
             std::vector<double> returns(NumPlayers(), 0.0);
             if (winners.size() == 1) {
                 returns[winners[0]] = 1.0;
+                // Bonus for Rare goods wins to counteract Timbuktu mode collapse
+                if (training_params.rare_goods_bonus != 0.0 &&
+                    game_end_reason_.find("Rare good") != std::string::npos) {
+                    returns[winners[0]] += training_params.rare_goods_bonus;
+                    LOG_DEBUG("Rare goods win bonus applied: bonus=", training_params.rare_goods_bonus,
+                             " total_return=", returns[winners[0]]); 
+                }
                 // Add loss penalty to non-winners
                 for (Player p = 0; p < NumPlayers(); ++p) {
                     LOG_DEBUG("winners[0]= ",winners[0],"; p= ",p,";");
@@ -1290,6 +1790,15 @@ namespace open_spiel
                         returns[p] += training_params.loss_penalty;
                         LOG_DEBUG("returns[",p,"] = ",returns[p],";");
                     }
+                }
+                // Bonus for winning quickly (under quick_win_threshold moves)
+                if (training_params.quick_win_bonus != 0.0 &&
+                    training_params.quick_win_threshold > 0 &&
+                    PlayMoveCount() < training_params.quick_win_threshold) {
+                    returns[winners[0]] += training_params.quick_win_bonus;
+                    LOG_DEBUG("Quick win bonus applied: moves=", history_.size(),
+                              " threshold=", training_params.quick_win_threshold,
+                              " bonus=", training_params.quick_win_bonus);
                 }
             } else if (winners.size() > 1 && winners.size() < NumPlayers()) {
                 for (Player p : winners) {
@@ -1301,10 +1810,19 @@ namespace open_spiel
                         returns[p] += training_params.loss_penalty;
                     }
                 }
-            } else { 
+            } else {
                 for (Player p = 0; p < NumPlayers(); ++p) {
                     returns[p] = training_params.draw_penalty;
                 }
+            }
+
+            // Penalty for games that reached the move limit (discourages stalling)
+            if (training_params.max_moves_penalty != 0.0 &&
+                (int)PlayMoveCount() >= GetGame()->GetMaxPlayMoves()) {
+                for (Player p = 0; p < NumPlayers(); ++p) {
+                    returns[p] += training_params.max_moves_penalty;
+                }
+                LOG_DEBUG("Max moves penalty applied: ", training_params.max_moves_penalty);
             }
 
             LOG_DEBUG("Returns (win/loss/draw): ", absl::StrJoin(returns, ", "));
@@ -1325,28 +1843,26 @@ namespace open_spiel
 
             // Get training parameters from game
             const auto& training_params = GetGame()->GetTrainingParameters();
-            max_moves = game_->MaxGameLength();
+            max_moves = GetGame()->GetMaxPlayMoves();  // Play moves only, matches PlayMoveCount()
 
             // --- Reward shaping strategy: Time Penalty ---
             // Add a small penalty to the current player for taking a turn.
             // This encourages finishing the game faster.
             // Increase the severity as time goes on.
             if (current_player_id_ >= 0 && current_player_id_ < rewards.size()) {
-                int moves = history_.size();
-                if (moves > 0 && moves <= std::trunc(1/3*max_moves)) {
-                    // Start with the base penalty
+                int moves = PlayMoveCount();
+                // Use floating-point division to compute tier thresholds correctly.
+                // Tiers: 0-33% = 1x, 33-57% = 2x, 57-80% = 4x, 80%+ = 7x
+                if (moves > 0 && moves <= std::trunc(1.0/3*max_moves)) {
                     rewards[current_player_id_] += training_params.time_penalty;
                 }
-                else if (moves > std::trunc(1/3*max_moves) && moves <= std::trunc(1.7/3*max_moves)) {
-                    // Increase the penalty
+                else if (moves > std::trunc(1.0/3*max_moves) && moves <= std::trunc(1.7/3*max_moves)) {
                     rewards[current_player_id_] += (2*training_params.time_penalty);
                 }
-                else if (moves > std::trunc(1.7*max_moves) && moves <= std::trunc(2.4/3*max_moves)) {
-                    // Increase the penalty
+                else if (moves > std::trunc(1.7/3*max_moves) && moves <= std::trunc(2.4/3*max_moves)) {
                     rewards[current_player_id_] += (4*training_params.time_penalty);
                 }
                 else if (moves > std::trunc(2.4/3*max_moves)) {
-                    // Increase the penalty
                     rewards[current_player_id_] += (7*training_params.time_penalty);
                 }
                 // if (moves > training_params.quick_win_threshold) {
@@ -1542,16 +2058,7 @@ namespace open_spiel
 
                 switch (type) {
                     case PlayerType::kHuman:
-                        // This mode should not have human players.
-                        SpielFatalError("Human player type is not supported in cpp_sync_gui mode or no-GUI simulations.");
-                        break;
-                    
                     case PlayerType::kAI:
-                        // For now, the AI will use the heuristic. This can be replaced
-                        // with a call to a neural network model later.
-                        chosen_action = SelectHeuristicRandomAction();
-                        break;
-
                     case PlayerType::kHeuristic:
                         chosen_action = SelectHeuristicRandomAction();
                         break;

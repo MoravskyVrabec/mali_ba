@@ -1,6 +1,3 @@
-      
-// --- START OF FILE games_mali_ba.cc ---
-
 #include "open_spiel/python/pybind11/pybind11.h"
 #include "open_spiel/games/mali_ba/mali_ba_game.h"
 #include "open_spiel/games/mali_ba/mali_ba_state.h"
@@ -14,34 +11,30 @@
 #include <pybind11/stl_bind.h>
 
 namespace py = pybind11;
-// No need for 'using open_spiel::mali_ba::...' here at the global scope
-// if the function is inside the open_spiel namespace
 
-// --- WRAP THE ENTIRE FUNCTION DEFINITION IN THE open_spiel NAMESPACE ---
 namespace open_spiel {
-
-// Now you can use the shorter names for Mali-Ba specific types if you wish,
-// or continue using the fully qualified names.
-// For clarity, let's use using declarations *inside* this function if needed,
-// or just use the fully qualified names.
 
 void init_pyspiel_games_mali_ba(::pybind11::module &m) {
     // Create a submodule
     py::module_ mali_ba = m.def_submodule("mali_ba");
     
-    // Define constants
+    // Define constants (Fixed to match mali_ba_common.h)
     m.attr("INVALID_ACTION") = py::int_(mali_ba::kInvalidAction); 
-    m.attr("EMPTY_ACTION") = py::int_(mali_ba::kEmptyAction);
     m.attr("PASS_ACTION") = py::int_(mali_ba::kPassAction);
     m.attr("CHANCE_SETUP_ACTION") = py::int_(mali_ba::kChanceSetupAction); 
-    m.attr("MAX_ACTION") = py::int_(mali_ba::kMaxAction); 
+    m.attr("MAX_ACTIONS") = py::int_(mali_ba::kMaxActions); 
     
     // Enums
-    py::enum_<open_spiel::mali_ba::Phase>(mali_ba, "Mali_BaPhase")
+    py::enum_<open_spiel::mali_ba::Phase>(mali_ba, "Phase")
         .value("EMPTY", open_spiel::mali_ba::Phase::kEmpty)
         .value("SETUP", open_spiel::mali_ba::Phase::kSetup)
         .value("PLACE_TOKEN", open_spiel::mali_ba::Phase::kPlaceToken)
         .value("PLAY", open_spiel::mali_ba::Phase::kPlay)
+        .value("MANCALA_STEP", open_spiel::mali_ba::Phase::kMancalaStep)
+        .value("MANCALA_TOKEN_STEP", open_spiel::mali_ba::Phase::kMancalaTokenStep)
+        .value("OPTIONAL_POST", open_spiel::mali_ba::Phase::kOptionalPost)
+        .value("OPTIONAL_POST_PAYMENT", open_spiel::mali_ba::Phase::kOptionalPostPayment)
+        .value("OPTIONAL_ROUTE", open_spiel::mali_ba::Phase::kOptionalRoute)
         .value("END_ROUND", open_spiel::mali_ba::Phase::kEndRound)
         .value("GAME_OVER", open_spiel::mali_ba::Phase::kGameOver)
         .export_values();
@@ -55,8 +48,6 @@ void init_pyspiel_games_mali_ba(::pybind11::module &m) {
         .value("PINK", open_spiel::mali_ba::PlayerColor::kPink)
         .export_values();
         
-    // ... Other enums like MeepleColor and TradePostType
-    
     // Basic classes
     py::class_<open_spiel::mali_ba::HexCoord>(mali_ba, "HexCoord")
         .def(py::init<int, int, int>())
@@ -79,7 +70,6 @@ void init_pyspiel_games_mali_ba(::pybind11::module &m) {
         .def_readonly("common_good", &open_spiel::mali_ba::City::common_good)
         .def_readonly("rare_good", &open_spiel::mali_ba::City::rare_good);
 
-    // Add the TradeRoute class
     py::class_<mali_ba::TradeRoute>(mali_ba, "TradeRoute")
         .def(py::init<>())
         .def_readonly("id", &mali_ba::TradeRoute::id)
@@ -88,76 +78,87 @@ void init_pyspiel_games_mali_ba(::pybind11::module &m) {
         .def_readonly("goods", &mali_ba::TradeRoute::goods)
         .def_readonly("active", &mali_ba::TradeRoute::active);
 
+    // TrainingParameters struct
+    py::class_<mali_ba::TrainingParameters>(mali_ba, "TrainingParameters")
+        .def_readonly("time_penalty", &mali_ba::TrainingParameters::time_penalty)
+        .def_readonly("max_moves_penalty", &mali_ba::TrainingParameters::max_moves_penalty)
+        .def_readonly("draw_penalty", &mali_ba::TrainingParameters::draw_penalty)
+        .def_readonly("loss_penalty", &mali_ba::TrainingParameters::loss_penalty)
+        .def_readonly("upgrade_reward", &mali_ba::TrainingParameters::upgrade_reward)
+        .def_readonly("trade_route_reward", &mali_ba::TrainingParameters::trade_route_reward)
+        .def_readonly("new_rare_region_reward", &mali_ba::TrainingParameters::new_rare_region_reward)
+        .def_readonly("new_common_good_reward", &mali_ba::TrainingParameters::new_common_good_reward)
+        .def_readonly("key_location_post_reward", &mali_ba::TrainingParameters::key_location_post_reward)
+        .def_readonly("quick_win_bonus", &mali_ba::TrainingParameters::quick_win_bonus)
+        .def_readonly("quick_win_threshold", &mali_ba::TrainingParameters::quick_win_threshold);
 
+    // State class - use py::classh to match base State registration in pyspiel.cc
+    py::classh<mali_ba::Mali_BaState, open_spiel::State> state_class_binder(m, "Mali_BaState");
+    state_class_binder
+        .def("play_random_move_and_serialize", &mali_ba::Mali_BaState::PlayRandomMoveAndSerialize)
+        .def("select_heuristic_random_action", &mali_ba::Mali_BaState::SelectHeuristicRandomAction)
+        .def("get_player_common_goods", &mali_ba::Mali_BaState::GetPlayerCommonGoods, py::return_value_policy::reference_internal)
+        .def("get_player_rare_goods", &mali_ba::Mali_BaState::GetPlayerRareGoods, py::return_value_policy::reference_internal)
+        .def("parse_move_string_to_action", &mali_ba::Mali_BaState::ParseMoveStringToAction)
+        .def("create_trade_route", &mali_ba::Mali_BaState::CreateTradeRoute)
+        .def("delete_trade_route", &mali_ba::Mali_BaState::DeleteTradeRoute)
+        .def("validate_trade_routes", &mali_ba::Mali_BaState::ValidateTradeRoutes)
+        .def("apply_income_collection", &mali_ba::Mali_BaState::ApplyIncomeCollection)
+        .def("serialize", &mali_ba::Mali_BaState::Serialize)
+        .def("create_setup_json", &mali_ba::Mali_BaState::CreateSetupJson)
+        .def("get_heuristic_action_weights", &mali_ba::Mali_BaState::GetHeuristicActionWeights)
+        .def("get_game_end_reason", &mali_ba::Mali_BaState::GetGameEndReason)
+        .def("get_winning_player", &mali_ba::Mali_BaState::GetWinningPlayer)
+        .def("get_game_end_triggering_player", &mali_ba::Mali_BaState::GetGameEndTriggeringPlayer)
+        .def("get_score_breakdown_string", &mali_ba::Mali_BaState::GetScoreBreakdownString)
+        .def("current_phase", &mali_ba::Mali_BaState::CurrentPhase)
+        .def("is_near_win", &mali_ba::Mali_BaState::IsNearWin,
+             py::arg("rare_region_threshold") = 4)
+        .def("seed_rng", [](mali_ba::Mali_BaState& s, uint32_t seed) {
+            s.GetRNG().seed(seed);
+        }, "Re-seed the state's internal RNG for per-episode randomness.");
 
-        // State class - with pickle support
-        py::class_<mali_ba::Mali_BaState, open_spiel::State, std::shared_ptr<mali_ba::Mali_BaState>> state_class_binder(m, "Mali_BaState");
-        state_class_binder // Use the named variable to chain .def calls
-            .def("play_random_move_and_serialize", &mali_ba::Mali_BaState::PlayRandomMoveAndSerialize)
-            .def("get_player_common_goods", &mali_ba::Mali_BaState::GetPlayerCommonGoods, py::return_value_policy::reference_internal)
-            .def("get_player_rare_goods", &mali_ba::Mali_BaState::GetPlayerRareGoods, py::return_value_policy::reference_internal)
-            .def("parse_move_string_to_action", &mali_ba::Mali_BaState::ParseMoveStringToAction)
-            .def("create_trade_route", &mali_ba::Mali_BaState::CreateTradeRoute)
-            .def("update_trade_route", &mali_ba::Mali_BaState::UpdateTradeRoute)
-            .def("delete_trade_route", &mali_ba::Mali_BaState::DeleteTradeRoute)
-            .def("validate_trade_routes", &mali_ba::Mali_BaState::ValidateTradeRoutes)
-            .def("apply_income_collection", &mali_ba::Mali_BaState::ApplyIncomeCollection)
-            .def("serialize", &mali_ba::Mali_BaState::Serialize)
-            // Pickle support for Mali_BaState
-            .def(py::pickle(
-                [](const mali_ba::Mali_BaState& state) -> std::string { // __getstate__
-                    return SerializeGameAndState(*state.GetGame(), state);
-                },
-                [](const std::string& data) -> std::shared_ptr<mali_ba::Mali_BaState> { // __setstate__
-                    std::pair<std::shared_ptr<const Game>, std::unique_ptr<State>> game_and_state_pair = 
-                        DeserializeGameAndState(data);
-                    mali_ba::Mali_BaState* raw_state_ptr = 
-                        dynamic_cast<mali_ba::Mali_BaState*>(game_and_state_pair.second.release());
-                    if (!raw_state_ptr) {
-                        throw std::runtime_error("DeserializeGameAndState did not return a Mali_BaState for State pickle.");
-                    }
-                    return std::shared_ptr<mali_ba::Mali_BaState>(raw_state_ptr);
-                }
-            )); // End of .def chain for state_class_binder (add semicolon if no more .def calls for it)
+    // Game class - use py::classh to match base Game registration in pyspiel.cc
+    py::classh<mali_ba::Mali_BaGame, open_spiel::Game> game_class_binder(m, "Mali_BaGame");
+    game_class_binder
+        .def("deserialize_state", &mali_ba::Mali_BaGame::DeserializeState)
+        .def("get_grid_radius", &mali_ba::Mali_BaGame::GetGridRadius)
+        .def("get_valid_hexes", [](const mali_ba::Mali_BaGame& game) {
+            const auto& hex_set = game.GetValidHexes();
+            return std::vector<mali_ba::HexCoord>(hex_set.begin(), hex_set.end());
+        })
+        .def("get_cities", &mali_ba::Mali_BaGame::GetCities, py::return_value_policy::reference_internal)
+        .def("get_training_parameters", &mali_ba::Mali_BaGame::GetTrainingParameters, py::return_value_policy::reference_internal)
+        .def("new_initial_state",
+            static_cast<std::unique_ptr<open_spiel::State> (open_spiel::mali_ba::Mali_BaGame::*)() const>(
+                &mali_ba::Mali_BaGame::NewInitialState
+            ))
+        .def("new_initial_state",
+             static_cast<std::unique_ptr<open_spiel::State> (open_spiel::mali_ba::Mali_BaGame::*)(const std::string&) const>(
+                 &mali_ba::Mali_BaGame::NewInitialState
+             ));
 
-            // Game class - with pickle support
-            py::class_<mali_ba::Mali_BaGame, open_spiel::Game, std::shared_ptr<mali_ba::Mali_BaGame>> game_class_binder(m, "Mali_BaGame");
-            game_class_binder // Use the named variable to chain .def calls
-                /*.def("get_type_copy", &mali_ba::Mali_BaGame::GetTypeCopy) */ // This method seems to be commented out
-                .def("deserialize_state", &mali_ba::Mali_BaGame::DeserializeState) // This is a Mali_BaGame method
-                .def("get_grid_radius", &mali_ba::Mali_BaGame::GetGridRadius)     // This is a Mali_BaGame method
-                // Bind the no-argument NewInitialState
-                .def("new_initial_state",
-                    // Explicitly cast to the (std::unique_ptr<State> (YourClass::*)() const) version
-                    static_cast<std::unique_ptr<open_spiel::State> (open_spiel::mali_ba::Mali_BaGame::*)() const>(
-                        &mali_ba::Mali_BaGame::NewInitialState
-                    ),
-                    py::return_value_policy::move) // Apply policy if returning unique_ptr
+    // Downcast helpers: convert base Game/State pointers to Mali_Ba-specific types
+    mali_ba.def("downcast_game", [](std::shared_ptr<const open_spiel::Game> game)
+            -> std::shared_ptr<const mali_ba::Mali_BaGame> {
+        return std::dynamic_pointer_cast<const mali_ba::Mali_BaGame>(game);
+    });
+    mali_ba.def("downcast_state", [](std::shared_ptr<open_spiel::State> state)
+            -> std::shared_ptr<mali_ba::Mali_BaState> {
+        return std::dynamic_pointer_cast<mali_ba::Mali_BaState>(state);
+    });
 
-                // OPTIONAL: Bind the NewInitialState(const std::string&) overload if you use/need it
-                .def("new_initial_state",
-                     // Explicitly cast to the (std::unique_ptr<State> (YourClass::*)(const std::string&) const) version
-                     static_cast<std::unique_ptr<open_spiel::State> (open_spiel::mali_ba::Mali_BaGame::*)(const std::string&) const>(
-                         &mali_ba::Mali_BaGame::NewInitialState
-                     ),
-                     py::return_value_policy::move) // Apply policy if returning unique_ptr
-                
-                // Pickle support for Mali_BaGame
-                .def(py::pickle(
-                    // For __getstate__, the argument should match the class being pickled
-                    [](const mali_ba::Mali_BaGame& game) -> std::string { // __getstate__ for Mali_BaGame
-                        // Or if you pass by shared_ptr:
-                        // [](std::shared_ptr<mali_ba::Mali_BaGame> game) -> std::string {
-                        return game.ToString(); // Assuming Game::ToString() is suitable for serializing Game
-                    },
-                    // For __setstate__, the return type should match the holder type
-                    [](const std::string& data) -> std::shared_ptr<mali_ba::Mali_BaGame> { // __setstate__ for Mali_BaGame
-                        return std::dynamic_pointer_cast<mali_ba::Mali_BaGame>(
-                            std::const_pointer_cast<Game>(LoadGame(data)));
-                    }
-                )); // End of .def chain for game_class_binder (add semicolon if no more .def calls for it)
+    // Logging
+    py::enum_<mali_ba::LogLevel>(mali_ba, "LogLevel")
+        .value("DEBUG",   mali_ba::LogLevel::kDebug)
+        .value("INFO",    mali_ba::LogLevel::kInfo)
+        .value("WARN",    mali_ba::LogLevel::kWarning)
+        .value("ERROR",   mali_ba::LogLevel::kError)
+        .export_values();
 
-        
+    mali_ba.def("log", &mali_ba::LogFromPython);
+    mali_ba.def("set_log_level", &mali_ba::SetLogLevel);
+
     // Utility functions
     mali_ba.def("player_color_to_string", &mali_ba::PlayerColorToString);
     mali_ba.def("string_to_player_color", &mali_ba::StringToPlayerColor);
@@ -165,4 +166,3 @@ void init_pyspiel_games_mali_ba(::pybind11::module &m) {
 }
 
 } // namespace open_spiel
-// --- END WRAPPER ---

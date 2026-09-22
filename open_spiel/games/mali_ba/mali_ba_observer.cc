@@ -20,6 +20,8 @@
 
 #include <algorithm>
 #include <memory>
+#include <set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -119,11 +121,18 @@ namespace open_spiel
       const int individual_rare_good_base = plane_idx;   // Planes 62-76 (15 planes)
       plane_idx += 15;
 
-      // Check if calculated planes match expected shape
-      SPIEL_CHECK_LE(plane_idx, num_planes);
-      int expected_total_planes = 5 + 10 + kMaxPlayers + kMaxPlayers + 1 + 1 + kMaxPlayers + kMaxPlayers + kMaxPlayers + kMaxPlayers + 15 + 15;
-      SPIEL_CHECK_EQ(plane_idx, expected_total_planes);
-      SPIEL_CHECK_EQ(expected_total_planes, num_planes); // Ensure matches shape definition
+      // Per-player, per-region rare good indicators.
+      // One plane per (player, region) pair — 1.0 if that player holds at least one
+      // rare good from that region, 0.0 otherwise. Regions are sorted by ID for
+      // consistent ordering across game init and tensor writes.
+      std::vector<int> sorted_region_ids = mali_ba_game->GetValidRegionIds();
+      std::sort(sorted_region_ids.begin(), sorted_region_ids.end());
+      const int num_regions_obs = static_cast<int>(sorted_region_ids.size());
+      const int rare_good_region_base = plane_idx;  // Planes 77+ (num_players * num_regions)
+      plane_idx += state.NumPlayers() * num_regions_obs;
+
+      // Verify calculated plane count matches the shape declared at game init.
+      SPIEL_CHECK_EQ(plane_idx, num_planes);
 
       int grid_radius = mali_ba_game->GetGridRadius();
       int HxW = height * width;                      // Calculate once
@@ -264,6 +273,44 @@ namespace open_spiel
         } // end if (index != -1)
       } // End hex loop
 
+      // 4b. Route Planes — fill per-player spatial route data
+      // active_route planes: mark hexes belonging to each player's declared routes
+      // potential_route planes: mark hexes that the observing player could route through
+      //   (hexes with the observing player's posts, as a proxy for route potential)
+      const auto& trade_routes = mali_ba_state->GetTradeRoutes();
+      for (const auto& route : trade_routes) {
+          int p = static_cast<int>(route.owner);
+          if (p < 0 || p >= kMaxPlayers) continue;
+          int route_plane = player_active_route_base + p;
+          for (const auto& hex : route.hexes) {
+              auto [row, col] = HexToTensorCoordinates(hex, grid_radius);
+              if (row < 0 || row >= height || col < 0 || col >= width) continue;
+              int offset_base = row * width + col;
+              // Accumulate route count so overlapping routes stack
+              values[route_plane * HxW + offset_base] += 1.0f;
+          }
+      }
+
+      // potential_route planes: hexes where the observing player has posts
+      // (these are the hexes they can anchor routes through)
+      for (const auto& hex : mali_ba_game->GetValidHexes()) {
+          int index = mali_ba_game->CoordToIndex(hex);
+          if (index == -1) continue;
+          auto [row, col] = HexToTensorCoordinates(hex, grid_radius);
+          if (row < 0 || row >= height || col < 0 || col >= width) continue;
+          int offset_base = row * width + col;
+          const auto& posts = mali_ba_state->GetTradePostsAt(hex);
+          for (const auto& post : posts) {
+              if (post.owner != PlayerColor::kEmpty) {
+                  int p = static_cast<int>(post.owner);
+                  if (p >= 0 && p < kMaxPlayers) {
+                      int pot_plane = player_potential_route_base + p;
+                      values[pot_plane * HxW + offset_base] = 1.0f;
+                  }
+              }
+          }
+      }
+
       // 5. Current Player Plane (Fill uniformly)
       Player current_player_id = mali_ba_state->CurrentPlayer();
       if (current_player_id >= 0 && current_player_id < state.NumPlayers())
@@ -358,7 +405,38 @@ namespace open_spiel
                   values[plane_offset + i] = static_cast<float>(count);
               }
           }
-      }      
+      }
+
+      // 9. Per-player, per-region rare good indicators.
+      // Build a one-time lookup from rare good name -> region ID using city data,
+      // then for each player write a binary plane per region (1 = covered, 0 = not).
+      if (num_regions_obs > 0) {
+          std::unordered_map<std::string, int> rare_good_to_region;
+          for (const auto& city : mali_ba_game->GetCities()) {
+              int region_id = mali_ba_game->GetRegionForHex(city.location);
+              if (region_id != -1 && !city.rare_good.empty()) {
+                  rare_good_to_region[city.rare_good] = region_id;
+              }
+          }
+
+          for (Player p = 0; p < state.NumPlayers(); ++p) {
+              std::set<int> covered;
+              for (const auto& [good_name, count] : mali_ba_state->GetPlayerRareGoods(p)) {
+                  if (count <= 0) continue;
+                  auto it = rare_good_to_region.find(good_name);
+                  if (it != rare_good_to_region.end()) {
+                      covered.insert(it->second);
+                  }
+              }
+              for (int ri = 0; ri < num_regions_obs; ++ri) {
+                  float has_region = covered.count(sorted_region_ids[ri]) ? 1.0f : 0.0f;
+                  int plane_offset = (rare_good_region_base + p * num_regions_obs + ri) * HxW;
+                  for (int i = 0; i < HxW; ++i) {
+                      values[plane_offset + i] = has_region;
+                  }
+              }
+          }
+      }
     } // End WriteTensor
 
     // Implement the StringFrom method required by the Observer base class

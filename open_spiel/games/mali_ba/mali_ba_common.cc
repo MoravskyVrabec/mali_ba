@@ -36,8 +36,8 @@ void LogFromPython(LogLevel level, const std::string& message) {
 std::string LogLevelToString(LogLevel level) {
     switch (level) {
         case LogLevel::kDebug:   return "DEBUG";
-        case LogLevel::kInfo:    return "INFO ";
-        case LogLevel::kWarning: return "WARN ";
+        case LogLevel::kInfo:    return "INFO";
+        case LogLevel::kWarning: return "WARN";
         case LogLevel::kError:   return "ERROR";
         default:                 return "UNKWN";
     }
@@ -59,7 +59,7 @@ void LogMBCore(LogLevel level, const std::string& message, bool print_to_termina
     }
 
     std::stringstream log_stream;
-    log_stream << std::put_time(std::localtime(&in_time_t), "%H:%M:%S") << " "
+    log_stream << std::put_time(std::localtime(&in_time_t), "%Y%m%d-%H%M%S") << " "
                << "[" << LogLevelToString(level) << "] "
                << "[" << file_str << ":" << line << "] "
                << message;

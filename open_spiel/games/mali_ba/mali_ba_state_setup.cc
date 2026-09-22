@@ -20,7 +20,7 @@ namespace mali_ba {
 
 // Performs the random meeple setup distribution
 void Mali_BaState::ApplyChanceSetup() {
-    LOG_INFO("ApplyChanceSetup: START");
+    // LOG_INFO("ApplyChanceSetup: START");
     
     for (auto const &[hex, meeples] : hex_meeples_) {
         SPIEL_CHECK_TRUE(meeples.empty());
@@ -61,7 +61,7 @@ void Mali_BaState::ApplyChanceSetup() {
 
     }
     
-    LOG_INFO("ApplyChanceSetup: END");
+    // LOG_INFO("ApplyChanceSetup: END");
 }
 
  // String conversion functions (unchanged)
@@ -273,27 +273,27 @@ bool Mali_BaState::SetStateFromJson(const std::string& json_str) {
             auto j_mid = j.at("midTurnState");
             
             if (j_mid.contains("meeplesInHand")) {
-                state->meeples_in_hand_.clear(); // Or just meeples_in_hand_.clear() if inside the class
+                meeples_in_hand_.clear(); // Or just meeples_in_hand_.clear() if inside the class
                 for (const auto& mc_val : j_mid.at("meeplesInHand")) {
-                    state->meeples_in_hand_.push_back(static_cast<MeepleColor>(mc_val.get<int>()));
+                    meeples_in_hand_.push_back(static_cast<MeepleColor>(mc_val.get<int>()));
                 }
             }
             if (j_mid.contains("mancalaPath")) {
-                state->current_mancala_path_.clear();
+                current_mancala_path_.clear();
                 for (const auto& hc_str : j_mid.at("mancalaPath")) {
                     if (auto hc = JsonStringToHexCoord(hc_str.get<std::string>())) {
-                        state->current_mancala_path_.push_back(*hc);
+                        current_mancala_path_.push_back(*hc);
                     }
                 }
             }
             if (j_mid.contains("mancalaHex")) {
                 if (auto hc = JsonStringToHexCoord(j_mid.at("mancalaHex").get<std::string>())) {
-                    state->current_mancala_hex_ = *hc;
+                    current_mancala_hex_ = *hc;
                 }
             }
             if (j_mid.contains("lastActionHex")) {
                 if (auto hc = JsonStringToHexCoord(j_mid.at("lastActionHex").get<std::string>())) {
-                    state->last_action_hex_ = *hc;
+                    last_action_hex_ = *hc;
                 }
             }
         }

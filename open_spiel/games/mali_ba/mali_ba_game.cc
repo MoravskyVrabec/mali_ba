@@ -580,7 +580,10 @@ namespace open_spiel
                 training_params_.key_location_post_reward = parse_double("key_location_post_reward", 0.03);
                 training_params_.quick_win_bonus = parse_double("quick_win_bonus", 0.2);
                 training_params_.quick_win_threshold = parse_int("quick_win_threshold", 150);
-                
+                training_params_.max_play_moves = parse_int("max_play_moves", 460);
+                training_params_.near_win_extension_moves = parse_int("near_win_extension_moves", 20);
+                training_params_.rare_goods_bonus = parse_double("rare_goods_bonus", 0.0);
+
                 LOG_INFO("Training parameters loaded from INI:");
                 LOG_INFO("  time_penalty: ", training_params_.time_penalty);
                 LOG_INFO("  draw_penalty: ", training_params_.draw_penalty);
@@ -593,6 +596,9 @@ namespace open_spiel
                 LOG_INFO("  key_location_post_reward: ", training_params_.key_location_post_reward);
                 LOG_INFO("  quick_win_bonus: ", training_params_.quick_win_bonus);
                 LOG_INFO("  quick_win_threshold: ", training_params_.quick_win_threshold);
+                LOG_INFO("  max_play_moves: ", training_params_.max_play_moves);
+                LOG_INFO("  near_win_extension_moves: ", training_params_.near_win_extension_moves);
+                LOG_INFO("  rare_goods_bonus: ", training_params_.rare_goods_bonus);
             }
 
 
@@ -603,9 +609,14 @@ namespace open_spiel
             if (num_players_ > 3) player_colors_.push_back(PlayerColor::kViolet);
             if (num_players_ > 4) player_colors_.push_back(PlayerColor::kPink);
 
-            // Dynamically build the observation tensor
+            // Dynamically build the observation tensor shape.
+            // Base 77 planes + one plane per (player, region) pair for the
+            // per-region rare good indicator planes added in section 9 of WriteTensor.
+            // Regions are sorted by ID to match the ordering used in the observer.
             int dimension = grid_radius_ * 2 + 1;
-            constexpr int kNumPlanes = 77; // see mali_ba_observer.cc for info
+            std::vector<int> sorted_region_ids = GetValidRegionIds();
+            std::sort(sorted_region_ids.begin(), sorted_region_ids.end());
+            int kNumPlanes = 77 + num_players_ * static_cast<int>(sorted_region_ids.size());
             observation_tensor_shape_ = {kNumPlanes, dimension, dimension};
 
             LOG_INFO("Mali_BaGame: Dynamically configured observation tensor shape to: {",

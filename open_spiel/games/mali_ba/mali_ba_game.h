@@ -50,7 +50,9 @@ namespace open_spiel
       double MinUtility() const override { return LossUtility(); }
       absl::optional<double> UtilitySum() const override { return absl::nullopt; }
       double MaxUtility() const override { return WinUtility(); }
-      int MaxGameLength() const override { return mali_ba::MaxGameLength(); }
+      int GetMaxPlayMoves() const { return training_params_.max_play_moves; }
+      int GetNearWinExtensionMoves() const { return training_params_.near_win_extension_moves; }
+      int MaxGameLength() const override { return GetMaxPlayMoves() + GetNearWinExtensionMoves() + NumSetupMoves(); }
       // --- End OpenSpiel API ---
 
       // --- Mali-Ba Specific Accessors ---
@@ -63,6 +65,8 @@ namespace open_spiel
       const TrainingParameters& GetTrainingParameters() const { return training_params_; }
       const std::vector<PlayerType>& GetPlayerTypes() const { return player_types_; }
       int GetMaxGameLength() { return MaxGameLength(); }
+      // Returns the number of setup moves (chance + PlaceToken) that precede actual play.
+      int NumSetupMoves() const { return 1 + num_players_ * tokens_per_player_; }
 
       // --- Board Configuration Accessors ---
       const std::set<HexCoord>& GetValidHexes() const { return valid_hexes_; }

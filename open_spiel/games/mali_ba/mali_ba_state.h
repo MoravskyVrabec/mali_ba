@@ -65,7 +65,8 @@ namespace mali_ba
         int next_route_id_;                   // Add for undo
         std::vector<Move> moves_history_;
         std::vector<double> cumulative_returns_;
-        bool is_terminal_; 
+        bool is_terminal_;
+        std::array<bool, 3> last_was_income_;
     };
 
     class Mali_BaState : public State {
@@ -88,6 +89,8 @@ namespace mali_ba
         bool IsTerminal() const override;
         std::vector<double> Returns() const override;
         std::vector<double> Rewards() const override;
+        // Number of play-phase moves, excluding setup (chance + PlaceToken).
+        int PlayMoveCount() const;
         std::string InformationStateString(Player player) const override;
         std::string ObservationString(Player player) const override;
         void ObservationTensor(Player player, absl::Span<float> values) const override;
@@ -139,7 +142,9 @@ namespace mali_ba
         int GetRareGoodCount(Player player, const std::string &good_name) const;
         std::string GetGameEndReason() const { return game_end_reason_; }
         int GetWinningPlayer() const { return winning_player_; }
+        bool IsNearWin(int rare_region_threshold) const;
         int GetGameEndTriggeringPlayer() const { return game_end_triggered_by_player_; }
+        std::string GetScoreBreakdownString() const;
 
         
         // --- Make GetRNG() a const method ---
@@ -179,7 +184,9 @@ namespace mali_ba
         // bool UpdateTradeRoute(int route_id, const std::vector<HexCoord>& hexes);
         bool DeleteTradeRoute(int route_id);
 
-        // Public helper methods like HasTokenAt, CountTokensAt 
+        // Public helper methods like HasTokenAt, CountTokensAt
+        bool CanTakeIncome() const;
+        TradePostType GetPlayerPostType(const HexCoord& hex, PlayerColor color) const; 
         bool HasTokenAt(const HexCoord& hex, PlayerColor color) const;
         int CountTokensAt(const HexCoord& hex, PlayerColor color) const;
         int CountTotalTokensAt(const HexCoord& hex) const;
@@ -244,6 +251,7 @@ namespace mali_ba
         std::vector<HexCoord> current_mancala_path_;
         HexCoord current_mancala_hex_;
         HexCoord last_action_hex_; // Tracks where token landed or post upgraded
+        std::array<bool, 3> last_was_income_ = {false, false, false};
         bool pending_route_declaration_ = false;
 
         // Helper to end a turn and pass to the next player
@@ -269,6 +277,8 @@ namespace mali_ba
         };
         // Creates the context needed by the heuristic calculation.
         HeuristicContext CreateHeuristicContext() const;
+        // Logs a per-player end-of-game diagnostic for heuristic analysis.
+        void LogHeuristicEndGameDiagnostic() const;
         // The core helper function that calculates the weight for a single move.
         double CalculateHeuristicWeightForAction(
             const Move& move,
@@ -332,7 +342,7 @@ namespace mali_ba
 
         void ApplyMancalaMove(const Move &move);
         void ApplyPlaceTokenMove(const Move &move);
-        void ApplyTradingPostUpgrade(const Move &move);
+        void ApplyTradingPostUpgrade(const HexCoord &hex);
         void ApplyTradeRouteCreate(const Move& move);
         void ApplyPlacePostFromMancala(const Move &move);
         void ApplyTradeRouteUpdate(const Move& move);

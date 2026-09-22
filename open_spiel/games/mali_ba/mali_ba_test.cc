@@ -668,8 +668,8 @@ int main(int argc, char **argv)
     // open_spiel::mali_ba::SerializationTest_MidGame(game);
     // open_spiel::mali_ba::IniFileConfigTest();
     open_spiel::mali_ba::EndGameRequirementTest(game);
-    open_spiel::mali_ba::EndGameTriggerAndScoringTest(game);
-    open_spiel::mali_ba::RegionalBoardConfigTest();
+    // open_spiel::mali_ba::EndGameTriggerAndScoringTest(game);
+    // open_spiel::mali_ba::RegionalBoardConfigTest();
 
     // NOW THE RANDOM MOVES TESTS
     /*

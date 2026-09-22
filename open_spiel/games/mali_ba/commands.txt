@@ -1,3 +1,22 @@
+OMP_NUM_THREADS=1 TF_NUM_INTRAOP_THREADS=1 TF_NUM_INTEROP_THREADS=1 python remote_actors.py --server_host 100.92.31.37 --server_port 50000 --num_actors 16 --actor_id_start 200000 --cpu_only
+==================================================
+gcloud compute instances list --project=mali-ba-training  --format="table(name,zone.basename(),status,scheduling.provisioningModel)"
+=================================================================
+tail -f ~/Downloads/train_run7.log | grep -m1 'Bootstrap phase complete'
+=================================================================
+python train_mali_ba.py   --config_file mali_ba.ini   --num_actors 4   --num_episodes 2000   --bootstrap_episodes 500   --max_simulations 200   --mcts_sample_fraction 0.8   --replay_buffer_size 10000   --batch_size 128   --learning_rate 0.0002  --distributed   --remote_actors 24   --queue_port 50000  --save_model_path mali_ba_agent_v3.weights.h5   --save_every 10   2>&1 | tee ~/Downloads/train_run09.log
+=================================================================
+rsync -avzL --exclude='__pycache__' --exclude='*.pyc' --exclude='build/' --exclude='*.h5' --exclude='*.gz*' --exclude='*.log' --exclude='.git/objects/'  /media/robp/UD/Projects/open_spiel/   robp@192.168.0.241:/home/robp/Projects/open_spiel/
+
+ =================================================================
+  cd /home/robp/Projects/open_spiel/open_spiel/python/games/mali_ba
+
+python remote_actors.py \
+  --server_host 192.168.0.XXX \
+  --server_port 50000 \
+  --num_actors 4 \
+  --authkey malibatraining2024
+=================================================================
 /media/robp/UD/Projects/
     open_spiel/          ← the official repo you already cloned
     mali_ba/             ← your lean repo, mirroring the OpenSpiel structure
@@ -159,4 +178,10 @@ cmake  \
   ../open_spiel
     
 ===========================
+Great! For future reference, the issue was Docker holding port 445 on its bridge interfaces, which prevented ksmbd from binding cleanly on restart.
 
+A few things worth knowing going forward:
+
+If Docker starts up again (e.g. after a reboot), it may conflict with ksmbd again. You can prevent this by disabling Docker's auto-start: sudo systemctl disable docker docker.socket
+To make ksmbd start automatically after boot: sudo systemctl enable ksmbd (it should already be enabled)
+If you want to add more shares later (like the open_spiel project directory), just add another [section] to /etc/ksmbd/ksmbd.conf and restart ksmbd.
