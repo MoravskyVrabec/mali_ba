@@ -1,6 +1,56 @@
-# These are edits made to open_spiel-specific files in the Projects/open_spiel folder so that my mali_ba game will compile
+# These are edits made to stock open_spiel files in the Projects/open_spiel folder so that my mali_ba game will compile.
+#
+# The mali_ba sources themselves live in this repo and are symlinked into the open_spiel tree by symlinks_setup.sh.
+# gcp/apply_open_spiel_edits.sh applies all three edits below automatically (idempotent) -- it is the source of truth.
+#
+# NOTE: open_spiel/games/mali_ba/CMakeLists.txt (the open_spiel_game(...) macro version) is NOT used by the build.
+# The working build lists the sources directly in the top-level GAME_SOURCES, as in edit 1.
 
-File: /media/robp/UD/Projects/open_spiel/open_spiel/CMakeLists.txt
+1. open_spiel/games/CMakeLists.txt
+   (a) At the top of set(GAME_SOURCES ...), list the mali_ba sources directly:
+
+set(GAME_SOURCES
+# Begin Mali-ba specific
+  mali_ba/mali_ba_common.cc
+  mali_ba/mali_ba_game.cc
+  mali_ba/mali_ba_state_core.cc
+  mali_ba/mali_ba_state_display.cc
+  mali_ba/mali_ba_state_moves.cc
+  mali_ba/mali_ba_state_serialize.cc
+  mali_ba/mali_ba_state_setup.cc
+  mali_ba/mali_ba_state_trade.cc
+  mali_ba/mali_ba_observer.cc
+  mali_ba/hex_grid.h
+  mali_ba/mali_ba_common.h
+  mali_ba/mali_ba_game.h
+  mali_ba/mali_ba_state.h
+  mali_ba/mali_ba_observer.h
+# End Mali-ba specific
+  amazons/amazons.cc
+  ...
+
+   (b) Alongside the other add_executable(..._test ...) blocks, add the test target:
+
+# Begin Mali-ba specific
+add_executable(mali_ba_test mali_ba/mali_ba_test.cc ${OPEN_SPIEL_OBJECTS}
+               $<TARGET_OBJECTS:tests>)
+add_test(mali_ba_test mali_ba_test)
+# End Mali-ba specific
 
 
-File: /media/robp/UD/Projects/open_spiel/open_spiel/python/pybind11/pyspiel.cc
+2. open_spiel/python/CMakeLists.txt
+   In set(PYTHON_BINDINGS ...), add the pybind sources:
+
+  # !!!! Mali-ba Specific!!!
+  pybind11/games_mali_ba.cc
+  pybind11/games_mali_ba.h
+
+
+3. open_spiel/python/pybind11/pyspiel.cc
+   Include the header near the other game includes:
+
+#include "open_spiel/python/pybind11/games_mali_ba.h"
+
+   and register it inside PYBIND11_MODULE(pyspiel, m), after init_pyspiel_games_trade_comm(m):
+
+  init_pyspiel_games_mali_ba(m);

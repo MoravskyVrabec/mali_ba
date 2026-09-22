@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mali-Ba Training Handoff — 2026-06-24</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 960px; margin: 40px auto; padding: 0 24px; color: #222; line-height: 1.6; }
+  h1 { border-bottom: 3px solid #444; padding-bottom: 8px; }
+  h2 { border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 2em; color: #333; }
+  h3 { margin-top: 1.4em; color: #444; }
+  code, pre { font-family: "Consolas", "Courier New", monospace; background: #f4f4f4; border-radius: 3px; }
+  code { padding: 1px 5px; font-size: 0.92em; }
+  pre { padding: 12px 16px; overflow-x: auto; border-left: 4px solid #aaa; font-size: 0.88em; line-height: 1.5; }
+  pre.cpp  { border-left-color: #6a9fb5; }
+  pre.python { border-left-color: #90a959; }
+  pre.log  { border-left-color: #d28445; }
+  pre.shell { border-left-color: #888; background: #1e1e1e; color: #ccc; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th { background: #444; color: #fff; padding: 6px 10px; text-align: left; }
+  td { padding: 5px 10px; border-bottom: 1px solid #ddd; vertical-align: top; }
+  tr:nth-child(even) td { background: #f9f9f9; }
+  .ok   { color: #390; font-weight: bold; }
+  .warn { color: #c80; font-weight: bold; }
+  .bad  { color: #c00; font-weight: bold; }
+  .box  { background: #fffbe6; border: 1px solid #e6d97a; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  .action { background: #e8f4ea; border: 1px solid #7db87d; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  ul li { margin-bottom: 4px; }
+  .file { font-family: monospace; font-size: 0.9em; color: #555; }
+</style>
+</head>
+<body>
+
+<h1>Mali-Ba Training Handoff — 2026-06-24</h1>
+
+<p>This document summarises the session work, the bug that was found and fixed, the current training state, and next steps. It covers the tail end of run&nbsp;32 and the transition into the next run.</p>
+
+<hr>
+
+<h2>1. Architecture Recap</h2>
+
+<table>
+  <tr><th>Component</th><th>Path / Notes</th></tr>
+  <tr><td>C++ game source</td><td class="file">D:\Projects\mali_ba\open_spiel\games\mali_ba\</td></tr>
+  <tr><td>Python training source</td><td class="file">D:\Projects\mali_ba\open_spiel\python\games\mali_ba\</td></tr>
+  <tr><td>WSL training root</td><td class="file">/media/robp/UD/Projects/open_spiel/</td></tr>
+  <tr><td>Compiled .so</td><td class="file">/media/robp/UD/Projects/open_spiel/build/python/pyspiel.so</td></tr>
+  <tr><td>Training logs</td><td class="file">/media/robp/UD/Projects/open_spiel/train_runXX.log</td></tr>
+  <tr><td>Replay buffer</td><td class="file">mali_ba_buffer.pkl.gz — 3 pools: bootstrap_buffer, mcts_natural_buffer, mcts_nearwin_buffer</td></tr>
+  <tr><td>INI file</td><td class="file">mali_ba.ini — [Training] read by C++, [MLTraining] read by Python</td></tr>
+  <tr><td>Remote actors</td><td>Laptop via remote_actors.py → queue_server.py on desktop</td></tr>
+</table>
+
+<hr>
+
+<h2>2. The Near-Win Extension — What It Is</h2>
+
+<p>Mali-Ba games are long. At <code>max_play_moves</code> (430) the game times out. The extension mechanism lets <em>promising</em> timeout games continue for extra moves so that a win condition that is close to triggering can actually be resolved, producing a richer training signal.</p>
+
+<h3>2a. INI Parameters</h3>
+<table>
+  <tr><th>INI key</th><th>Section</th><th>Default</th><th>Current</th><th>Meaning</th></tr>
+  <tr><td><code>max_play_moves</code></td><td>[Training]</td><td>460</td><td>430</td><td>Base timeout (play-phase moves only, excluding setup)</td></tr>
+  <tr><td><code>near_win_extension_moves</code></td><td>[Training]</td><td>20</td><td>40</td><td>Extra moves granted to qualifying games</td></tr>
+  <tr><td><code>near_win_extension_value_thresh</code></td><td>[MLTraining]</td><td>0.2</td><td>0.2</td><td>Leader's value head must exceed this to qualify</td></tr>
+  <tr><td><code>clear_winner_thresh</code></td><td>[MLTraining]</td><td>0.35</td><td>0.30</td><td>Any player's value exceeding this triggers clear-winner exemption</td></tr>
+</table>
+
+<h3>2b. Logic Flow</h3>
+<p>Python's game loop checks at exactly <code>move_count == base_max_play_moves</code> (i.e., after 430 play moves have been applied, before applying move 431):</p>
+<ol>
+  <li>Evaluate <code>is_near_win(near_win_rare_regions)</code> and value head.</li>
+  <li>If <strong>(near_win OR clear_winner) AND max_val &gt; 0.20</strong>: log extension message, loop continues normally.</li>
+  <li>Otherwise: <code>early_terminated = True; break</code> — game is discarded (not sent to buffer).</li>
+</ol>
+<p>C++ must allow the game to stay non-terminal past move 430 for step 1 to ever run.</p>
+
+<hr>
+
+<h2>3. The Bug — Two-Part Story</h2>
+
+<h3>3a. Part 1: IsTerminal() used the wrong limit (C++)</h3>
+
+<p>The OpenSpiel API method <code>MaxGameLength()</code> in <span class="file">mali_ba_game.h</span> was correctly updated to include the extension:</p>
+
+<pre class="cpp">// mali_ba_game.h — CORRECT
+int MaxGameLength() const override {
+    return GetMaxPlayMoves() + GetNearWinExtensionMoves() + NumSetupMoves();
+    // = 430 + 40 + 10 = 480
+}</pre>
+
+<p>A quick sanity check confirmed this:</p>
+<pre class="shell">>>> import pyspiel
+>>> game = pyspiel.load_game("mali_ba", {"config_file": "...mali_ba.ini"})
+>>> print(game.max_game_length())
+480</pre>
+
+<p>However, the <em>actual terminal check</em> inside <code>IsTerminal()</code> in <span class="file">mali_ba_state_core.cc</span> was never updated and still compared against <code>GetMaxPlayMoves()</code> alone:</p>
+
+<pre class="cpp">// mali_ba_state_core.cc line 1185 — BUG (before fix)
+if (PlayMoveCount() >= GetGame()->GetMaxPlayMoves()) {   // 430 — too early!
+    is_terminal_ = true;
+    game_end_reason_ = "Max game length reached";
+    ...
+}</pre>
+
+<p>A second identical check existed in the win-condition evaluator at line 1402.</p>
+
+<p><strong>Effect:</strong> C++ declared the game terminal at 430 play moves (440 total). The Python while loop exited at <code>while not state.is_terminal()</code> before the extension check block was reached. No extension message ever appeared in any log from runs 31 or 32.</p>
+
+<p><strong>Proof from log:</strong> Grepping <code>train_run32.log</code> for "Near-win extension" and "base max reached" returned zero matches. All 9 surviving timeout games in run 32 ended at exactly 430 moves.</p>
+
+<h3>3b. Part 2: Extension also requires clear_winner (Python)</h3>
+
+<p>The original extension check only qualified <em>near_win</em> games. A game exempt due to <em>clear_winner</em> (value &gt; 0.30, e.g. 0.777) was denied extension even though it was clearly heading toward a win — it would be discarded at move 430. This was identified by examining log lines such as:</p>
+
+<pre class="log">Actor 100004, Game 25, Move 420: Value check: ['-0.120', '0.777', '0.446'] (thresh=0.10, exempt=clear_winner)</pre>
+
+<hr>
+
+<h2>4. Fixes Applied This Session</h2>
+
+<h3>4a. C++ — mali_ba_state_core.cc (two hunks)</h3>
+
+<p><strong>Fix 1 — IsTerminal() (line 1185):</strong></p>
+<pre class="cpp">// BEFORE
+if (PlayMoveCount() >= GetGame()->GetMaxPlayMoves()) {
+
+// AFTER
+if (PlayMoveCount() >= GetGame()->GetMaxPlayMoves() + GetGame()->GetNearWinExtensionMoves()) {</pre>
+
+<p><strong>Fix 2 — Win-condition evaluator (line 1402):</strong></p>
+<pre class="cpp">// BEFORE
+if (PlayMoveCount() >= GetGame()->GetMaxPlayMoves()) {
+    LOG_DEBUG("GAME END TRIGGER: Maximum game length of ", GetGame()->GetMaxPlayMoves(), ...);
+    return std::vector&lt;double&gt;();
+}
+
+// AFTER
+if (PlayMoveCount() >= GetGame()->GetMaxPlayMoves() + GetGame()->GetNearWinExtensionMoves()) {
+    LOG_DEBUG("GAME END TRIGGER: Maximum game length of ",
+              GetGame()->GetMaxPlayMoves() + GetGame()->GetNearWinExtensionMoves(), ...);
+    return std::vector&lt;double&gt;();
+}</pre>
+
+<p>Other occurrences of <code>GetMaxPlayMoves()</code> in that file (debug log at line 1588, penalty application at line 1814) are intentionally left as-is: the max_moves_penalty should apply to any game lasting 430+ moves, and the debug log is informational only.</p>
+
+<h3>4b. Python — train_mali_ba.py (extension check block)</h3>
+
+<p>The check was extended to qualify <em>near_win OR clear_winner</em>, with log output showing which condition triggered:</p>
+
+<pre class="python"># BEFORE: only near_win qualified
+if _ext_near_win and _ext_leader_val is not None and _ext_leader_val > _ext_thresh:
+    log(..., "Near-win extension — continuing {_ext_moves} more moves (near_win=True, ...)")
+else:
+    ...early_terminated = True; break
+
+# AFTER: near_win OR clear_winner
+_ext_cwt = getattr(args, 'clear_winner_thresh', 0.35)
+_ext_clear_winner = (any(v > _ext_cwt for v in _ext_val) if _ext_val is not None else False)
+_ext_qualifies = (_ext_near_win or _ext_clear_winner) and _ext_leader_val is not None and _ext_leader_val > _ext_thresh
+if _ext_qualifies:
+    _why = '+'.join(filter(None, ['near_win' if _ext_near_win else '', 'clear_winner' if _ext_clear_winner else '']))
+    log(..., f"Extension — continuing {_ext_moves} more moves ({_why}, max_val={_val_str} > {_ext_thresh:.2f})")
+else:
+    _reason = f"near_win={_ext_near_win}, clear_winner={_ext_clear_winner}, max_val={_val_str}"
+    ...early_terminated = True; break</pre>
+
+<div class="action">
+<strong>Action required before next run:</strong> Rebuild the C++ library on both machines (the <span class="file">mali_ba_state_core.cc</span> change is not yet compiled). Python changes take effect immediately on restart.
+<pre class="shell">cd /media/robp/UD/Projects/open_spiel/build
+cmake --build . --target pyspiel</pre>
+Verify with:
+<pre class="shell">python -c "import pyspiel; g = pyspiel.load_game('mali_ba', {'config_file': '...mali_ba.ini'}); print(g.max_game_length())"
+# Expected: 480 (unchanged — MaxGameLength was already correct)</pre>
+Then run a quick log grep to confirm extension messages appear:
+<pre class="shell">grep -E "Extension —|base max reached" /path/to/train_runXX.log | head -10</pre>
+</div>
+
+<hr>
+
+<h2>5. Run 32 Analysis Summary</h2>
+
+<p>Run 32 was the most recent completed run. Key stats (104 games, 747 min):</p>
+
+<table>
+  <tr><th>Metric</th><th>Value</th><th>Notes</th></tr>
+  <tr><td>Win rate</td><td>43.8% (7/16 received by learner)</td><td>Best yet</td></tr>
+  <tr><td>Win type split</td><td>57% Rare goods / 43% Timbuktu</td><td>Best balance yet; prior runs were ~85% Timbuktu</td></tr>
+  <tr><td>Timeout games</td><td>9 / 16 (all exactly 430 moves)</td><td>Extension not firing — this was the bug above</td></tr>
+  <tr><td>Replay buffer</td><td>25,000 experiences</td><td>5k bootstrap / 16k MCTS-natural / 4k MCTS-nearwin</td></tr>
+  <tr><td>Loss trend</td><td>2.07 → 2.10 (+1.3%), slope +0.000031/step</td><td>Essentially flat</td></tr>
+  <tr><td>Throughput</td><td>~1.3 MCTS games/hr</td><td>Skewed by fast bootstrap games</td></tr>
+  <tr><td>Heuristic guidance</td><td>~0.15 (decaying toward 0.10)</td><td>Decay range games 100–500</td></tr>
+</table>
+
+<h3>Value Head Trajectory (Run 32 Timeouts — n=9)</h3>
+<table>
+  <tr><th>Move</th><th>Max player value (avg)</th><th>Notes</th></tr>
+  <tr><td>200</td><td>+0.148</td><td>Rising trend from start</td></tr>
+  <tr><td>380</td><td>+0.294</td><td>Above extension threshold</td></tr>
+  <tr><td>400</td><td>+0.417</td><td>Strong signal</td></tr>
+  <tr><td>420</td><td>+0.427</td><td>Would have qualified for extension — but bug prevented it</td></tr>
+</table>
+
+<p>Timbuktu winners showed consistently <em>negative</em> value head throughout (avg &minus;0.206 at move 200), which is expected: MCTS finds Timbuktu wins via tree search reaching a terminal node, not via value head guidance. This is not a bug.</p>
+
+<hr>
+
+<h2>6. Early Termination System (Current INI)</h2>
+
+<p>All thresholds read from <code>[MLTraining]</code> section of <span class="file">mali_ba.ini</span>. Checks run every 20 play-phase moves inside the actor loop.</p>
+
+<table>
+  <tr><th>Check</th><th>Trigger moves</th><th>Current setting</th><th>Notes</th></tr>
+  <tr><td>Value head hopeless — level 1</td><td>&ge; 320, &lt; 380</td><td>all values &lt; &minus;0.16; near_win exempts</td><td></td></tr>
+  <tr><td>Value head hopeless — level 2</td><td>&ge; 380, &lt; 400</td><td>all values &lt; &minus;0.10; near_win exempts</td><td></td></tr>
+  <tr><td>Value head hopeless — level 3</td><td>&ge; 400</td><td>all values &lt; 0.10; near_win does NOT exempt</td><td>hopeless_nearwin_override3 = false</td></tr>
+  <tr><td>No near-win after threshold</td><td>&ge; 365</td><td>terminates if not near_win AND not clear_winner</td><td>early_termination_move = 365</td></tr>
+  <tr><td>Declining-best</td><td>&ge; 360</td><td>best value negative and worsening for 2 consecutive checks</td><td>Overrides near_win exemption</td></tr>
+  <tr><td>Near-win stalled</td><td>&ge; 400</td><td>max value &lt; 0.20 for 2 consecutive checks</td><td>Both 400 and 420 must be below threshold</td></tr>
+  <tr><td>Extension check</td><td>== 430</td><td>(near_win OR clear_winner) AND max_val &gt; 0.20</td><td>Extends by 40 moves; else discards</td></tr>
+</table>
+
+<p>Early termination rates are well-calibrated: the no-kill experiment (20% of games bypass all culling) found zero false positives — no games that would have been killed actually went on to win.</p>
+
+<hr>
+
+<h2>7. Buffer Configuration</h2>
+
+<table>
+  <tr><th>Pool</th><th>Capacity</th><th>Fill source</th><th>Notes</th></tr>
+  <tr><td>bootstrap_buffer</td><td>5,000 (20%)</td><td>Heuristic self-play games</td><td>95.5% Rare goods wins; breaks Timbuktu mode collapse</td></tr>
+  <tr><td>mcts_natural_buffer</td><td>16,000 (64%)</td><td>MCTS games with win condition</td><td>Natural wins only</td></tr>
+  <tr><td>mcts_nearwin_buffer</td><td>4,000 (16%)</td><td>MCTS near-win timeout games</td><td>near_win_rare_regions &ge; 4 at game end</td></tr>
+</table>
+
+<p>Buffer is saved/loaded as a gzip-pickled dict: <span class="file">mali_ba_buffer.pkl.gz</span>. Use <code>resize_buffer.py</code> to trim or expand pools without restarting a run.</p>
+
+<pre class="shell"># Example: trim natural to 2500, nearwin to 1000, clear bootstrap
+python resize_buffer.py mali_ba_buffer.pkl.gz --natural 2500 --nearwin 1000 --bootstrap 0</pre>
+
+<hr>
+
+<h2>8. Model Architecture (Approximate Parameter Counts)</h2>
+
+<table>
+  <tr><th>Network</th><th>Layers</th><th>Approx. params</th></tr>
+  <tr><td>Policy head</td><td>128 filters, 5 residual blocks</td><td>~1.5M</td></tr>
+  <tr><td>Value head</td><td>64 filters, 3 residual blocks</td><td>~250k</td></tr>
+  <tr><td>Combined</td><td>—</td><td>~1.75M</td></tr>
+</table>
+
+<p>With batch size 128 and ~3,500 MCTS experiences in the buffer at the start of run 32, the model:buffer ratio was roughly 500:1 — high overfitting risk. <code>train_interval_seconds = 25</code> (current) slows training relative to experience collection, reducing this risk while the buffer fills.</p>
+
+<hr>
+
+<h2>9. Value Head and Win Type Discussion</h2>
+
+<p><strong>Is it a fundamental limitation that the value head struggles with two disparate win types?</strong> No. The model can represent multi-modal value functions. The structural difference is:</p>
+
+<ul>
+  <li><strong>Rare goods wins</strong> — gradual accumulation; the board state progressively signals value. Value head learns a smooth positive gradient over ~300 moves. This is working.</li>
+  <li><strong>Timbuktu wins</strong> — discrete event (trade route completes a coast connection). MCTS finds these via tree search reaching the terminal node in 300–500 simulations. The value head never needed to guide MCTS to find them, so it never learned the pre-win signal. The value head stays negative right up to a Timbuktu win. This is expected behaviour, not a bug — it will self-correct as more Timbuktu win experiences accumulate and the model sees the state-to-win correlation.</li>
+</ul>
+
+<hr>
+
+<h2>10. Pending Action Items</h2>
+
+<div class="action">
+<ol>
+  <li><strong>Rebuild C++ on both machines</strong> — <span class="file">mali_ba_state_core.cc</span> was changed (IsTerminal and win-condition evaluator) but not yet compiled. This is the blocker for the extension to work.</li>
+  <li><strong>Verify extension fires</strong> — after rebuild, watch for log lines matching <code>Extension —</code> in the new run. The first qualifying game should appear within a few hours given run 32's value trajectory data.</li>
+  <li><strong>Monitor win-type balance</strong> — run 32 achieved 57% Rare goods / 43% Timbuktu. Watch that this holds or improves as the extension starts producing more near-win training data.</li>
+  <li><strong>Consider buffer size increase</strong> — current 25k is adequate for now, but 40k–80k is recommended once the win rate stabilises, to reduce the overfitting risk from the 500:1 parameter-to-experience ratio.</li>
+</ol>
+</div>
+
+<hr>
+
+<h2>11. File Change Summary (This Session)</h2>
+
+<table>
+  <tr><th>File</th><th>Change</th><th>Status</th></tr>
+  <tr>
+    <td class="file">games/mali_ba/mali_ba_state_core.cc</td>
+    <td>IsTerminal() and win-condition evaluator now use <code>GetMaxPlayMoves() + GetNearWinExtensionMoves()</code></td>
+    <td class="warn">Needs rebuild</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/train_mali_ba.py</td>
+    <td>Extension check qualifies on <code>near_win OR clear_winner</code>; log message shows which triggered</td>
+    <td class="ok">Ready (Python, no compile needed)</td>
+  </tr>
+</table>
+
+<p>Previously in this session (earlier conversation, already compiled into the prior build):</p>
+
+<table>
+  <tr><th>File</th><th>Change</th><th>Status</th></tr>
+  <tr>
+    <td class="file">games/mali_ba/mali_ba_game.h</td>
+    <td><code>MaxGameLength()</code> returns <code>GetMaxPlayMoves() + GetNearWinExtensionMoves() + NumSetupMoves()</code>; added <code>GetNearWinExtensionMoves()</code> accessor</td>
+    <td class="ok">Compiled (verified: max_game_length() = 480)</td>
+  </tr>
+  <tr>
+    <td class="file">games/mali_ba/mali_ba_common.h</td>
+    <td>Added <code>near_win_extension_moves = 20</code> field to <code>TrainingParameters</code></td>
+    <td class="ok">Compiled</td>
+  </tr>
+  <tr>
+    <td class="file">games/mali_ba/mali_ba_game.cc</td>
+    <td>Parses and logs <code>near_win_extension_moves</code> from [Training] INI section</td>
+    <td class="ok">Compiled</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/train_mali_ba.py</td>
+    <td>Reads <code>base_max_play_moves</code>, <code>near_win_extension_moves</code>, <code>near_win_extension_value_thresh</code>, <code>train_interval_seconds</code> from INI; extension check added at <code>move_count == base_max_play_moves</code>; propagated to shared_config for remote actors</td>
+    <td class="ok">Live</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/analyze_log.py</td>
+    <td>First/Latest loss line now uses bucket averages from the displayed table (not first/last individual training steps)</td>
+    <td class="ok">Live</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/resize_buffer.py</td>
+    <td>Added --natural / --nearwin / --bootstrap CLI args; supports both trim and expand; output filename is <code>&lt;stem&gt;_resized.pkl.gz</code></td>
+    <td class="ok">Live</td>
+  </tr>
+  <tr>
+    <td class="file">mali_ba.ini</td>
+    <td>near_win_extension_moves = 40; near_win_extension_value_thresh = 0.2; train_interval_seconds = 25; replay_buffer_size = 25000; mcts_buffer_fraction = 0.80; new_rare_region_reward = 0.30</td>
+    <td class="ok">Live</td>
+  </tr>
+</table>
+
+<hr>
+<p style="font-size:0.85em; color:#888;">Generated 2026-06-24 by Claude Sonnet 4.6 during Mali-Ba training session.</p>
+</body>
+</html>

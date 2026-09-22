@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mali-Ba Training Handoff — 2026-06-30</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 960px; margin: 40px auto; padding: 0 24px; color: #222; line-height: 1.6; }
+  h1 { border-bottom: 3px solid #444; padding-bottom: 8px; }
+  h2 { border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 2em; color: #333; }
+  h3 { margin-top: 1.4em; color: #444; }
+  code, pre { font-family: "Consolas", "Courier New", monospace; background: #f4f4f4; border-radius: 3px; }
+  code { padding: 1px 5px; font-size: 0.92em; }
+  pre { padding: 12px 16px; overflow-x: auto; border-left: 4px solid #aaa; font-size: 0.88em; line-height: 1.5; }
+  pre.cpp    { border-left-color: #6a9fb5; }
+  pre.python { border-left-color: #90a959; }
+  pre.log    { border-left-color: #d28445; }
+  pre.shell  { border-left-color: #888; background: #1e1e1e; color: #ccc; }
+  pre.ini    { border-left-color: #9b59b6; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th { background: #444; color: #fff; padding: 6px 10px; text-align: left; }
+  td { padding: 5px 10px; border-bottom: 1px solid #ddd; vertical-align: top; }
+  tr:nth-child(even) td { background: #f9f9f9; }
+  .ok   { color: #390; font-weight: bold; }
+  .warn { color: #c80; font-weight: bold; }
+  .bad  { color: #c00; font-weight: bold; }
+  .box  { background: #fffbe6; border: 1px solid #e6d97a; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  .action { background: #e8f4ea; border: 1px solid #7db87d; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  .note { background: #eef3fb; border: 1px solid #8aabdf; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  .warn-box { background: #fff4e5; border: 1px solid #e6a040; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  ul li { margin-bottom: 4px; }
+  .file { font-family: monospace; font-size: 0.9em; color: #555; }
+</style>
+</head>
+<body>
+
+<h1>Mali-Ba Training Handoff — 2026-06-30</h1>
+
+<p>This document updates <strong>HANDOFF-20260626.html</strong>. It covers runs 37–39, all Python changes implemented since 06-26, the job timeout / spot VM resilience feature, the analyze_log fix for the 4th buffer pool, the replay file inspection workflow, and the upcoming decision to move training to Google Cloud Platform.</p>
+
+<div class="note">
+<strong>Context:</strong> The 06-26 handoff ended with run 36 planned: <code>raregoods_pool_fraction = 0.40</code>, <code>near_win_extension_value_thresh = 0.40</code>, and the new 4-pool replay buffer live but barely exercised. The interventions have since been extended significantly. Run 38 (as of this writing) shows Timbuktu/Rare goods at 56/44 — a dramatic improvement from run 37's 86/14.
+</div>
+
+<hr>
+
+<h2>1. Architecture Recap (Mostly Unchanged)</h2>
+
+<table>
+  <tr><th>Component</th><th>Path / Notes</th></tr>
+  <tr><td>C++ game source</td><td class="file">D:\Projects\mali_ba\open_spiel\games\mali_ba\</td></tr>
+  <tr><td>Python training source</td><td class="file">D:\Projects\mali_ba\open_spiel\python\games\mali_ba\</td></tr>
+  <tr><td>WSL training root</td><td class="file">/media/robp/UD/Projects/open_spiel/</td></tr>
+  <tr><td>Compiled .so</td><td class="file">/media/robp/UD/Projects/open_spiel/build/python/pyspiel.so</td></tr>
+  <tr><td>Training logs</td><td class="file">/media/robp/UD/Projects/open_spiel/train_runXX.log</td></tr>
+  <tr><td>Replay buffer</td><td class="file">mali_ba_buffer.pkl.gz — <strong>4 pools</strong>: bootstrap, mcts_natural, mcts_nearwin, mcts_raregoods</td></tr>
+  <tr><td>INI file</td><td class="file">mali_ba.ini — [Training] read by C++, [MLTraining] read by Python</td></tr>
+  <tr><td>Remote actors</td><td>Laptop via <span class="file">remote_actors.py</span> → <span class="file">queue_server.py</span> on desktop. <strong>New:</strong> this works with any number of machines simultaneously.</td></tr>
+  <tr><td>Replay files</td><td class="file">*.mali_ba_replay — full-state replay files, one per game; viewable in GUI via <code>python main.py --mode gui_replay --replay_file &lt;path&gt;</code></td></tr>
+</table>
+
+<hr>
+
+<h2>2. Run 37 — Timbuktu Mode Collapse (86/14)</h2>
+
+<p>Run 37 was the direct successor to run 36. The 4-pool buffer was active and the raregoods fraction was set, but the model collapsed heavily toward Timbuktu wins.</p>
+
+<table>
+  <tr><th>Metric</th><th>Value</th><th>Notes</th></tr>
+  <tr><td>Win type split</td><td class="bad">~86% Timbuktu / ~14% Rare goods</td><td>Severe mode collapse — Rare goods nearly extinct</td></tr>
+  <tr><td>Replay buffer — raregoods pool</td><td class="warn">Low fill rate</td><td>Few natural RG wins meant the pool was starved despite the cross-compensation mechanism</td></tr>
+</table>
+
+<p>This triggered a new round of interventions. The core insight was that <strong>the model needed stronger push toward Rare goods actions during MCTS search itself</strong>, not just in the sampling distribution. Three levers were added:</p>
+
+<ol>
+  <li><strong>Per-job RG-focused actor selection</strong> (<code>rare_goods_actor_fraction</code>) — a fraction of dispatched jobs are tagged as "RG-focused" at dispatch time, using a Bernoulli trial.</li>
+  <li><strong>Additive heuristic weight for RG jobs</strong> (<code>rare_goods_added_heuristic_weight</code>) — RG-focused actors add extra weight on top of the base heuristic, strengthening the RG move bias during MCTS.</li>
+  <li><strong>Extra tier-1 sims for RG jobs</strong> (<code>rare_goods_added_tier1_sims</code>) — RG-focused actors get more MCTS simulations on early-game moves (where collection routing decisions matter).</li>
+  <li><strong>C++ terminal return bonus for RG wins</strong> (<code>rare_goods_bonus</code>) — a terminal return bonus added in C++ so the value head sees a stronger positive signal for Rare goods wins. <em>Requires a C++ rebuild to take effect — see Section 10.</em></li>
+</ol>
+
+<hr>
+
+<h2>3. Run 38 — Dramatic Improvement (56/44)</h2>
+
+<p>Run 38 was the first run with the per-job RG-focused actor system active. The improvement was immediate and substantial.</p>
+
+<table>
+  <tr><th>Metric</th><th>Run 37</th><th>Run 38</th></tr>
+  <tr><td>Timbuktu / Rare Goods split</td><td class="bad">~86% / ~14%</td><td class="ok">~56% / ~44%</td></tr>
+  <tr><td>Raregoods buffer pool</td><td class="warn">Starved</td><td class="ok">Healthy — filling steadily</td></tr>
+  <tr><td>Training loss</td><td>—</td><td>Steady decline (good)</td></tr>
+</table>
+
+<p>The 56/44 split is close to balanced. The game has two win conditions and no rule says they should be equally likely for a trained agent, so this is a healthy result — not a sign of remaining collapse.</p>
+
+<hr>
+
+<h2>4. Run 39 — Small Sample, Inconclusive</h2>
+
+<p>Run 39 was started with no changes except enabling replay file saving (<code>--replay_game N --replay_dir</code>) to inspect timeout games visually. After a small number of games (~20), the observed win type was 100% Timbuktu.</p>
+
+<div class="note">
+<strong>This is not alarming.</strong> A 20-game sample is far too small to conclude anything — the confidence interval on win type at N=20 is enormous. The raregoods buffer pool was confirmed healthy (~9,000 experiences). No intervention is warranted; wait for 50+ games before drawing conclusions about run 39.
+</div>
+
+<hr>
+
+<h2>5. New Feature: Per-Job RG-Focused Actor Selection</h2>
+
+<p>This is the key anti-collapse mechanism added this session. It operates at job dispatch time in the learner loop.</p>
+
+<h3>How it works</h3>
+<ul>
+  <li>When a job is dispatched, a Bernoulli trial: <code>random.random() &lt; rare_goods_actor_fraction</code> determines if the job is "RG-focused".</li>
+  <li>RG-focused jobs receive a modified <code>shared_config</code> snapshot with:
+    <ul>
+      <li><code>heuristic_weight = base_weight + rare_goods_added_heuristic_weight</code> (additive override, not replacement)</li>
+      <li><code>tier1_sims = base_tier1_sims + rare_goods_added_tier1_sims</code> (extra early-game MCTS depth)</li>
+    </ul>
+  </li>
+  <li>The actor is unaware of the distinction — it just sees a slightly different config for that game.</li>
+  <li>RG-focused game experiences route to the <code>mcts_raregoods_buffer</code> pool in the replay buffer.</li>
+</ul>
+
+<h3>INI parameters (in <code>[MLTraining]</code>)</h3>
+<pre class="ini">rare_goods_actor_fraction         = 0.30    # 30% of dispatched jobs are RG-focused
+rare_goods_added_heuristic_weight = 0.20    # added on top of base heuristic_weight
+rare_goods_added_tier1_sims       = 50      # added on top of base tier1 sim count</pre>
+
+<h3>Tiered MCTS simulation budget (INI-configurable)</h3>
+<p>The actor's simulation budget is now read from INI rather than hard-coded:</p>
+<pre class="ini">mcts_tier1_sims        = 150    # sims for move_count < tier1_threshold
+mcts_tier2_sims        = 300    # sims for tier1_threshold <= move_count < tier2_threshold
+mcts_full_sims         = 500    # sims for move_count >= tier2_threshold
+mcts_tier1_threshold   = 100    # move count boundary for tier 1
+mcts_tier2_threshold   = 300    # move count boundary for tier 2</pre>
+
+<p>RG-focused actors add <code>rare_goods_added_tier1_sims</code> only to the tier-1 budget (early-game), since that's where routing decisions are made.</p>
+
+<hr>
+
+<h2>6. New Feature: Job Timeout / Spot VM Resilience</h2>
+
+<p>Added to support spot/preemptible VMs on cloud platforms. If an actor VM is killed mid-game, its in-flight job simply disappears — no result is ever returned. Without intervention the learner loop would eventually stall, waiting for jobs that will never arrive.</p>
+
+<h3>Mechanism</h3>
+<ul>
+  <li>The learner tracks <code>last_result_time</code>, reset each time a game result is received.</li>
+  <li>Periodically (in the Section C idle check), if <code>time.time() - last_result_time &gt; job_timeout_hours * 3600</code>:
+    <ol>
+      <li>Estimate orphaned in-flight jobs: <code>inflight = jobs_dispatched - total_games_processed - job_queue.qsize()</code></li>
+      <li>Add <code>inflight</code> to <code>jobs_timed_out</code> (cumulative counter)</li>
+      <li>Raise the dispatch ceiling: <code>jobs_dispatched &lt; args.num_episodes + jobs_timed_out</code></li>
+      <li>Reset <code>last_result_time</code> to avoid immediate re-fire</li>
+      <li>Log a WARN message with the count</li>
+    </ol>
+  </li>
+</ul>
+
+<p>This is intentionally simple: actors are stateless, so preemption just loses the in-progress game. Game checkpointing was considered but rejected — trajectory serialization is complex, the 30-second preemption warning is marginal, and the timeout approach is sufficient for the expected preemption rate.</p>
+
+<h3>Configuration</h3>
+<pre class="ini"># In mali_ba.ini [MLTraining]:
+job_timeout_hours = 3.0    # hours without a result before orphaned jobs are re-queued</pre>
+<pre class="shell">python train_mali_ba.py --job_timeout_hours 3.0   # also available as CLI arg</pre>
+
+<div class="note">
+<strong>Episode numbering:</strong> <code>jobs_timed_out</code> raises the dispatch ceiling but does not affect <code>episode_num</code> or model checkpoint numbering — <code>jobs_dispatched</code> keeps incrementing naturally. The log shows cumulative timed-out count for observability.
+</div>
+
+<hr>
+
+<h2>7. New Feature: analyze_log.py — 4th Pool Display Fix</h2>
+
+<p>The buffer state log line includes all 4 pools, but the <code>RE_BUFFER_STATE</code> regex was stopping at <code>MCTS-nearwin</code>, silently dropping the raregoods count. Fixed in <span class="file">analyze_log.py</span>:</p>
+
+<ul>
+  <li>Regex extended with an optional capture group: <code>(?:\s+MCTS-raregoods: (\d+))?</code></li>
+  <li>Parse dict now includes <code>mcts_raregoods</code> key (None if absent for old log files)</li>
+  <li>Display block shows all 4 pools; raregoods column silently omitted for pre-feature logs</li>
+</ul>
+
+<p>Example output after fix:</p>
+<pre class="log">  Replay buffer (latest)    : 62,400 experiences  (bootstrap: 5,000, MCTS-natural: 28,000, MCTS-nearwin: 20,400, MCTS-raregoods: 9,000)  @ 20260629-143200</pre>
+
+<hr>
+
+<h2>8. Replay File Inspection Workflow</h2>
+
+<p>Timeout games that reach move 470 with no winner are visually inspectable. The training script can save a full-state replay file for each game it plays.</p>
+
+<h3>Enabling replay saving</h3>
+<pre class="shell">python train_mali_ba.py --replay_game 1 --replay_dir /path/to/replays/</pre>
+<p><code>--replay_game N</code> saves every Nth game (1 = every game). Files are named <code>game_XXXXX.mali_ba_replay</code> and contain the full board state at each move.</p>
+
+<h3>Viewing a replay</h3>
+<pre class="shell">python main.py --mode gui_replay --replay_file /path/to/game_00001.mali_ba_replay</pre>
+<p>The GUI replay mode uses <code>SimpleReplayManager</code> (in <span class="file">classes/classes_other.py</span>) which already parses the file format. Navigation: step forward/backward through moves using the GUI controls.</p>
+
+<div class="note">
+<strong>Run 39 purpose:</strong> Run 39 was started specifically to collect replay files of timeout games. Visual inspection of what the board looks like at move 470 in a timeout game will help diagnose whether the agents are "almost winning" or completely stuck. The 100% Timbuktu win rate seen so far in run 39 is likely statistical noise (N=20).
+</div>
+
+<hr>
+
+<h2>9. Multi-Machine Remote Actors — Confirmed Working</h2>
+
+<p>The existing <span class="file">queue_server.py</span> / <span class="file">remote_actors.py</span> infrastructure already supports any number of remote machines simultaneously. This was confirmed by reading the source — no changes were needed.</p>
+
+<table>
+  <tr><th>Component</th><th>Role</th><th>Notes</th></tr>
+  <tr><td class="file">queue_server.py</td><td>Runs on main/learner machine</td><td>Exposes job queue, result queue, and shared_config over TCP (default port 50000) using <code>multiprocessing.managers</code></td></tr>
+  <tr><td class="file">remote_actors.py</td><td>Runs on each worker machine</td><td>Takes <code>--server_host</code>, <code>--server_port</code>, <code>--num_actors</code>, <code>--authkey</code>. Multiple machines can connect to the same server simultaneously.</td></tr>
+</table>
+
+<pre class="shell"># On the main/learner machine:
+python queue_server.py --host 0.0.0.0 --port 50000 --authkey mysecret
+
+# On each worker machine (can run on multiple machines simultaneously):
+python remote_actors.py --server_host &lt;main_ip&gt; --server_port 50000 --num_actors 8 --authkey mysecret</pre>
+
+<p>On GCP with all machines in the same VPC, <code>&lt;main_ip&gt;</code> is the internal (10.x.x.x) IP — no firewall rules or NAT required for internal VPC communication.</p>
+
+<hr>
+
+<h2>10. C++ Changes — Rebuild Required</h2>
+
+<div class="warn-box">
+<strong>Important:</strong> The <code>rare_goods_bonus</code> parameter was added to the C++ layer. The C++ source files have been modified but the .so has not been rebuilt yet. The Python training code can run without it (bonus defaults to 0.0), but to benefit from the stronger RG terminal signal, a C++ rebuild is required before the next substantive run.
+</div>
+
+<p>Files modified (C++ — in <span class="file">games/mali_ba/</span>):</p>
+<ul>
+  <li><span class="file">mali_ba_common.h</span> — added <code>rare_goods_bonus</code> field</li>
+  <li><span class="file">mali_ba_game.cc</span> — reads <code>rare_goods_bonus</code> from INI / game params</li>
+  <li><span class="file">mali_ba_state_core.cc</span> — applies bonus to terminal return for Rare goods wins</li>
+</ul>
+
+<p>INI parameter (in <code>[Training]</code> — read by C++):</p>
+<pre class="ini">rare_goods_bonus = 0.15    # terminal return bonus for Rare goods wins (0.0 = disabled)</pre>
+
+<p>To rebuild in WSL:</p>
+<pre class="shell">cd /media/robp/UD/Projects/open_spiel/build
+cmake --build . --target pyspiel -j$(nproc)</pre>
+
+<hr>
+
+<h2>11. Cloud Training Plan — GCP</h2>
+
+<p>Training acceleration via cloud is the immediate next priority. After comparing options (vast.ai vs Google Cloud), the decision was made to try an all-GCP deployment first. If cost is prohibitive, the main machine can fall back to the local desktop with workers on GCP via Tailscale.</p>
+
+<h3>Why GCP over vast.ai</h3>
+<table>
+  <tr><th></th><th>vast.ai</th><th>Google Cloud (GCP)</th></tr>
+  <tr><td>VM preemption</td><td>No preemption mechanism; instances just vanish</td><td>Spot VMs give 30-second preemption notice; job timeout mechanism handles it</td></tr>
+  <tr><td>Networking</td><td>Public internet between machines; need VPN or SSH tunnels</td><td>All-VPC internal networking; machines communicate on 10.x.x.x with no setup</td></tr>
+  <tr><td>GPU availability</td><td>Wide variety; good for short-term rental</td><td>More predictable; reservations available</td></tr>
+  <tr><td>Setup complexity</td><td>Lower for one-off GPU rentals</td><td>Higher initial setup; pays off for sustained multi-machine training</td></tr>
+  <tr><td>Cost</td><td>Often cheaper for raw GPU-hours</td><td>Spot VMs can be competitive; sustained-use discounts help</td></tr>
+</table>
+
+<h3>Planned GCP Architecture</h3>
+<table>
+  <tr><th>Machine</th><th>Type</th><th>Spot?</th><th>Role</th></tr>
+  <tr><td>main-vm</td><td>GPU instance (e.g., n1-standard-8 + T4)</td><td>No (on-demand)</td><td>Learner + queue_server + trainer. Persistent — holds the model and replay buffer.</td></tr>
+  <tr><td>worker-vm-N</td><td>CPU instance (e.g., n2-standard-16 or c2-standard-16)</td><td>Yes (spot)</td><td>MCTS actors via remote_actors.py. Stateless — preemption loses only the in-progress game.</td></tr>
+</table>
+
+<p>All machines in the same GCP VPC region. Internal IP communication — no firewall rules needed for port 50000 between VMs in the same VPC.</p>
+
+<h3>Installation scripts needed (to be written)</h3>
+<ul>
+  <li><strong>main_vm_setup.sh</strong> — CUDA, Python env, OpenSpiel build from source, clone repo, start learner + queue_server</li>
+  <li><strong>worker_vm_setup.sh</strong> — Python env, OpenSpiel (CPU build), clone repo, start remote_actors.py pointed at main VM internal IP</li>
+</ul>
+
+<div class="note">
+<strong>Networking note:</strong> <code>queue_server.py</code> must bind to <code>0.0.0.0</code> (not <code>127.0.0.1</code>) for remote workers to connect. The <code>--host 0.0.0.0</code> flag already exists. Workers use the main VM's internal GCP IP (shown as INTERNAL_IP in <code>gcloud compute instances list</code>).
+</div>
+
+<hr>
+
+<h2>12. Immediate Next Steps (In Order)</h2>
+
+<div class="action">
+<ol>
+  <li>
+    <strong>Boot this machine into native Linux</strong> (not WSL) to get a clean git environment.
+    The reason: WSL git has caused commit complications; native Linux is cleaner for staging and pushing the large number of modified and new files.
+  </li>
+  <li>
+    <strong>Commit all changes to GitHub.</strong> Files to stage include (but are not limited to):
+    <ul>
+      <li><span class="file">games/mali_ba/</span> — all C++ sources including <code>CMakeLists.txt</code> (critical for cloud builds)</li>
+      <li><span class="file">python/games/mali_ba/train_mali_ba.py</span></li>
+      <li><span class="file">python/games/mali_ba/training_utils.py</span></li>
+      <li><span class="file">python/games/mali_ba/analyze_log.py</span></li>
+      <li><span class="file">python/games/mali_ba/queue_server.py</span></li>
+      <li><span class="file">python/games/mali_ba/remote_actors.py</span></li>
+      <li><span class="file">python/games/mali_ba/mali_ba.ini</span></li>
+      <li><span class="file">python/games/mali_ba/resize_buffer.py</span>, <span class="file">strip_bootstrap.py</span>, other utils</li>
+      <li><span class="file">pybind11/games_mali_ba.cc</span></li>
+      <li><strong>Do NOT commit</strong> <code>*.weights.h5</code> model files — add to <code>.gitignore</code></li>
+      <li><strong>Do NOT commit</strong> <code>mali_ba_buffer.pkl.gz</code> — large binary, add to <code>.gitignore</code></li>
+    </ul>
+  </li>
+  <li>
+    <strong>Write GCP installation scripts</strong> (<code>main_vm_setup.sh</code> and <code>worker_vm_setup.sh</code>).
+  </li>
+  <li>
+    <strong>Set up GCP project</strong>: create VPC, main GPU VM (on-demand), and spot worker VMs.
+  </li>
+  <li>
+    <strong>C++ rebuild on main VM</strong> to enable <code>rare_goods_bonus = 0.15</code>.
+  </li>
+  <li>
+    <strong>Start run 40</strong> with GCP workers, enabling both <code>rare_goods_bonus</code> (after rebuild) and <code>rare_goods_actor_fraction = 0.30</code>.
+  </li>
+</ol>
+</div>
+
+<hr>
+
+<h2>13. File Change Summary — This Session (2026-06-30)</h2>
+
+<table>
+  <tr><th>File</th><th>Change</th><th>Requires Rebuild?</th></tr>
+  <tr>
+    <td class="file">python/games/mali_ba/train_mali_ba.py</td>
+    <td>
+      <strong>Per-job RG actor selection:</strong> Bernoulli trial at dispatch; passes modified config snapshot (elevated heuristic + tier-1 sims) for RG-focused jobs.<br>
+      <strong>Tiered MCTS budget:</strong> tier thresholds/sims now read from INI instead of hard-coded.<br>
+      <strong>Job timeout:</strong> <code>jobs_timed_out</code> counter, <code>last_result_time</code> tracker, periodic orphan detection in Section C, raised dispatch ceiling. <code>--job_timeout_hours</code> CLI arg + INI key.<br>
+      <strong>shared_config:</strong> includes <code>job_timeout_hours</code> for remote actors.
+    </td>
+    <td>No</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/analyze_log.py</td>
+    <td>
+      <code>RE_BUFFER_STATE</code> regex extended with optional 5th capture group for <code>MCTS-raregoods</code>. Parse dict includes <code>mcts_raregoods</code> (None for old logs). Display block shows all 4 pools; backward compatible with pre-feature logs.
+    </td>
+    <td>No</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/mali_ba.ini</td>
+    <td>
+      Added <code>rare_goods_actor_fraction</code>, <code>rare_goods_added_heuristic_weight</code>, <code>rare_goods_added_tier1_sims</code>, <code>mcts_tier1/2/full_sims</code>, <code>mcts_tier1/2_threshold</code>, <code>job_timeout_hours</code> to <code>[MLTraining]</code>.<br>
+      Added <code>rare_goods_bonus = 0.15</code> to <code>[Training]</code> (C++ parameter — requires rebuild to take effect).
+    </td>
+    <td>For <code>rare_goods_bonus</code> only</td>
+  </tr>
+  <tr>
+    <td class="file">games/mali_ba/mali_ba_common.h</td>
+    <td>Added <code>rare_goods_bonus</code> field to game params struct.</td>
+    <td><strong>Yes</strong></td>
+  </tr>
+  <tr>
+    <td class="file">games/mali_ba/mali_ba_game.cc</td>
+    <td>Reads <code>rare_goods_bonus</code> from INI / game parameter map.</td>
+    <td><strong>Yes</strong></td>
+  </tr>
+  <tr>
+    <td class="file">games/mali_ba/mali_ba_state_core.cc</td>
+    <td>Applies <code>rare_goods_bonus</code> to terminal return when the win condition is Rare goods.</td>
+    <td><strong>Yes</strong></td>
+  </tr>
+</table>
+
+<p><strong>No changes to:</strong> <span class="file">queue_server.py</span>, <span class="file">remote_actors.py</span>, <span class="file">training_utils.py</span>, <span class="file">main.py</span>, <span class="file">classes/classes_other.py</span>.</p>
+
+<hr>
+
+<h2>14. Open Questions / Future Considerations</h2>
+
+<ul>
+  <li><strong>rare_goods_actor_fraction tuning:</strong> Current value 0.30 produced 56/44 balance in run 38. If RG wins become plentiful, this can be reduced to 0.15–0.20. If Timbuktu drift resumes, try 0.40.</li>
+  <li><strong>rare_goods_bonus effect:</strong> Not yet active (requires C++ rebuild). Expectation is a stronger positive gradient for RG wins in the value head. May amplify the current balance improvement or push further toward RG dominance — watch the split after first run with rebuild.</li>
+  <li><strong>Extended games still not converting:</strong> No near-win extended game has ever produced a natural win (last checked at run 38). As the RG value head improves from guaranteed buffer exposure, this should change. If it doesn't change by run 42–43, consider increasing <code>near_win_extension_moves</code> beyond 40.</li>
+  <li><strong>Replay file inspection:</strong> Run 39 was collecting replays specifically to inspect timeout games. Look at: how far are pieces from winning at move 470? Are they clustered near a Rare goods win but unable to close? This informs whether the timeout condition itself needs change.</li>
+  <li><strong>Spot VM preemption rate:</strong> The job timeout mechanism is conservative (3 hours default). If spot VMs preempt frequently during a training run, the cumulative <code>jobs_timed_out</code> in the log will make this visible. Adjust <code>job_timeout_hours</code> down if preemptions are common and quick.</li>
+  <li><strong>GCP cost monitoring:</strong> Set a billing alert before starting the first cloud run. GPU instances are the expensive component — the learner GPU should be on-demand (no preemption), and it's the only one that needs a GPU. Workers are CPU-only.</li>
+</ul>
+
+<hr>
+<p style="font-size:0.85em; color:#888;">Generated 2026-06-30 by Claude Sonnet 4.6 during Mali-Ba training session. Updates HANDOFF-20260626.html.</p>
+</body>
+</html>

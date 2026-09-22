@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mali-Ba Training Handoff — 2026-07-25</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 960px; margin: 40px auto; padding: 0 24px; color: #222; line-height: 1.6; }
+  h1 { border-bottom: 3px solid #444; padding-bottom: 8px; }
+  h2 { border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 2em; color: #333; }
+  h3 { margin-top: 1.4em; color: #444; }
+  code, pre { font-family: "Consolas", "Courier New", monospace; background: #f4f4f4; border-radius: 3px; }
+  code { padding: 1px 5px; font-size: 0.92em; }
+  pre { padding: 12px 16px; overflow-x: auto; border-left: 4px solid #aaa; font-size: 0.88em; line-height: 1.5; }
+  pre.cpp    { border-left-color: #6a9fb5; }
+  pre.python { border-left-color: #90a959; }
+  pre.log    { border-left-color: #d28445; }
+  pre.shell  { border-left-color: #888; background: #1e1e1e; color: #ccc; }
+  pre.ini    { border-left-color: #9b59b6; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th { background: #444; color: #fff; padding: 6px 10px; text-align: left; }
+  td { padding: 5px 10px; border-bottom: 1px solid #ddd; vertical-align: top; }
+  tr:nth-child(even) td { background: #f9f9f9; }
+  .ok   { color: #390; font-weight: bold; }
+  .warn { color: #c80; font-weight: bold; }
+  .bad  { color: #c00; font-weight: bold; }
+  .box  { background: #fffbe6; border: 1px solid #e6d97a; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  .action { background: #e8f4ea; border: 1px solid #7db87d; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  .note { background: #eef3fb; border: 1px solid #8aabdf; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  .warn-box { background: #fff4e5; border: 1px solid #e6a040; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  ul li { margin-bottom: 4px; }
+  .file { font-family: monospace; font-size: 0.9em; color: #555; }
+</style>
+</head>
+<body>
+
+<h1>Mali-Ba Training Handoff — 2026-07-25</h1>
+
+<p>This document updates <strong>HANDOFF-20260630.html</strong>. It covers everything worked on since then <em>except</em> VM/cloud-provisioning mechanics, which now live in <strong>HANDOFF-VM-SETUP.MD</strong> (formerly <code>HANDOFF-GCP-SETUP.md</code>, now covering both GCP and Hetzner). This document is entirely about the training/model side: reward structure, a real replay-file bug, buffer dynamics, a CPU throughput fix with a measured ~25-29% effect, MCTS search-budget diagnostics grounded in real buffer data, and value-head/policy analysis.</p>
+
+<div class="note">
+<strong>Where things stand:</strong> the core open question from 06-30 — extended near-win games essentially never converting to actual wins — got a real diagnosis this session: a reward-structure mis-specification (approaching a win paid almost as much as winning) plus a genuine MCTS search-budget shortfall at the specific decision that closes out a win (trade-route declaration, up to 300 legal candidates — more branching than any other decision in the game). Both have been addressed in code/config. Current win rate sits around 20-30% and is still noisy run to run; several confounded rounds of tuning (buffer size, heuristic guidance, sim budget) make attribution hard, which is itself a lesson documented below.
+</div>
+
+<hr>
+
+<h2>1. Reward Structure Overhaul</h2>
+
+<p>Read straight from the actual <code>Returns()</code>/<code>Rewards()</code> implementation (<span class="file">mali_ba_state_core.cc</span>), not assumption. Two structural problems were found:</p>
+
+<table>
+  <tr><th>Signal</th><th>Old value</th><th>New value</th><th>When</th></tr>
+  <tr><td>Win (highest score)</td><td>+1.0</td><td>+1.0 (unchanged)</td><td>terminal</td></tr>
+  <tr><td>Loss</td><td>−0.1</td><td>−0.1 (unchanged)</td><td>terminal</td></tr>
+  <tr><td>Timeout penalty (all players)</td><td>−0.7</td><td class="ok">−1.2</td><td>terminal, on top of the above</td></tr>
+  <tr><td>Rare good from new region</td><td class="bad">+0.30 each</td><td class="ok">+0.05 each</td><td>during play</td></tr>
+  <tr><td>Rare-goods win bonus</td><td>0.0 (disabled)</td><td class="ok">+0.2</td><td>terminal, only on rare-goods win</td></tr>
+</table>
+
+<p><strong>Problem 1 — approaching the win paid almost as much as winning.</strong> <code>new_rare_region_reward = 0.30</code> could pay out up to 6 times — a player farming rare goods from 5-6 regions banked +1.5 to +1.8 in cumulative shaping <em>without ever ending the game</em>, more than the +1.0 win itself. The value head was learning "trajectories that approach the win are high-value," which is exactly what the data showed: high value estimates near the move cap, 0% conversion to an actual win.</p>
+
+<p><strong>Problem 2 — being ahead at timeout was still profitable.</strong> At timeout the leader still got scored normally (+1.0), then −0.7 applied to everyone — netting <strong>+0.3</strong> for stalling instead of closing. The model was never taught "a win you don't close isn't a win." This also connects to a real finding from manual replay review (game 125): two different players had independently built geographically-obvious paths to the same win condition, and neither converged — stalling was a <em>rational equilibrium</em> of the reward structure at the time, not necessarily a search failure on its own.</p>
+
+<div class="note">
+<strong>Buffer-composition detour that shaped this diagnosis:</strong> an earlier hypothesis ("rare completions are just scarce in the buffer") was directly falsified by checking actual buffer composition — the two win-condition pools held 28,800 of 40,000 experiences (72%) at the time, not a scarce trickle. The real story was <em>data-quality</em> (what those experiences reward), not data <em>quantity</em>.
+</div>
+
+<h3>Changes made, and why in this order</h3>
+<ol>
+  <li><code>max_moves_penalty</code>: −0.7 → −1.2. Makes timeout strictly unprofitable even for the leader (nets 0.0 to −0.2 instead of +0.3), while losing-by-closing (−0.1) still beats losing-at-timeout (≈−1.1), so trailing players still prefer to close rather than stall.</li>
+  <li><code>new_rare_region_reward</code>: 0.30 → 0.05, plus <code>rare_goods_bonus</code>: 0.0 → 0.2 (already implemented in C++ from the prior session, just never turned on). Moves the incentive from "approaching" to "actually winning by rare goods."</li>
+</ol>
+
+<p>Two further recommendations from the original analysis were <strong>not</strong> implemented this session — logged here for later:</p>
+<ul>
+  <li><strong>Reward the closer, conditional on winning</strong> — a small terminal bonus to whoever triggered game end, only if they also won (<code>GetGameEndTriggeringPlayer()</code> already exists in C++). Not done; see §8 for why the trigger-vs-winner data suggests this may be less necessary than first thought.</li>
+  <li><strong>Widen the loss differential / margin-aware returns</strong> — −0.1 for losing barely distinguishes 2nd from 3rd place. Considered valuable but not attempted; would require re-tuning every threshold in the pipeline that's denominated in return units (<code>clear_winner_thresh</code>, the hopeless-check thresholds, <code>near_win_extension_value_thresh</code>).</li>
+</ul>
+
+<div class="warn-box">
+<strong>Buffer resize interaction:</strong> the replay buffer was deliberately shrunk (40,000 → 20,000, briefly → 10,000) at the same time as the reward change, specifically to flush old-reward-structure experiences out of the FIFO pools faster. The math actually works out cleanly: once cumulative new insertions into a pool exceed its capacity, <em>every</em> resident experience postdates the change — it's a hard cutoff, not a gradual dilution. See §3 for the full buffer discussion.
+</div>
+
+<hr>
+
+<h2>2. Replay File Format Bug — Fixed (C++ + Python)</h2>
+
+<p>The GUI replay loader crashed with <code>RuntimeError: Failed to obtain valid_hexes</code> on a run started with <code>--replay_game</code> enabled. Root cause: the Python writer's <code>[setup]</code>-section call used <code>.serialize()</code> (a generic per-move serializer) instead of the purpose-built <code>CreateSetupJson()</code>, which was the only place that actually wrote <code>valid_hexes</code>/<code>cities</code>/<code>grid_radius</code>/<code>num_players</code> into the setup block. The call site using the correct method appears to have been dead code, never actually reached by the real writer.</p>
+
+<h3>Fix (permanent, C++ + pybind11 + Python)</h3>
+<ul>
+  <li><span class="file">mali_ba_state_moves.cc</span> — <code>CreateSetupJson()</code> rewritten to build on top of <code>json::parse(Serialize())</code> rather than a fresh empty object, then layer the static board-config fields on top. Combines both code paths instead of leaving one dead.</li>
+  <li><span class="file">games_mali_ba.cc</span> (pybind11) — exposed the method: <code>.def("create_setup_json", &amp;mali_ba::Mali_BaState::CreateSetupJson)</code>.</li>
+  <li><span class="file">train_mali_ba.py</span> — the <code>[setup]</code>-section writer switched from <code>.serialize()</code> to <code>.create_setup_json()</code>.</li>
+</ul>
+
+<h3>Temporary fallback (still present, safe to remove once confirmed unnecessary)</h3>
+<p><span class="file">main.py</span>'s <code>MODE_GUI_REPLAY</code> branch: if a loaded replay's setup data is still missing the required keys (i.e. an old replay file written before the fix), it falls back to constructing a live <code>GameInterface</code> from the ini and backfilling the missing keys via <code>setdefault()</code>. Only matters for replay files generated before this fix landed.</p>
+
+<div class="warn-box">
+<strong>Rebuild-propagation landmine hit during this fix:</strong> after editing <code>games_mali_ba.cc</code>, rebuilds kept silently failing to pick up the new binding. Root cause: <code>open_spiel/python/pybind11/games_mali_ba.cc</code> in the actual build tree was a <strong>plain copied file, not a symlink</strong> — unlike <code>open_spiel/games/mali_ba/</code> and <code>open_spiel/python/games/mali_ba/</code>, which <em>are</em> symlinked back to the dev tree and update automatically. Fixed by re-copying the current dev-tree file over the stale build-tree one. If pybind11-layer C++ changes ever seem to "not take" after a real rebuild, check this first — it's a structural gap in the symlink scheme (see <span class="file">apply_open_spiel_edits.sh</span>, which only handles CMakeLists.txt/pyspiel.cc wiring, not this file's placement).
+</div>
+
+<hr>
+
+<h2>3. Replay Buffer — Sizing and FIFO Turnover Dynamics</h2>
+
+<table>
+  <tr><th>Date/context</th><th>replay_buffer_size</th><th>Why</th></tr>
+  <tr><td>Pre-session baseline</td><td>40,000</td><td>—</td></tr>
+  <tr><td>After reward-structure change</td><td>20,000</td><td>Halve every pool's size to flush old-reward-structure experiences roughly 2x faster</td></tr>
+  <tr><td>Briefly</td><td>10,000</td><td>Even faster flush, tested transiently</td></tr>
+  <tr><td>Current</td><td>24,000</td><td>Expanded back up modestly once the reward-structure transition was judged complete, trading flush-speed for more sample diversity</td></tr>
+</table>
+
+<p>Pool sizes are fractions of the total (<code>mcts_buffer_fraction</code>, <code>near_win_pool_fraction</code>, <code>raregoods_pool_fraction</code> — see ini <code>[MLTraining]</code>). At the 20,000 setting: natural (Timbuktu) and raregoods pools were 8,000 each, near-win 4,000. <code>mcts_buffer_fraction</code> is now <strong>1.00</strong> (bootstrap pool effectively disabled — <code>bootstrap_episodes=0</code> in current run commands).</p>
+
+<h3>Key mechanic: only wins and near-win timeouts feed the buffer</h3>
+<p>With <code>--skip_timeout_games</code> set (used in every run command this session), a <strong>plain (non-near-win) timeout contributes zero experiences</strong> to any pool — its trajectory is discarded entirely (<code>continue</code>, never queued). Only near-win timeouts (flagged via <code>is_near_win()</code>, checking rare-goods region count at the terminal state) survive, and they go into the separate near-win pool, not natural/raregoods. This matters a lot for reasoning about buffer turnover: win-pool refresh rate is bounded by <em>actual win rate</em>, not overall game-completion rate.</p>
+
+<h3>FIFO turnover is a hard cutoff, not gradual dilution</h3>
+<p>Once cumulative new insertions into a pool exceed its capacity, the entire resident pool postdates whatever changed. This was used directly to settle a debate about whether stale reward-structure data was still contaminating training: with the buffer at 20,000 (natural/raregoods caps of 8,000 each), insertion counts of ~14,500 (Timbuktu) and ~13,700 (rare goods) over the relevant window both exceeded their pool's capacity — meaning the buffer was <strong>fully turned over</strong>, not partially. This resolved what looked like conflicting theories about a training plateau (see §8) with hard arithmetic instead of guessing.</p>
+
+<hr>
+
+<h2>4. CPU Thread Oversubscription Fix — Measured ~25-29% Throughput Gain</h2>
+
+<p>Discovered by chance while investigating laptop overheating during a threading-conscious actor-count discussion. Neither <code>remote_actors.py</code> nor <code>train_mali_ba.py</code>'s actor path set any thread-count environment variables, so each actor process's own TensorFlow/BLAS stack spawned its own internal thread pool independently.</p>
+
+<h3>Measured severity</h3>
+<pre class="log">Sample actor subprocess thread count: 50
+Total actor subprocesses on a 16-core box: 16
+Total OS threads across all actors: 752   (47:1 oversubscription vs. 16 physical cores)</pre>
+
+<h3>The fix</h3>
+<pre class="shell">export OMP_NUM_THREADS=1
+export TF_NUM_INTRAOP_THREADS=1
+export TF_NUM_INTEROP_THREADS=1</pre>
+<p>Applied first as a manual env-var wrapper on one Hetzner worker (hetzner-2) as a controlled A/B against an identical unfixed worker (hetzner-1), same hardware, same code, started minutes apart:</p>
+
+<table>
+  <tr><th>Machine</th><th>Avg time to move 230</th></tr>
+  <tr><td>Hetzner-1 (unfixed baseline)</td><td>66.7 min</td></tr>
+  <tr><td>Hetzner-2 (thread-limited)</td><td class="ok">47.6 min — <strong>28.6% faster</strong></td></tr>
+</table>
+
+<p>Corroborated independently on the desktop's local actors, comparing run105 (unfixed) vs. run106 (thread-limited, applied as a blanket shell-level env var covering both actors and the trainer's own process at the time): <strong>23.3% faster</strong> — close enough to the Hetzner number to trust the effect is real, not one machine's fluke.</p>
+
+<div class="warn-box">
+<strong>Side effect caught and separately fixed:</strong> applying the env vars as a blanket shell-level wrapper (covering the whole process tree) also throttled the <em>trainer's own</em> gradient-step computation, since it's launched from the same command — training-cycle cadence measurably slowed (~30s → ~40s). The trainer's batched gradient step is a different workload than actor inference (one large computation vs. many small independent ones) and plausibly benefits from multi-threading rather than being forced to one thread.
+</div>
+
+<h3>Permanent fix — code-level, not env-var</h3>
+<p><span class="file">train_mali_ba.py</span>'s <code>actor_process()</code> now sets the three env vars via <code>os.environ.setdefault(...)</code> immediately before its own (function-local) <code>import tensorflow</code>, i.e. before TF's thread pools initialize. Because actors are spawned via <code>mp.set_start_method('spawn')</code> (fresh interpreter per process) and <code>remote_actors.py</code> imports and reuses this exact function, <strong>every actor — local, laptop, GCP, or Hetzner — picks this up automatically</strong>, with zero manual env-var setup needed going forward. The trainer process is a separate <code>mp.Process</code> with its own later TF import, so it's unaffected and keeps full multi-threading — after this fix landed, the desktop's own training-cycle cadence actually became <em>faster</em> than its original pre-fix baseline (~14s vs. the original ~30s), likely because actors no longer contend with the trainer's threads for the same cores.</p>
+
+<hr>
+
+<h2>5. MCTS Simulation Budget — Diagnosed From Real Buffer Data, Not Guesswork</h2>
+
+<h3>The question: is the tiered sim budget actually well-targeted?</h3>
+<p>Existing tiers (<code>[MLTraining]</code>): <code>sim_tier1_sims</code> (moves 0 to <code>sim_tier2_start</code>), <code>sim_tier2_sims</code> (to <code>sim_tier3_start</code>), <code>sim_tier3_sims</code> (beyond). All keyed on move number.</p>
+
+<h3>Measured: MCTS isn't converging well at the highest-branching decision</h3>
+<p>Declaring a trade route (<code>OPTIONAL_ROUTE</code> phase) can have <strong>up to 300 legal candidates</strong> — by far the largest branching factor of any decision in the game (mancala steps: ≤6; play-phase choices: &lt;20). Pulled 1,241 real route-declaration decisions directly from the replay buffer and measured MCTS visit-count concentration (the policy training target itself):</p>
+
+<table>
+  <tr><th>Metric</th><th>Mean</th><th>Median</th></tr>
+  <tr><td>Candidates with any visits (of up to 300 legal)</td><td>26.6</td><td>9</td></tr>
+  <tr><td>Top-1 candidate's share of total visits</td><td>0.315</td><td class="bad">0.211</td></tr>
+  <tr><td>Normalized entropy of the distribution (1.0 = uniform/undecided)</td><td>0.762</td><td class="bad">0.932</td></tr>
+</table>
+
+<p>A median top choice capturing only ~21% of visits, with entropy near-maximal, means the search is typically still splitting attention across several candidates rather than converging — even at what was, at the time of measurement, a fairly generous simulation budget. For reference, AlphaZero's original Go implementation used 800 sims/move for a comparably-sized branching factor (~250-300), but with a far more mature, extensively-trained network — a noisier/less-trained prior generally needs <em>more</em> search to compensate, not the same amount.</p>
+
+<h3>A real bug found by a sharp follow-up question, and fixed</h3>
+<p>An earlier version of this analysis claimed "50% of route declarations happen before move 100." <strong>This was wrong</strong> — a real extraction bug (a two-stage grep accidentally extracted player IDs 0/1/2 alongside move numbers, flooding the dataset with spurious tiny "move numbers"). Corrected extraction: route declarations essentially <strong>never happen before move ~99</strong> (structurally sound — declaring a route needs 3+ connected trading centers, which takes many turns to build). The real distribution: median move 281, <strong>59.2%</strong> happen before move 300 (i.e. in tier2, not getting the larger tier3 budget) — a smaller, differently-shaped problem than first reported, but still a real one.</p>
+
+<h3>Fix: phase-keyed sim floor (not move-tier-based)</h3>
+<p>Since route-declaration branching doesn't track move number the way other decisions roughly do, a move-tier boundary can't target it well no matter where the boundary sits. Added a phase check in <span class="file">train_mali_ba.py</span>'s actor loop, applied <em>after</em> the existing move-tier logic computes its value:</p>
+<pre class="python"># Route-decision floor: OPTIONAL_ROUTE decisions with enough candidates
+# get AT LEAST sim_route_decision_sims, but never less than whatever
+# the move-tier above already provides (e.g. tier3's late-game budget).
+if pyspiel.mali_ba.downcast_state(state).current_phase() == pyspiel.mali_ba.Phase.OPTIONAL_ROUTE:
+    n_route_candidates = len(state.legal_actions())
+    if n_route_candidates >= getattr(args, 'sim_route_decision_min_candidates', 20):
+        bot.max_simulations = max(bot.max_simulations,
+                                   getattr(args, 'sim_route_decision_sims', 500))</pre>
+<div class="warn-box">
+<strong>Bug caught mid-implementation, before it shipped:</strong> the first version of this fix <em>unconditionally overrode</em> to <code>sim_route_decision_sims</code> rather than taking the max — which would have <strong>reduced</strong> the budget for late-game route decisions below whatever tier3 already provided (tier3 is now 1100; the floor is 600). Caught by a direct question ("does the higher end-game number override this?") before the run using it was even started. Worth remembering as a pattern: this kind of "new override silently undercuts an existing higher value" bug is easy to introduce and easy to miss without re-reading the actual logic.
+</div>
+
+<p>New ini keys (<code>[MLTraining]</code>):</p>
+<pre class="ini">sim_route_decision_sims = 600               # floor for qualifying route decisions
+sim_route_decision_min_candidates = 20      # only decisions with this many+ legal actions qualify</pre>
+<p>Only applies when candidate count is large enough to justify the cost — cheap/easy route decisions (few candidates) fall through to the normal move-tier budget, so the fix targets its cost at the genuinely hard decisions rather than uniformly taxing all ~14,000+ route declarations seen in a typical run.</p>
+
+<h3>Sim tier values, current vs. session start</h3>
+<table>
+  <tr><th>Parameter</th><th>Session start</th><th>Current</th></tr>
+  <tr><td><code>sim_tier1_sims</code></td><td>150</td><td>100</td></tr>
+  <tr><td><code>sim_tier2_sims</code></td><td>200</td><td>300</td></tr>
+  <tr><td><code>sim_tier3_sims</code></td><td>300</td><td>1100</td></tr>
+  <tr><td><code>sim_route_decision_sims</code></td><td>n/a (new)</td><td>600 (floor, not override)</td></tr>
+</table>
+<p>Plan going forward: measured 600 vs. the Go-reference 800 as a next increment once there's evidence 600 is helping, per the same buffer-concentration methodology above.</p>
+
+<hr>
+
+<h2>6. Heuristic Guidance Weight — Counterintuitive Findings</h2>
+
+<p><code>heuristic_guidance_weight</code> blends heuristic move-scoring into the MCTS prior (0 = pure network, 1 = pure heuristic), originally on a decay schedule (0.15 → 0.10 over MCTS games 100-2000).</p>
+
+<h3>Finding 1: the decay wasn't hurting performance — evidence pointed the opposite way</h3>
+<p>Directly aligned win-rate-by-quintile against the actual observed heuristic weight at that point in time (not the nominal schedule):</p>
+<table>
+  <tr><th>Quintile</th><th>Heuristic weight</th><th>Win%</th></tr>
+  <tr><td>Q1</td><td>0.147</td><td>14.1%</td></tr>
+  <tr><td>Q2</td><td>0.145</td><td>16.1%</td></tr>
+  <tr><td>Q3</td><td>0.136</td><td>20.3%</td></tr>
+  <tr><td>Q4</td><td>0.127</td><td class="ok">22.4%</td></tr>
+  <tr><td>Q5</td><td>0.117</td><td>19.8% (small dip, single data point)</td></tr>
+</table>
+<p>For 4 of 5 quintiles, win rate <em>rose</em> as heuristic weight <em>fell</em> — the opposite of what "declining guidance hurts performance" would predict.</p>
+
+<h3>Finding 2: heavier heuristic weight still helps right now, just not narrowly</h3>
+<p>A different comparison — rare-goods-focused games (elevated heuristic weight, currently base 0.13 + up to 0.05 added) vs. normal games, same time window, across two full runs:</p>
+<table>
+  <tr><th>Run</th><th>Group</th><th>n</th><th>Win%</th><th>Rare wins</th><th>Timbuktu wins</th></tr>
+  <tr><td>108</td><td>RARE-GOODS-FOCUSED</td><td>411</td><td class="ok">24.6%</td><td>10.2%</td><td>14.4%</td></tr>
+  <tr><td>108</td><td>Normal</td><td>845</td><td>16.0%</td><td>6.0%</td><td>9.9%</td></tr>
+  <tr><td>109</td><td>RARE-GOODS-FOCUSED</td><td>47</td><td class="ok">31.9%</td><td>10.6%</td><td>21.3%</td></tr>
+  <tr><td>109</td><td>Normal</td><td>87</td><td>24.1%</td><td>4.6%</td><td>19.5%</td></tr>
+</table>
+<p>Focused games won more <em>overall</em> in both runs — not just more rare-goods wins, but more Timbuktu wins too. This is evidence <strong>against</strong> a "sims fighting the heuristic" hypothesis (which predicted focused games doing worse under a heavier search budget) and instead suggests heavier heuristic weight currently just makes play more decisive/purposeful across the board, consistent with the network still being early in its own development.</p>
+
+<h3>Current settings and the reasoning behind them</h3>
+<pre class="ini">heuristic_guidance_weight       = 0.13   # was decaying 0.15 -> 0.10
+heuristic_guidance_weight_final = 0.13   # now held flat -- decay disabled
+rare_goods_added_heuristic_weight = 0.050   # was 0.20-0.30 earlier in the session</pre>
+<p>Given both findings above, the working plan discussed (not yet implemented) is: don't just hold guidance at a fixed level indefinitely and wait passively for "signs of readiness" — periodically test a small held-out low-guidance batch against the main heavily-guided fleet. If the low-guidance batch's win rate holds up, that's real evidence of independent network skill and guidance can be safely reduced; if it collapses, heavier guidance is still buying something genuine. Not yet built.</p>
+
+<hr>
+
+<h2>7. Tooling / Infrastructure Fixes (non-VM)</h2>
+
+<table>
+  <tr><th>Change</th><th>File</th><th>Detail</th></tr>
+  <tr>
+    <td>Log rotation for actor logs</td>
+    <td class="file">gcp/worker_vm_setup.sh, gcp/worker_startup_script.sh</td>
+    <td>The <code>run_actors.sh</code> restart loop now rotates <code>remote_actors.log</code> at 200MB (keeping one rotated backup), since the log lives on the persistent boot disk and <code>tee -a</code> just keeps appending across preemption/restart cycles indefinitely otherwise.</td>
+  </tr>
+  <tr>
+    <td><code>--show-early-terminations</code> flag</td>
+    <td class="file">analyze_log.py</td>
+    <td>The EARLY TERMINATIONS section had grown very long. Now gated behind a flag, default off — but the TRIGGER vs WINNER and VALUE HEAD TRAJECTORY analyses (which happened to be nested in the same code block for shared-setup reasons) still always print regardless, since suppressing those would have been an unintended regression.</td>
+  </tr>
+  <tr>
+    <td>60-game moving-average chart line</td>
+    <td class="file">analyze_log.py</td>
+    <td>Added a purple, longer-window (60-game) moving average alongside the existing <code>--window</code>-sized line on the win-rate chart, for a steadier long-run trend view.</td>
+  </tr>
+  <tr>
+    <td><code>len(job) &gt; 4</code> dead code removed</td>
+    <td class="file">train_mali_ba.py</td>
+    <td>Simplified <code>_rg_heuristic_override = job[4] if len(job) &gt; 4 else None</code> to a direct <code>job[4]</code> — there's only one job-construction call site and it always builds a 5-element tuple, so the length guard never actually triggered. No behavior change, verified before removing.</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>8. Value Head / Policy Diagnostics</h2>
+
+<h3>Trigger player vs. actual winner</h3>
+<p>Confirmed empirically (matching win-condition games to their log FINISHED lines via a game-length/winner/win-type composite key): the player who <em>triggers</em> game end is the actual winner <strong>75.6%</strong> of the time (59/78 matched games) — meaning <strong>24.4%</strong> of wins are triggered by someone other than the eventual winner. In those 19 mismatch games, the value head's average prediction consistently favored the actual winner over the triggerer at every checkpoint measured (e.g. at move 380: 0.130 for the winner vs. −0.242 for the triggerer) — a genuinely positive sign that the value head tracks real point-standing rather than just reacting to whoever ends the game.</p>
+
+<h3>Value-head trend across a run: no clean monotonic improvement</h3>
+<p>Repeated quartile/quintile breakdowns of predicted winner-value at fixed move checkpoints (200/260/320/380), split by win type, across several runs. Consistent pattern: <strong>not a monotonic trend in either direction</strong> — a rise-then-crash-then-partial-recovery shape, most pronounced for Rare Goods wins. A two-bin (early-half/late-half) comparison can mask this entirely by averaging a peak and a trough together; the finer-grained multi-quantile breakdown was necessary to see the real shape.</p>
+
+<h3>Policy vs. value asymmetry: Timbuktu vs. Rare Goods</h3>
+<p>An observation from manual review, then substantiated with data: without the rare-goods heuristic bias, the <em>policy</em> drifts toward Timbuktu wins — but the <em>value head</em> has an easier time recognizing an approaching Rare Goods win than a Timbuktu one. Checked directly: of 14 long (&gt;380-move) Timbuktu wins, <strong>13 were also flagged <code>near_win</code></strong> (the rare-goods-region condition) at move 380, even though they ultimately won via the Timbuktu route. Average predicted value at move 380: Timbuktu wins ≈0.18, Rare Goods wins ≈0.30 — same order of magnitude, not two sharply distinct signatures.</p>
+<p>Working explanation, not fully proven: <code>key_location_post_reward</code> gives the policy a dense, geographically-targeted training signal specifically toward the Timbuktu-route waypoints (Timbuktu, Agadez, Oudane, coast), while rare-goods progress ("how many distinct good types held") is an easier <em>static recognition</em> target for the value head than route-connectivity (a spatial/graph reasoning problem). The two heads may simply have specialized differently based on which signal was easiest to learn from, not because either is "confused."</p>
+
+<hr>
+
+<h2>9. Open Questions / Next Steps</h2>
+
+<ul>
+  <li><strong>Route-decision sim floor (600) not yet validated</strong> — rerun the buffer visit-concentration measurement (§5) after enough games have accumulated under the new floor, to see whether top-1 visit share / entropy actually improved. Same methodology, clean before/after comparison possible.</li>
+  <li><strong>Held-out low-guidance test batch</strong> (§6) — proposed but not built. Would give a principled, evidence-based signal for when to reduce heuristic guidance further, rather than the ad-hoc decay schedule or an indefinite flat hold.</li>
+  <li><strong>Near-win → actual-win conversion rate tracking</strong> — still not built into <code>analyze_log.py</code> as a standing report (confirmed absent this session); would directly measure whether the reward-structure fix moved the needle on the original 0%-conversion finding from before this session.</li>
+  <li><strong>Multiple confounded changes stacked together</strong> — buffer size, heuristic weight, and sim budget were all changed together at least once this session (acknowledged explicitly at the time), meaning credit/blame for the resulting win-rate movement can't be cleanly attributed to any one of them. Current combined config is the new baseline to hold steady against, per the pattern established earlier in the session (protect a clean read once one exists, rather than continuously stacking new changes on top).</li>
+  <li><strong>Checkpoint-vs-checkpoint head-to-head evaluation</strong> — proposed as the most rigorous way to verify actual model improvement (load two saved weight files, play them against each other, track win rate) — the only analysis that doesn't rely on the model grading its own self-generated data. Not built; flagged as valuable but currently deprioritized given compute constraints.</li>
+  <li><strong>Hetzner capacity exhaustion</strong> — unresolved as of this writing; see HANDOFF-VM-SETUP.MD §9 for full detail and current status.</li>
+</ul>
+
+<hr>
+
+<h2>10. File Change Summary — This Session</h2>
+
+<table>
+  <tr><th>File</th><th>Change</th><th>Requires Rebuild?</th></tr>
+  <tr>
+    <td class="file">games/mali_ba/mali_ba_state_moves.cc</td>
+    <td><code>CreateSetupJson()</code> rebuilt on top of <code>json::parse(Serialize())</code> instead of a fresh empty object — fixes the GUI replay-loading crash.</td>
+    <td><strong>Yes</strong></td>
+  </tr>
+  <tr>
+    <td class="file">python/pybind11/games_mali_ba.cc</td>
+    <td>Exposed <code>create_setup_json</code> via pybind11.</td>
+    <td><strong>Yes</strong></td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/train_mali_ba.py</td>
+    <td>
+      <code>[setup]</code> writer switched to <code>.create_setup_json()</code>.<br>
+      Actor-side <code>OMP_NUM_THREADS</code>/<code>TF_NUM_INTRAOP_THREADS</code>/<code>TF_NUM_INTEROP_THREADS</code> set via <code>os.environ.setdefault</code> before the actor's own TF import.<br>
+      Phase-keyed route-decision sim floor added (max of move-tier budget and <code>sim_route_decision_sims</code>), gated on legal-action count.<br>
+      New CLI args + config-dict entries for <code>sim_route_decision_sims</code>/<code>sim_route_decision_min_candidates</code>.<br>
+      Dead <code>len(job) &gt; 4</code> guard removed.
+    </td>
+    <td>No</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/main.py</td>
+    <td>Temporary fallback in <code>MODE_GUI_REPLAY</code> for old replay files missing setup keys.</td>
+    <td>No</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/mali_ba.ini</td>
+    <td>
+      <code>max_moves_penalty</code> −0.7 → −1.2; <code>new_rare_region_reward</code> 0.30 → 0.05; <code>rare_goods_bonus</code> 0.0 → 0.2 (all <code>[Training]</code>, C++-read).<br>
+      <code>replay_buffer_size</code> 40,000 → 20,000 → (briefly 10,000) → 24,000.<br>
+      <code>heuristic_guidance_weight</code>/<code>_final</code> held flat at 0.13 (decay disabled); <code>rare_goods_added_heuristic_weight</code> reduced.<br>
+      <code>sim_tier2_sims</code> 200→300, <code>sim_tier3_sims</code> 300→1100; new <code>sim_route_decision_sims</code>/<code>sim_route_decision_min_candidates</code>.
+    </td>
+    <td>Yes, for the <code>[Training]</code>/C++ keys only</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/analyze_log.py</td>
+    <td><code>--show-early-terminations</code> flag (default off); purple 60-game moving-average chart line added.</td>
+    <td>No</td>
+  </tr>
+  <tr>
+    <td class="file">gcp/worker_vm_setup.sh</td>
+    <td>Log rotation added to the generated <code>run_actors.sh</code>. Portability fix: <code>TRAINER_HOST</code>/<code>actor_id_start</code> GCP-metadata lookups now fail with a clear error instead of hanging under <code>set -e</code> when metadata isn't reachable and no override arg was given (needed for Hetzner — see HANDOFF-VM-SETUP.MD).</td>
+    <td>No</td>
+  </tr>
+  <tr>
+    <td class="file">gcp/worker_startup_script.sh</td>
+    <td>Same log-rotation addition as above, for template-provisioned workers.</td>
+    <td>No</td>
+  </tr>
+</table>
+
+<hr>
+<p style="font-size:0.85em; color:#888;">Generated 2026-07-25 by Claude Sonnet 5 during Mali-Ba training session. Updates HANDOFF-20260630.html. VM/cloud-provisioning details split out to HANDOFF-VM-SETUP.MD.</p>
+</body>
+</html>

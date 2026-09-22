@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mali-Ba Training Handoff — 2026-06-26</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 960px; margin: 40px auto; padding: 0 24px; color: #222; line-height: 1.6; }
+  h1 { border-bottom: 3px solid #444; padding-bottom: 8px; }
+  h2 { border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 2em; color: #333; }
+  h3 { margin-top: 1.4em; color: #444; }
+  code, pre { font-family: "Consolas", "Courier New", monospace; background: #f4f4f4; border-radius: 3px; }
+  code { padding: 1px 5px; font-size: 0.92em; }
+  pre { padding: 12px 16px; overflow-x: auto; border-left: 4px solid #aaa; font-size: 0.88em; line-height: 1.5; }
+  pre.cpp    { border-left-color: #6a9fb5; }
+  pre.python { border-left-color: #90a959; }
+  pre.log    { border-left-color: #d28445; }
+  pre.shell  { border-left-color: #888; background: #1e1e1e; color: #ccc; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th { background: #444; color: #fff; padding: 6px 10px; text-align: left; }
+  td { padding: 5px 10px; border-bottom: 1px solid #ddd; vertical-align: top; }
+  tr:nth-child(even) td { background: #f9f9f9; }
+  .ok   { color: #390; font-weight: bold; }
+  .warn { color: #c80; font-weight: bold; }
+  .bad  { color: #c00; font-weight: bold; }
+  .box  { background: #fffbe6; border: 1px solid #e6d97a; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  .action { background: #e8f4ea; border: 1px solid #7db87d; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  .note { background: #eef3fb; border: 1px solid #8aabdf; border-radius: 4px; padding: 10px 16px; margin: 1em 0; }
+  ul li { margin-bottom: 4px; }
+  .file { font-family: monospace; font-size: 0.9em; color: #555; }
+</style>
+</head>
+<body>
+
+<h1>Mali-Ba Training Handoff — 2026-06-26</h1>
+
+<p>This document updates <strong>HANDOFF-20260624.html</strong>. It covers the two runs completed since that document (runs 34 and 35), the diagnosis and fix for Timbuktu mode collapse, the new four-pool replay buffer, and the configuration plan for run 36.</p>
+
+<div class="note">
+<strong>Context:</strong> The 2026-06-24 handoff documented the C++ two-location bug fix (IsTerminal and win-condition evaluator using the wrong move limit) and the clear_winner extension condition. By the time of this document, that fix is confirmed working — runs 34 and 35 both show games reaching 470 moves and the correct extension log messages.
+</div>
+
+<hr>
+
+<h2>1. Architecture Recap (Unchanged)</h2>
+
+<table>
+  <tr><th>Component</th><th>Path / Notes</th></tr>
+  <tr><td>C++ game source</td><td class="file">D:\Projects\mali_ba\open_spiel\games\mali_ba\</td></tr>
+  <tr><td>Python training source</td><td class="file">D:\Projects\mali_ba\open_spiel\python\games\mali_ba\</td></tr>
+  <tr><td>WSL training root</td><td class="file">/media/robp/UD/Projects/open_spiel/</td></tr>
+  <tr><td>Compiled .so</td><td class="file">/media/robp/UD/Projects/open_spiel/build/python/pyspiel.so</td></tr>
+  <tr><td>Training logs</td><td class="file">/media/robp/UD/Projects/open_spiel/train_runXX.log</td></tr>
+  <tr><td>Replay buffer</td><td class="file">mali_ba_buffer.pkl.gz — now <strong>4 pools</strong>: bootstrap_buffer, mcts_natural_buffer, mcts_nearwin_buffer, <strong>mcts_raregoods_buffer</strong></td></tr>
+  <tr><td>INI file</td><td class="file">mali_ba.ini — [Training] read by C++, [MLTraining] read by Python</td></tr>
+  <tr><td>Remote actors</td><td>Laptop via remote_actors.py → queue_server.py on desktop</td></tr>
+</table>
+
+<hr>
+
+<h2>2. Run 34 Summary</h2>
+
+<p>Run 34 was the first run with the C++ extension bug fixed (confirmed: games reaching 470 moves). Key observations:</p>
+
+<table>
+  <tr><th>Metric</th><th>Value</th><th>Notes</th></tr>
+  <tr><td>Win rate</td><td class="warn">35.4%</td><td>Significant drop from run 32 (43.8%)</td></tr>
+  <tr><td>Win type</td><td>Timbuktu-dominant</td><td>Rare goods wins disappeared late in run after heuristic guidance decayed</td></tr>
+  <tr><td>Extension threshold</td><td>0.20</td><td>Many games extended all the way to 470; no extended game produced a natural win</td></tr>
+  <tr><td>Timeout value (avg at move 440)</td><td>+0.504</td><td>Strong signal; well above 0.20 threshold</td></tr>
+  <tr><td>Buffer size</td><td>36,500</td><td>Exceeded the 25k INI setting — pools are unbounded deques</td></tr>
+  <tr><td>Heuristic guidance</td><td>Decayed to 0.132 by game 241</td><td>decay_end=500 was too aggressive; Rare goods wins vanished after guidance dropped</td></tr>
+</table>
+
+<h3>Root Cause of Run 34 Collapse</h3>
+<p>The heuristic guidance (which favours rare-goods-directed moves) was decaying too quickly (<code>decay_end=500</code>). Once it dropped below 0.14, the early self-play games stopped finding Rare goods wins, and the buffer filled with Timbuktu experiences. The model had no signal to push it back toward Rare goods.</p>
+
+<p>Remediation applied before run 35:</p>
+<ul>
+  <li><code>heuristic_guidance_decay_end</code> extended from 500 to 2000</li>
+  <li>Extension threshold raised from 0.20 to 0.30 (avoid extending low-confidence games)</li>
+  <li>Buffer manually resized to 50,000</li>
+  <li><code>new_rare_region_reward = 0.30</code> (already in place for prior runs)</li>
+</ul>
+
+<hr>
+
+<h2>3. Run 35 Summary (Most Recent)</h2>
+
+<p>Run 35 showed strong recovery, though a structural problem (mode collapse) was identified — see section 4.</p>
+
+<table>
+  <tr><th>Metric</th><th>Value</th><th>Notes</th></tr>
+  <tr><td>Win rate overall</td><td class="ok">52.3% (23/44)</td><td>Strong recovery from run 34's 35.4%</td></tr>
+  <tr><td>Win rate — rolling windows</td><td>60% → 60% → 53% → 60% → 47% → 33%</td><td>Declining in last two windows</td></tr>
+  <tr><td>Win type</td><td class="warn">74% Timbuktu / 26% Rare goods (17/6)</td><td>Timbuktu dominant; worsening trend</td></tr>
+  <tr><td>Timeout games</td><td>21/44 (all exactly 470 moves)</td><td>Extension working correctly</td></tr>
+  <tr><td>Denied at 430</td><td>5 games</td><td>near_win=True but max_val ≤ 0.30; discarded correctly</td></tr>
+  <tr><td>Extended games winning</td><td class="bad">0</td><td>No extended game has ever produced a natural win</td></tr>
+  <tr><td>Heuristic guidance</td><td>0.150 stable through game 194</td><td>decay_end=2000 working — guidance not yet tapering</td></tr>
+  <tr><td>Buffer at run end</td><td>44,480</td><td>5k bootstrap, 30.5k natural, 9k nearwin</td></tr>
+  <tr><td>Bootstrap fraction</td><td>11.2%</td><td>Diluting as MCTS buffer grows</td></tr>
+  <tr><td>Local actor win rate</td><td class="warn">69.2% (local) vs 27.8% (remote)</td><td>Large gap; not yet investigated</td></tr>
+  <tr><td>Trigger ≠ Winner</td><td>3/23 (2 Rare goods, 33.3% of RG wins)</td><td>One player triggers Rare goods condition; a different player wins on score — expected by game rules</td></tr>
+</table>
+
+<h3>3a. Value Head Trajectory — Run 35</h3>
+
+<p>This is a significant positive development: the Timbuktu value head now rises sharply before wins, indicating the model is starting to predict Timbuktu wins from the board state.</p>
+
+<table>
+  <tr><th>Category</th><th>Move</th><th>Avg winner value</th><th>Notes</th></tr>
+  <tr><td>Timbuktu wins</td><td>200–340</td><td>≈ −0.11 to −0.04</td><td>Still negative (MCTS finds wins via tree search)</td></tr>
+  <tr><td>Timbuktu wins</td><td>360</td><td>+0.007</td><td>Crossing zero — value head starting to predict</td></tr>
+  <tr><td>Timbuktu wins</td><td>380</td><td>+0.289</td><td>Rising fast</td></tr>
+  <tr><td>Timbuktu wins</td><td>400</td><td>+0.792</td><td>Strong pre-win signal</td></tr>
+  <tr><td>Timbuktu wins</td><td>420</td><td>+0.845</td><td>Model confidently predicts Timbuktu win ~10 moves out</td></tr>
+  <tr><td>Rare goods wins</td><td>all moves</td><td class="bad">Mostly negative (−0.27 at move 400)</td><td>Model still cannot predict Rare goods wins</td></tr>
+  <tr><td>Timeout games</td><td>380–460</td><td>+0.42 to +0.50</td><td>High values; near-win extension working correctly</td></tr>
+</table>
+
+<p>The Rare goods value head being negative even at the moment of a Rare goods win is the mechanistic explanation of the mode collapse (section 4): if the model cannot see a Rare goods win coming, it cannot guide MCTS toward one.</p>
+
+<hr>
+
+<h2>4. Timbuktu Mode Collapse — Diagnosis</h2>
+
+<p>A self-reinforcing feedback loop is preventing the model from improving at Rare goods wins:</p>
+
+<ol>
+  <li>Rare goods wins require broader board strategy and take more moves to achieve than Timbuktu wins.</li>
+  <li>MCTS finds Timbuktu wins more easily → buffer accumulates proportionally more Timbuktu experience.</li>
+  <li>Model trains more on Timbuktu → value head and policy both optimise for Timbuktu.</li>
+  <li>Self-play produces <em>even more</em> Timbuktu wins → buffer skews further.</li>
+  <li>Rare goods value head stays negative → MCTS cannot be guided toward Rare goods → loop repeats.</li>
+</ol>
+
+<p>The bootstrap buffer (95.5% Rare goods) was designed to break this loop, but at 11% of total training data it is no longer dominant enough to counterbalance 74% Timbuktu in self-play. Extending <code>heuristic_guidance_decay_end</code> to 2000 helped but did not fully prevent the drift seen in run 35's final windows.</p>
+
+<hr>
+
+<h2>5. Fix — Dedicated Rare Goods Buffer Pool</h2>
+
+<p>The structural fix is a guaranteed per-batch sampling fraction for Rare goods wins, achieved by adding a fourth replay buffer pool: <code>mcts_raregoods_buffer</code>.</p>
+
+<h3>5a. Routing Logic</h3>
+<p>In <span class="file">train_mali_ba.py</span>'s learner loop, <code>is_rare_goods_game</code> is detected as:</p>
+<pre class="python">is_rare_goods_game = (any(r >= 1.0 for r in returns)
+                      and not is_bootstrap_game
+                      and 'Timbuktu' not in finished_msg)</pre>
+<p>Experience tuples now carry a 6th element: <code>(obs, policy, value, is_bootstrap, is_near_win, is_rare_goods)</code>. The trainer routes on priority: bootstrap → nearwin (timeout only) → raregoods → natural.</p>
+
+<h3>5b. Sampling Guarantee</h3>
+<p>In <code>ReplayBuffer.sample()</code>, <code>raregoods_pool_fraction</code> of the MCTS batch target is drawn from <code>mcts_raregoods_buffer</code> before the natural pool fills the remainder. When the raregoods pool is short (early in a run), cross-compensation draws from the natural pool instead — the batch size is always met.</p>
+
+<h3>5c. Buffer Migration</h3>
+<p>Old saved buffers (from runs ≤ 35) do not have a <code>mcts_raregoods_buffer</code> key. On first load after the upgrade, the trainer automatically splits the existing <code>mcts_natural_buffer</code> 50/50 to seed both pools. The pools then self-correct over time via normal FIFO eviction: new Timbuktu wins fill <code>mcts_natural_buffer</code> and new Rare goods wins fill <code>mcts_raregoods_buffer</code>.</p>
+
+<pre class="log">Trainer: Migrating old buffer — split 30480 natural entries 50/50 into natural (15240) and raregoods (15240) pools.</pre>
+
+<hr>
+
+<h2>6. Buffer Configuration — Run 36</h2>
+
+<p><strong>INI settings for run 36</strong> (50,000 total, mcts_buffer_fraction=0.90, near_win_pool_fraction=0.20, <strong>raregoods_pool_fraction=0.40</strong>):</p>
+
+<table>
+  <tr><th>Pool</th><th>Capacity</th><th>Fill source</th><th>Notes</th></tr>
+  <tr><td>bootstrap_buffer</td><td>5,000 (10%)</td><td>Heuristic self-play</td><td>95.5% Rare goods wins; breaks cold-start</td></tr>
+  <tr><td>mcts_natural_buffer</td><td>18,000 (36%)</td><td>MCTS Timbuktu natural wins</td><td>Reduced capacity — Timbuktu self-play fills this quickly</td></tr>
+  <tr><td>mcts_nearwin_buffer</td><td>9,000 (18%)</td><td>Near-win timeout games</td><td>near_win_rare_regions ≥ 4; extended games (470 moves)</td></tr>
+  <tr><td>mcts_raregoods_buffer</td><td>18,000 (36%)</td><td>MCTS Rare goods natural wins</td><td><strong>New.</strong> Guaranteed per-batch exposure regardless of self-play frequency</td></tr>
+</table>
+
+<p>Capacity math: mcts_cap = 50,000 × 0.90 = 45,000. Of that: nearwin = 45,000 × 0.20 = 9,000; raregoods = 45,000 × 0.40 = 18,000; natural = 45,000 − 9,000 − 18,000 = 18,000.</p>
+
+<h3>Per-Batch Sampling (batch_size = 128)</h3>
+<table>
+  <tr><th>Source</th><th>Target count</th><th>Fraction</th></tr>
+  <tr><td>bootstrap</td><td>~13</td><td>10%</td></tr>
+  <tr><td>mcts_natural (Timbuktu)</td><td>~46</td><td>40% of MCTS</td></tr>
+  <tr><td>mcts_nearwin</td><td>~23</td><td>20% of MCTS</td></tr>
+  <tr><td>mcts_raregoods</td><td>~46</td><td>40% of MCTS — guaranteed</td></tr>
+</table>
+
+<p>The key effect: even if only 10% of self-play games are Rare goods wins, the model sees Rare goods experience in 40% of every training batch. This directly breaks the feedback loop described in section 4.</p>
+
+<h3>resize_buffer.py</h3>
+<p><code>resize_buffer.py</code> now supports <code>--raregoods N</code> and includes the fourth pool in source/output displays. It reads <code>mcts_raregoods_buffer</code> from saved buffers and writes it back; old buffers without the key load as an empty raregoods pool (migration happens in the trainer, not in resize_buffer).</p>
+
+<pre class="shell">python resize_buffer.py mali_ba_buffer.pkl.gz --natural 2000 --nearwin 1000 --raregoods 2000 --bootstrap 0</pre>
+
+<hr>
+
+<h2>7. Extension Threshold — Run 36 Plan</h2>
+
+<p>No extended game has ever produced a natural win across all runs to date. Timeout games extending from 430 → 470 moves are generating near-win training data, but none have converted to an actual win condition. Possible explanations:</p>
+<ul>
+  <li>430-move games are genuinely not close enough — the near-win flag fires on structural proximity (≥4 rare good regions) but the final trigger requires additional moves that fall outside the extension window.</li>
+  <li>The value threshold (0.30) correctly identifies interesting games, but 40 extra moves is still insufficient for this position class.</li>
+</ul>
+
+<p><strong>Run 36 plan:</strong> Raise <code>near_win_extension_value_thresh</code> to <strong>0.40</strong>. This further restricts extension to games where the value head is highly confident, filtering out marginal extensions that are unlikely to convert. If extended games start producing natural wins (as the Rare goods value head improves), the threshold can be lowered again.</p>
+
+<table>
+  <tr><th>Parameter</th><th>Run 34</th><th>Run 35</th><th>Run 36 (plan)</th></tr>
+  <tr><td>near_win_extension_value_thresh</td><td>0.20</td><td>0.30</td><td><strong>0.40</strong></td></tr>
+  <tr><td>near_win_extension_moves</td><td>40</td><td>40</td><td>40</td></tr>
+  <tr><td>heuristic_guidance_decay_end</td><td>500</td><td>2000</td><td>2000</td></tr>
+  <tr><td>replay_buffer_size</td><td>25,000→36,500</td><td>50,000</td><td>50,000</td></tr>
+  <tr><td>raregoods_pool_fraction</td><td>— (not present)</td><td>— (not present)</td><td><strong>0.40</strong></td></tr>
+  <tr><td>mcts_buffer_fraction</td><td>0.80</td><td>0.90</td><td>0.90</td></tr>
+  <tr><td>near_win_pool_fraction</td><td>0.30</td><td>0.20</td><td>0.20</td></tr>
+  <tr><td>new_rare_region_reward</td><td>0.30</td><td>0.30</td><td>0.30</td></tr>
+</table>
+
+<hr>
+
+<h2>8. Near-Win Extension — Reference</h2>
+
+<p>Logic unchanged since the 2026-06-24 handoff. The check runs at exactly <code>move_count == base_max_play_moves</code> (430):</p>
+
+<ol>
+  <li>Evaluate <code>is_near_win(near_win_rare_regions)</code> and value head.</li>
+  <li>If <strong>(near_win OR clear_winner) AND max_val &gt; near_win_extension_value_thresh</strong>: log extension message, loop continues.</li>
+  <li>Otherwise: <code>early_terminated = True; break</code> — game discarded.</li>
+</ol>
+
+<p>C++ <code>IsTerminal()</code> and the win-condition evaluator both use <code>GetMaxPlayMoves() + GetNearWinExtensionMoves()</code> (= 430 + 40 = 470) — this is the fix from the 06/24 session and is now compiled and confirmed working.</p>
+
+<hr>
+
+<h2>9. Early Termination System (Unchanged)</h2>
+
+<p>All thresholds from <code>[MLTraining]</code> section of <span class="file">mali_ba.ini</span>. The no-kill experiment confirmed these parameters have zero false positive rate (no winning games were killed by the termination rules).</p>
+
+<table>
+  <tr><th>Check</th><th>Trigger moves</th><th>Current setting</th></tr>
+  <tr><td>Value head hopeless — level 1</td><td>≥ 320, &lt; 380</td><td>all values &lt; −0.16; near_win exempts</td></tr>
+  <tr><td>Value head hopeless — level 2</td><td>≥ 380, &lt; 400</td><td>all values &lt; −0.10; near_win exempts</td></tr>
+  <tr><td>Value head hopeless — level 3</td><td>≥ 400</td><td>all values &lt; 0.10; near_win does NOT exempt (hopeless_nearwin_override3 = false)</td></tr>
+  <tr><td>No near-win after threshold</td><td>≥ 365</td><td>terminates if not near_win AND not clear_winner (early_termination_move = 365)</td></tr>
+  <tr><td>Declining-best</td><td>≥ 360</td><td>best value negative and worsening for 2 consecutive checks; overrides near_win exemption</td></tr>
+  <tr><td>Near-win stalled</td><td>≥ 400</td><td>max value &lt; 0.20 for both move 400 and move 420 checks</td></tr>
+  <tr><td>Extension check</td><td>== 430</td><td>(near_win OR clear_winner) AND max_val &gt; 0.40 <em>(raised for run 36)</em></td></tr>
+</table>
+
+<hr>
+
+<h2>10. Actor Loop — Tiered MCTS Simulation Budget</h2>
+
+<p>Each actor dynamically adjusts <code>bot.max_simulations</code> based on <code>move_count</code> within the play phase. The intent is to reduce compute on early moves (where the game tree is wide but positions are less critical) and concentrate deeper search on mid-to-late game positions where the value head starts to discriminate.</p>
+
+<pre class="python">if move_count &lt; 100:
+    bot.max_simulations = 150
+elif move_count &lt; 300:
+    bot.max_simulations = 300
+else:
+    bot.max_simulations = getattr(args, 'max_simulations', 500)   # full budget</pre>
+
+<p>The <code>--max_simulations</code> CLI argument (default 500) is only the ceiling, applied from move 300 onward. Early moves run at 150 sims and mid-game at 300 sims. This is hard-coded in <span class="file">train_mali_ba.py</span> rather than exposed in the INI.</p>
+
+<hr>
+
+<h2>11. File Change Summary — This Session (2026-06-26)</h2>
+
+<table>
+  <tr><th>File</th><th>Change</th><th>Status</th></tr>
+  <tr>
+    <td class="file">python/games/mali_ba/training_utils.py</td>
+    <td>
+      <code>ReplayBuffer</code> gains 4th pool (<code>mcts_raregoods_buffer</code>). New constructor parameter: <code>raregoods_pool_fraction</code> (default 0.15). <code>add()</code> accepts <code>is_rare_goods</code> kwarg and routes to new pool. <code>sample()</code> guarantees <code>raregoods_pool_fraction × n_mcts_target</code> draws per batch; cross-compensates from natural pool when raregoods pool is short. <code>__len__()</code> includes new pool.
+    </td>
+    <td class="ok">Live (Python)</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/train_mali_ba.py</td>
+    <td>
+      <strong>Trainer:</strong> ReplayBuffer constructor passes <code>raregoods_pool_fraction</code>. Buffer save/load adds <code>mcts_raregoods_buffer</code> key. Buffer restore includes auto-migration (50/50 split of natural pool when key absent). Trainer log includes raregoods count. Experience tuple now 6 elements; reads <code>is_rare_goods</code> from index 5.<br>
+      <strong>Learner:</strong> Detects <code>is_rare_goods_game = any(r ≥ 1.0) and not bootstrap and 'Timbuktu' not in finished_msg</code>; passes as element [5] in experience tuple; adds <code>rare_goods=...</code> to debug log.<br>
+      <strong>Args/INI:</strong> <code>--raregoods_pool_fraction</code> CLI flag; reads <code>raregoods_pool_fraction</code> from <code>[MLTraining]</code> (default 0.15); shown in startup print.
+    </td>
+    <td class="ok">Live (Python)</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/resize_buffer.py</td>
+    <td>
+      Added <code>--raregoods N</code> argument. Source display and output dict both include <code>mcts_raregoods_buffer</code>. Backward compatible: old buffers without the key load as empty raregoods pool.
+    </td>
+    <td class="ok">Live (Python)</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/mali_ba.ini</td>
+    <td>Added <code>raregoods_pool_fraction = 0.15</code> to <code>[MLTraining]</code>. User plans to set to <strong>0.40</strong> for run 36. Also plans to set <code>near_win_extension_value_thresh = 0.40</code> for run 36.</td>
+    <td class="warn">INI values to update before run 36</td>
+  </tr>
+</table>
+
+<p><strong>No C++ changes in this session.</strong> All changes are Python-only and take effect on restart with no rebuild required.</p>
+
+<h3>Previously Changed (from 2026-06-24 session — now confirmed working)</h3>
+
+<table>
+  <tr><th>File</th><th>Change</th><th>Status</th></tr>
+  <tr>
+    <td class="file">games/mali_ba/mali_ba_state_core.cc</td>
+    <td><code>IsTerminal()</code> and win-condition evaluator use <code>GetMaxPlayMoves() + GetNearWinExtensionMoves()</code> (= 470). Verified working in runs 34 and 35 — all timeout games end at exactly 470 moves, extension messages appear in logs.</td>
+    <td class="ok">Compiled and confirmed</td>
+  </tr>
+  <tr>
+    <td class="file">games/mali_ba/mali_ba_game.h</td>
+    <td><code>MaxGameLength()</code> = 480; <code>GetNearWinExtensionMoves()</code> accessor.</td>
+    <td class="ok">Compiled</td>
+  </tr>
+  <tr>
+    <td class="file">python/games/mali_ba/train_mali_ba.py</td>
+    <td>Extension check qualifies on <code>near_win OR clear_winner</code>. Slower heuristic decay schedule. Reads <code>base_max_play_moves</code>, <code>near_win_extension_moves</code>, <code>near_win_extension_value_thresh</code>, <code>clear_winner_thresh</code> from INI.</td>
+    <td class="ok">Live</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>12. Run 36 Pre-Flight Checklist</h2>
+
+<div class="action">
+<ol>
+  <li><strong>Update mali_ba.ini</strong> — set <code>raregoods_pool_fraction = 0.40</code> and <code>near_win_extension_value_thresh = 0.40</code> in <code>[MLTraining]</code>.</li>
+  <li><strong>No C++ rebuild needed</strong> — all changes are Python-only.</li>
+  <li><strong>Buffer migration is automatic</strong> — the trainer will split the existing <code>mcts_natural_buffer</code> 50/50 on first load. Confirm in the log:
+    <pre class="log">Trainer: Migrating old buffer — split N natural entries 50/50 into natural (...) and raregoods (...) pools.</pre>
+  </li>
+  <li><strong>Watch for raregoods pool filling</strong> — trainer log now shows all 4 pool sizes:
+    <pre class="log">Trainer processed N new experiences. Bootstrap: 5000  MCTS-natural: ...  MCTS-nearwin: ...  MCTS-raregoods: ...</pre>
+    The raregoods pool starts at ~15k (from migration) and fills with new Rare goods wins.
+  </li>
+  <li><strong>Key diagnostic question for run 36:</strong> Does the Rare goods value head start showing positive values before wins? If so, the guaranteed batch exposure is working. Check via <code>analyze_log.py</code> value-check output for the "rare" category.
+  </li>
+  <li><strong>If raregoods pool stays near-empty</strong> (few Rare goods natural wins occurring), the cross-compensation will draw from mcts_natural instead — the model won't be hurt, but the feedback loop fix won't fully engage. Watch the raregoods pool fill rate.
+  </li>
+</ol>
+</div>
+
+<hr>
+
+<h2>13. Open Questions / Future Considerations</h2>
+
+<ul>
+  <li><strong>Local vs remote actor win rate gap</strong> (69.2% vs 27.8% in run 35): not yet investigated. Possibly weight update lag on remote actors, or different compute budget affecting MCTS quality. Worth correlating actor ID with win rate across more runs.</li>
+  <li><strong>Trigger ≠ Winner for Rare goods</strong> (33.3% of Rare goods wins): one player triggers the Rare goods end condition but a different player wins on overall score. This is expected by game rules (trigger ends the game; winner is determined by score). It is not a bug, but worth confirming the game is correctly recording who holds the most rare goods at game end.</li>
+  <li><strong>Extended game natural wins</strong>: the extension has never produced a natural win. Once the Rare goods value head improves (expected from run 36's guaranteed exposure), near-win extended games should start converting. If they still don't, consider increasing <code>near_win_extension_moves</code> beyond 40.</li>
+  <li><strong>raregoods_pool_fraction = 0.40</strong> is aggressive (equal weight to Timbuktu in MCTS). If Rare goods wins become plentiful and the mode collapse resolves, this can be reduced to 0.20–0.25 to allow the natural distribution to re-emerge.</li>
+</ul>
+
+<hr>
+<p style="font-size:0.85em; color:#888;">Generated 2026-06-26 by Claude Sonnet 4.6 during Mali-Ba training session. Updates HANDOFF-20260624.html.</p>
+</body>
+</html>

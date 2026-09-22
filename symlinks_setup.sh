@@ -3,8 +3,10 @@
 OPENSPIEL=/media/robp/UD/Projects/open_spiel
 MALI_BA=/media/robp/UD/Projects/mali_ba
 
-ln -s $MALI_BA/open_spiel/games/mali_ba $OPENSPIEL/open_spiel/games/mali_ba
-ln -s $MALI_BA/open_spiel/python/games/mali_ba_py $OPENSPIEL/open_spiel/python/games/mali_ba_py
+
 ln -s $MALI_BA/open_spiel/python/pybind11/games_mali_ba.cc $OPENSPIEL/open_spiel/python/pybind11/games_mali_ba.cc
 ln -s $MALI_BA/open_spiel/python/pybind11/games_mali_ba.h $OPENSPIEL/open_spiel/python/pybind11/games_mali_ba.h
+ln -s $MALI_BA/open_spiel/games/mali_ba $OPENSPIEL/open_spiel/games/mali_ba
+ln -s $MALI_BA/open_spiel/python/games/mali_ba $OPENSPIEL/open_spiel/python/games/mali_ba
 # ... one line per symlink needed
+# ln -s $MALI_BA/open_spiel/games/mali_ba $OPENSPIEL/open_spiel/games/mali_ba

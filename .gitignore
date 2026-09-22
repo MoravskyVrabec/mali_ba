@@ -1,3 +1,16 @@
 __pycache__/
 *.pyc
 *.egg-info/
+
+# Training artifacts - large binaries, not source
+*.weights.h5
+*.pkl.gz
+*.pkl.gz.old
+*.mali_ba_replay
+build/
+
+# Local GCP deployment config (per-user project ID, authkey, etc.)
+**/gcp/env.sh
+
+# Local Hetzner deployment config (per-user API token)
+**/hetzner/env.sh
