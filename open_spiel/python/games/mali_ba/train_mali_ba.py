@@ -432,6 +432,10 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
         random.seed(game_rng_seed)
         np.random.seed(game_rng_seed)
         move_count = 0
+        # Playout-cap accounting, logged at game end so the speedup is visible.
+        _n_fast_moves = 0
+        _n_full_moves = 0
+        _total_sims = 0
         
         # --- Use the existing game object to create a new state ---
         # DO NOT RELOAD THE GAME.
@@ -726,6 +730,38 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                 if _n_route_candidates >= getattr(args, 'sim_route_decision_min_candidates', 20):
                     bot.max_simulations = max(bot.max_simulations,
                                                getattr(args, 'sim_route_decision_sims', 500))
+
+            # --- Playout cap randomization (KataGo, Wu 2019) ---
+            # Deliberately the LAST word on the simulation budget: it overrides
+            # every tier and floor above, which is the point -- a fast move has
+            # to actually be cheap.
+            #
+            # Most moves get a small budget and are NOT recorded as policy
+            # targets (their visit counts are too unconverged to learn from).
+            # A minority get the full tiered budget and are recorded. Value
+            # targets come from the game outcome, so every move still trains
+            # the value head either way. Net effect: far fewer simulations per
+            # game for roughly the same number of usable policy targets per
+            # unit of compute.
+            record_policy = True
+            _fast_search = (getattr(args, 'playout_cap_enabled', False)
+                            and random.random() >= getattr(args, 'playout_cap_full_prob', 0.25))
+            if _fast_search:
+                bot.max_simulations = max(1, getattr(args, 'playout_cap_fast_sims', 40))
+                record_policy = False
+
+            if _fast_search:
+                _n_fast_moves += 1
+            else:
+                _n_full_moves += 1
+            _total_sims += bot.max_simulations
+
+            # Root Dirichlet noise exists to diversify the recorded policy target.
+            # A fast search records nothing, so the noise would only add variance
+            # to the move actually played.
+            _saved_dirichlet = bot._dirichlet_noise
+            if _fast_search:
+                bot._dirichlet_noise = None
             try:
                 root = bot.mcts_search(state)
             except Exception as e:
@@ -736,6 +772,8 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                 log(LogLevel.ERROR, f"  Error: {e}")
                 log(LogLevel.ERROR, f"  Traceback: {traceback.format_exc()}")
                 raise  # Re-raise so the process still dies (and gets respawned) but we now see why
+            finally:
+                bot._dirichlet_noise = _saved_dirichlet
             
             temperature = 1.0 if move_count < 150 else 0.5
 
@@ -865,17 +903,20 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
             # DEBUG to see what choices the bot has
             #===============================================================
 
-            # For the replay buffer, we need the policy over the FULL action space
+            # For the replay buffer, we need the policy over the FULL action space.
+            # A fast (playout-capped) move stays all-zero: the trainer reads that
+            # as "value target only" and masks the row out of the policy loss.
             mcts_policy_full = np.zeros(game.num_distinct_actions())
-            for child in root.children:
-                 if 0 <= child.action < game.num_distinct_actions():
-                    mcts_policy_full[child.action] = child.explore_count
-            if np.sum(mcts_policy_full) > 0:
-                mcts_policy_full /= np.sum(mcts_policy_full)
-            else: # Fallback for states with no visits (should be rare)
-                prob = 1.0 / len(legal_actions)
-                for act in legal_actions:
-                    mcts_policy_full[act] = prob
+            if record_policy:
+                for child in root.children:
+                     if 0 <= child.action < game.num_distinct_actions():
+                        mcts_policy_full[child.action] = child.explore_count
+                if np.sum(mcts_policy_full) > 0:
+                    mcts_policy_full /= np.sum(mcts_policy_full)
+                else: # Fallback for states with no visits (should be rare)
+                    prob = 1.0 / len(legal_actions)
+                    for act in legal_actions:
+                        mcts_policy_full[act] = prob
             
             if action != pyspiel.INVALID_ACTION:
                 action_str = state.action_to_string(player, action)
@@ -896,6 +937,14 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                     log(LogLevel.WARN,
                         f"Actor {actor_id}: Replay write failed at move {replay_move_num}: {_e}")
             move_count += 1
+
+        _cache_hits, _cache_misses, _cache_rate = evaluator.cache_stats()
+        log(LogLevel.INFO,
+            f"Actor {actor_id}, Game {episode_num}: SEARCH COST — "
+            f"moves={move_count} (full={_n_full_moves}, fast={_n_fast_moves}) "
+            f"sims={_total_sims} "
+            f"nn_evals={_cache_misses} cache_hits={_cache_hits} "
+            f"hit_rate={_cache_rate:.3f}")
 
         # Close replay file before classification (must be closed before rename on some OSes)
         if replay_file:
@@ -1411,6 +1460,9 @@ def main(args):
             'sim_tier2_sims':                      getattr(args, 'sim_tier2_sims', 300),
             'sim_tier3_start':                     getattr(args, 'sim_tier3_start', 300),
             'sim_tier3_sims':                      getattr(args, 'sim_tier3_sims', 500),
+            'playout_cap_enabled':                 getattr(args, 'playout_cap_enabled', False),
+            'playout_cap_full_prob':               getattr(args, 'playout_cap_full_prob', 0.25),
+            'playout_cap_fast_sims':               getattr(args, 'playout_cap_fast_sims', 40),
             'sim_route_decision_sims':              getattr(args, 'sim_route_decision_sims', 500),
             'sim_route_decision_min_candidates':    getattr(args, 'sim_route_decision_min_candidates', 20),
             'base_max_play_moves':                 getattr(args, 'base_max_play_moves', 430),
@@ -1811,6 +1863,19 @@ if __name__ == "__main__":
                         help="Play-phase move count where tier 3 begins. Overrides ini.")
     parser.add_argument('--sim_tier3_sims', type=int, default=None,
                         help="MCTS simulations for tier 3 moves (late game). Overrides ini.")
+    parser.add_argument('--playout_cap_enabled', action='store_true', default=None,
+                        help="Enable playout cap randomization: most moves get a cheap "
+                             "search and are used as value-only samples, a minority get "
+                             "the full tiered budget and supply the policy targets. "
+                             "Overrides ini.")
+    parser.add_argument('--playout_cap_full_prob', type=float, default=None,
+                        help="Probability a move gets the full tiered simulation budget "
+                             "and is recorded as a policy target. Overrides ini.")
+    parser.add_argument('--no_playout_cap', dest='playout_cap_enabled', action='store_false',
+                        help="Disable playout cap randomization even if the ini enables it.")
+    parser.set_defaults(playout_cap_enabled=None)
+    parser.add_argument('--playout_cap_fast_sims', type=int, default=None,
+                        help="Simulation budget for fast (non-recorded) moves. Overrides ini.")
     parser.add_argument('--sim_route_decision_sims', type=int, default=None,
                         help="MCTS simulations for OPTIONAL_ROUTE decisions with at least "
                              "sim_route_decision_min_candidates legal candidates, overriding "
@@ -1976,6 +2041,12 @@ if __name__ == "__main__":
         parsed_args.sim_tier3_start = _ini_int('sim_tier3_start', 300)
     if parsed_args.sim_tier3_sims is None:
         parsed_args.sim_tier3_sims = _ini_int('sim_tier3_sims', 500)
+    if parsed_args.playout_cap_enabled is None:
+        parsed_args.playout_cap_enabled = _ini_bool('playout_cap_enabled', False)
+    if parsed_args.playout_cap_full_prob is None:
+        parsed_args.playout_cap_full_prob = _ini_float('playout_cap_full_prob', 0.25)
+    if parsed_args.playout_cap_fast_sims is None:
+        parsed_args.playout_cap_fast_sims = _ini_int('playout_cap_fast_sims', 40)
     if parsed_args.sim_route_decision_sims is None:
         parsed_args.sim_route_decision_sims = _ini_int('sim_route_decision_sims', 500)
     if parsed_args.sim_route_decision_min_candidates is None:

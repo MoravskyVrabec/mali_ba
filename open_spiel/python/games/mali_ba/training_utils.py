@@ -242,7 +242,15 @@ class SimpleAgent:
             observations_reshaped = observations_flat.reshape((-1, *target_shape_3d))
 
             policy_targets = np.array(policy_targets)
-            
+
+            # Playout-cap randomization stores fast-search moves with an all-zero
+            # policy target: their visit counts come from too few simulations to
+            # be a usable target, but the value target (from the game outcome) is
+            # just as valid as any other move's. Those rows train the value head
+            # only and are masked out of the policy loss below.
+            policy_mask = policy_targets.sum(axis=1) > 0.5
+            n_policy_rows = int(np.count_nonzero(policy_mask))
+
             full_value_targets = np.zeros((batch_size, self.num_players))
             for i, (player_id, player_value, all_discounted_returns) in enumerate(value_data_list):
                 if i >= batch_size: break
@@ -261,20 +269,28 @@ class SimpleAgent:
                 log(LogLevel.ERROR, "Trainer: NaN/Inf detected in value target data. Skipping batch.")
                 return None
 
-            # --- Policy Model Training Step ---
-            with tf.GradientTape() as tape:
-                predicted_policy = self.policy_model(observations_reshaped, training=True)
-                policy_loss = tf.keras.losses.CategoricalCrossentropy()(policy_targets, predicted_policy)
-            
-            if tf.math.is_nan(policy_loss) or tf.math.is_inf(policy_loss):
-                log(LogLevel.ERROR, f"Trainer: Invalid policy loss detected: {policy_loss}. Skipping batch.")
-                return None
-            
-            policy_grads = tape.gradient(policy_loss, self.policy_model.trainable_variables)
-            if any(g is None for g in policy_grads):
-                log(LogLevel.ERROR, "Trainer: None gradients detected for policy model. Skipping batch.")
-                return None
-            self.policy_optimizer.apply_gradients(zip(policy_grads, self.policy_model.trainable_variables))
+            # --- Policy Model Training Step (recorded-policy rows only) ---
+            predicted_policy = None
+            if n_policy_rows == 0:
+                # Every row in this batch was a fast search. Nothing to learn for
+                # the policy head; the value step below still runs on all rows.
+                log(LogLevel.WARN, "Trainer: batch has no recorded policy targets; "
+                                   "skipping policy step.")
+                policy_loss = tf.constant(0.0)
+            else:
+                with tf.GradientTape() as tape:
+                    predicted_policy = self.policy_model(observations_reshaped[policy_mask], training=True)
+                    policy_loss = tf.keras.losses.CategoricalCrossentropy()(policy_targets[policy_mask], predicted_policy)
+
+                if tf.math.is_nan(policy_loss) or tf.math.is_inf(policy_loss):
+                    log(LogLevel.ERROR, f"Trainer: Invalid policy loss detected: {policy_loss}. Skipping batch.")
+                    return None
+
+                policy_grads = tape.gradient(policy_loss, self.policy_model.trainable_variables)
+                if any(g is None for g in policy_grads):
+                    log(LogLevel.ERROR, "Trainer: None gradients detected for policy model. Skipping batch.")
+                    return None
+                self.policy_optimizer.apply_gradients(zip(policy_grads, self.policy_model.trainable_variables))
             
             # --- Value Model Training Step ---
             with tf.GradientTape() as tape:
@@ -284,8 +300,11 @@ class SimpleAgent:
             # DEBUG =====================================================================
             log(LogLevel.INFO, f"Training: Observation range: min={np.min(observations_reshaped):.6f}, max={np.max(observations_reshaped):.6f}")
             log(LogLevel.INFO, f"Training: Observation mean={np.mean(observations_reshaped):.6f}, std={np.std(observations_reshaped):.6f}")
-            log(LogLevel.INFO, f"Training: Policy target range: min={np.min(policy_targets):.6f}, max={np.max(policy_targets):.6f}")
-            log(LogLevel.INFO, f"Training: Policy target sum per sample: {np.sum(policy_targets, axis=1)[:5]}")  # Should be 1.0 for each
+            log(LogLevel.INFO, f"Training: Policy rows used: {n_policy_rows}/{len(policy_targets)} "
+                               f"(rest are value-only fast-search samples)")
+            if n_policy_rows > 0:
+                log(LogLevel.INFO, f"Training: Policy target range: min={np.min(policy_targets[policy_mask]):.6f}, max={np.max(policy_targets[policy_mask]):.6f}")
+                log(LogLevel.INFO, f"Training: Policy target sum per sample: {np.sum(policy_targets[policy_mask], axis=1)[:5]}")  # Should be 1.0 for each
             # END DEBUG =====================================================================
 
             if tf.math.is_nan(value_loss) or tf.math.is_inf(value_loss):
@@ -304,7 +323,8 @@ class SimpleAgent:
             
             # DEBUG ==================================================================
             log(LogLevel.INFO, f"Training: Gradient norms: {[tf.norm(g).numpy() for g in value_grads[:3]]}")
-            log(LogLevel.INFO, f"Training: Policy output sample: {predicted_policy[0][:10].numpy()}")
+            if predicted_policy is not None:
+                log(LogLevel.INFO, f"Training: Policy output sample: {predicted_policy[0][:10].numpy()}")
             log(LogLevel.INFO, f"Training: Value output sample: {predicted_value[0].numpy()}")
             log(LogLevel.INFO, f"Training: Total loss: {total_loss.numpy():.6f}, Policy loss: {policy_loss.numpy():.6f}, Value loss: {value_loss.numpy():.6f}")
             # END DEBUG ==================================================================
