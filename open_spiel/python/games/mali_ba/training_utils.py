@@ -318,28 +318,99 @@ class SimpleAgent:
             return None
 
 
-class AlphaZeroEvaluator:
-    """An evaluator for MCTS that uses a trained neural network."""
+def _get_shared_infer_fn(policy_model, value_model, obs_shape):
+    """Return a traced tf.function that runs the policy and value nets in one call.
 
-    def __init__(self, game, policy_model, value_model, heuristic_guidance_weight=0.40):
+    Two reasons this exists:
+      * A fixed input_signature stops TF from re-tracing and skips the eager
+        dispatch that dominates batch-1 CPU inference for nets this small --
+        the graph call is several times cheaper than `model(x, training=False)`.
+      * Running both nets inside one traced function removes a second
+        Python -> TF round trip per evaluated state.
+
+    The traced function is cached on the policy model, not on the evaluator:
+    AlphaZeroEvaluator is rebuilt for every game while the models live for the
+    whole actor process, and tracing costs about a second. This stays correct
+    across weight refreshes because `set_weights()` assigns into the existing
+    variables rather than replacing them, so the traced graph always reads the
+    current weights.
+    """
+    fn = getattr(policy_model, '_mali_ba_infer_fn', None)
+    if fn is not None:
+        return fn
+
+    spec = tf.TensorSpec(shape=(1, *obs_shape), dtype=tf.float32)
+
+    @tf.function(input_signature=[spec])
+    def _infer(obs_batch):
+        return (policy_model(obs_batch, training=False),
+                value_model(obs_batch, training=False))
+
+    policy_model._mali_ba_infer_fn = _infer
+    return _infer
+
+
+class AlphaZeroEvaluator:
+    """An evaluator for MCTS that uses a trained neural network.
+
+    prior() and evaluate() are served from a single cached forward pass per
+    state. MCTS reaches a leaf and calls evaluate() on it, then only calls
+    prior() on a later simulation that descends through that node again (see
+    mcts.py _apply_tree_policy / mcts_search), so an uncached evaluator pays
+    two full inferences for every node it expands. The cache also absorbs
+    repeated descents and transpositions within a single search.
+
+    The C++ heuristic prior is still computed lazily, in prior() only. Most
+    leaves are evaluated once and never expanded, so folding it into the shared
+    forward pass would add work rather than save it.
+    """
+
+    def __init__(self, game, policy_model, value_model, heuristic_guidance_weight=0.40,
+                 cache_size=8192):
         self._game = game
         self._policy_model = policy_model
         self._value_model = value_model
         self._shape = game.observation_tensor_shape()
+        self._num_actions = game.num_distinct_actions()
         self.heuristic_guidance_weight = heuristic_guidance_weight
+        self._infer = _get_shared_infer_fn(policy_model, value_model, self._shape)
+        # key -> [value_vector, raw_nn_policy or None, mixed legal prior or None]
+        self._cache = collections.OrderedDict()
+        self._cache_size = cache_size
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    def cache_stats(self):
+        """Returns (hits, misses, hit_rate) since construction."""
+        total = self.cache_hits + self.cache_misses
+        return self.cache_hits, self.cache_misses, (self.cache_hits / total) if total else 0.0
+
+    def clear_cache(self):
+        self._cache.clear()
+
+    def _entry(self, state):
+        """Fetch or compute the cache entry for a state: [value, raw_policy, prior]."""
+        key = tuple(state.history())
+        entry = self._cache.get(key)
+        if entry is not None:
+            self._cache.move_to_end(key)
+            self.cache_hits += 1
+            return entry
+
+        self.cache_misses += 1
+        obs = np.asarray(state.observation_tensor(), dtype=np.float32)
+        policy_t, value_t = self._infer(obs.reshape((1, *self._shape)))
+        entry = [value_t[0].numpy(), policy_t[0].numpy(), None]
+
+        self._cache[key] = entry
+        if len(self._cache) > self._cache_size:
+            self._cache.popitem(last=False)
+        return entry
 
     def evaluate(self, state):
         if state.is_terminal():
             return np.array(state.returns(), dtype=np.float32)
-        
-        obs_flat = state.observation_tensor()
-        obs_reshaped = np.reshape(obs_flat, self._shape)
-        obs_batch = np.expand_dims(obs_reshaped, 0)
-        
-        # Use the value model for evaluation
-        value_tensor = self._value_model(obs_batch, training=False)
-        
-        return value_tensor[0].numpy()
+        return self._entry(state)[0]
 
     def prior(self, state):
         if state.is_terminal():
@@ -349,43 +420,41 @@ class AlphaZeroEvaluator:
         if not legal_actions:
             return []
 
-        obs_flat = state.observation_tensor()
-        obs_reshaped = np.reshape(obs_flat, self._shape)
-        obs_batch = np.expand_dims(obs_reshaped, 0)
-        
-        # --- 1. Get Neural Network Policy (as before) ---
-        # Use the policy model for priors
-        policy_nn = self._policy_model(obs_batch, training=False)
-        policy_nn_full = policy_nn[0].numpy()
+        entry = self._entry(state)
+        if entry[2] is not None:
+            # Copy: MCTS shuffles the returned list in place (mcts.py), and this
+            # one is shared with every later visit to the same node.
+            return list(entry[2])
 
-        # --- 2. Get Heuristic Policy ---
-        mali_ba_state = pyspiel.mali_ba.downcast_state(state)
-        action_weights_map = mali_ba_state.get_heuristic_action_weights()
-        policy_heuristic_full = np.zeros(self._game.num_distinct_actions(), dtype=np.float32)
-        total_weight = sum(action_weights_map.values())
-        if total_weight > 0:
-            for act, weight in action_weights_map.items():
-                policy_heuristic_full[act] = weight / total_weight
+        policy_full = entry[1]
 
-        # --- 3. Mix the Policies ---
+        # --- Mix the network policy with the C++ heuristic prior ---
         # final_policy = (1 - w) * P_nn + w * P_heuristic
-        mixed_policy_full = (
-            (1 - self.heuristic_guidance_weight) * policy_nn_full +
-            self.heuristic_guidance_weight * policy_heuristic_full
-        )
+        w = self.heuristic_guidance_weight
+        if w > 0.0:
+            mali_ba_state = pyspiel.mali_ba.downcast_state(state)
+            action_weights_map = mali_ba_state.get_heuristic_action_weights()
+            total_weight = sum(action_weights_map.values())
+            if total_weight > 0:
+                policy_heuristic_full = np.zeros(self._num_actions, dtype=np.float32)
+                for act, weight in action_weights_map.items():
+                    policy_heuristic_full[act] = weight / total_weight
+                policy_full = (1.0 - w) * policy_full + w * policy_heuristic_full
 
-        # --- 4. Return the mixed policy for legal actions (as before) ---
-        legal_policy = []
-        for action in legal_actions:
-            legal_policy.append((action, mixed_policy_full[action]))
-        
+        legal_policy = [(action, policy_full[action]) for action in legal_actions]
         total_prob = sum(p for _, p in legal_policy)
         if total_prob > 0:
-            return [(action, p / total_prob) for action, p in legal_policy]
+            legal_policy = [(action, p / total_prob) for action, p in legal_policy]
         else:
             # Fallback to uniform if all mixed probabilities are zero
             uniform_prob = 1.0 / len(legal_actions)
-            return [(action, uniform_prob) for action in legal_actions]
+            legal_policy = [(action, uniform_prob) for action in legal_actions]
+
+        # Keep only the mixed legal prior. The full-width NN vector is no longer
+        # needed for this state and is what would dominate cache memory.
+        entry[1] = None
+        entry[2] = legal_policy
+        return list(legal_policy)
 
 
 # ** Accept num_players to build the correct output shape **
