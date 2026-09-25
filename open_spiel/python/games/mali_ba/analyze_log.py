@@ -29,6 +29,9 @@ RE_LOSS = re.compile(
 RE_PASS_ONLY = re.compile(
     r"MCTS top visits: \['Pass: \d+ visits'\]"
 )
+RE_COMPUTE_DEVICE = re.compile(
+    r'Trainer: COMPUTE DEVICE = (.+?)\s*$'
+)
 RE_TRAINER_PROCESSED = re.compile(
     r'Trainer processed (\d+) new experiences'
 )
@@ -129,6 +132,7 @@ def parse_log(path):
     value_checks = []             # list of dicts from Value check lines
     no_kill_games = {}            # (actor, game_n) -> list of would-have-terminated events
     oversample_threshold = None   # set from log; None means log predates this feature
+    compute_device = None         # trainer GPU/CPU report; None in logs predating it
     experiences_processed = 0     # total unique experiences the trainer ingested
     policy_rows = []              # (recorded_rows, batch_size) per training step;
                                   # absent in logs predating playout cap randomization
@@ -251,6 +255,11 @@ def parse_log(path):
                 top_action_counter[m.group(1)] += 1
                 continue
 
+            m = RE_COMPUTE_DEVICE.search(line)
+            if m:
+                compute_device = m.group(1).strip()
+                continue
+
             m = RE_POLICY_ROWS.search(line)
             if m:
                 policy_rows.append((int(m.group(1)), int(m.group(2))))
@@ -364,6 +373,7 @@ def parse_log(path):
         'no_kill_games': no_kill_games,
         'oversample_threshold': oversample_threshold,
         'search_costs': search_costs,
+        'compute_device': compute_device,
         'experiences_processed': experiences_processed,
         'policy_rows': policy_rows,
     }
@@ -484,6 +494,21 @@ def print_sample_reuse(data, batch_size_arg=None):
         return
 
     section('SAMPLE REUSE / TRAINING CADENCE')
+
+    device = data.get('compute_device')
+    if device:
+        if device.upper().startswith('CPU'):
+            # Split the actionable remedy onto its own line rather than echoing the
+            # whole warning, which is long.
+            print(f'  Trainer device            : CPU ONLY  <-- gradient steps are far more')
+            print(f'                              expensive than they need to be')
+            _fix = device.split('pip install', 1)
+            if len(_fix) > 1:
+                print(f"    → install CUDA wheels: pip install{_fix[1]}")
+        else:
+            print(f'  Trainer device            : {device}')
+    else:
+        print(f'  Trainer device            : not reported (log predates device logging)')
 
     # Batch size: newer logs state it directly ("Policy rows used: N/M"); older ones
     # do not, so fall back to --batch-size. Reuse scales linearly with it, so say which.

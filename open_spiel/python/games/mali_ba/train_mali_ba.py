@@ -49,6 +49,33 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
         except RuntimeError as e:
             print(f"Trainer GPU setup error: {e}")
 
+    # Report the compute device explicitly. A CPU-only trainer still trains, just
+    # roughly an order of magnitude slower per gradient step, and until now nothing
+    # in the log revealed which one you got -- it went unnoticed across many runs
+    # because the plain `tensorflow` pip wheel has CUDA code paths (so
+    # is_built_with_cuda() is True) but none of the nvidia-*-cu12 runtime
+    # libraries, leaving list_physical_devices('GPU') silently empty.
+    if gpus:
+        _dev_names = []
+        for _g in gpus:
+            try:
+                _d = tf.config.experimental.get_device_details(_g)
+                _nm = _d.get('device_name') or _g.name
+                _cc = _d.get('compute_capability')
+                _dev_names.append(f"{_nm} (sm_{_cc[0]}{_cc[1]})" if _cc else str(_nm))
+            except Exception:
+                _dev_names.append(_g.name)
+        log(LogLevel.INFO,
+            f"Trainer: COMPUTE DEVICE = GPU x{len(gpus)} — {', '.join(_dev_names)}, "
+            f"memory_growth=on, TF {tf.__version__}, keras {getattr(tf.keras, 'version', lambda: '?')()}")
+    else:
+        log(LogLevel.WARN,
+            f"Trainer: COMPUTE DEVICE = CPU ONLY — no GPU visible to TensorFlow "
+            f"{tf.__version__} (built_with_cuda={tf.test.is_built_with_cuda()}). "
+            f"Gradient steps will be far slower than on a GPU. If this machine has an "
+            f"NVIDIA GPU, the CUDA runtime wheels are probably missing: "
+            f"pip install 'tensorflow[and-cuda]=={tf.__version__}'")
+
     log(LogLevel.INFO, "Trainer process started.")
 
     temp_game = pyspiel.load_game(args.game_name, initial_game_params)
