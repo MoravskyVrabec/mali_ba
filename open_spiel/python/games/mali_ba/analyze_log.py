@@ -29,6 +29,12 @@ RE_LOSS = re.compile(
 RE_PASS_ONLY = re.compile(
     r"MCTS top visits: \['Pass: \d+ visits'\]"
 )
+RE_TRAINER_PROCESSED = re.compile(
+    r'Trainer processed (\d+) new experiences'
+)
+RE_POLICY_ROWS = re.compile(
+    r'Training: Policy rows used: (\d+)/(\d+)'
+)
 RE_BUFFER_STATE = re.compile(
     r'(\d{8}-\d{6}) \[INFO\] \[Python:0\] Trainer processed \d+ new experiences\. '
     r'Bootstrap: (\d+)\s+MCTS-natural: (\d+)\s+MCTS-nearwin: (\d+)'
@@ -123,6 +129,9 @@ def parse_log(path):
     value_checks = []             # list of dicts from Value check lines
     no_kill_games = {}            # (actor, game_n) -> list of would-have-terminated events
     oversample_threshold = None   # set from log; None means log predates this feature
+    experiences_processed = 0     # total unique experiences the trainer ingested
+    policy_rows = []              # (recorded_rows, batch_size) per training step;
+                                  # absent in logs predating playout cap randomization
     search_costs = []             # per-game search cost from SEARCH COST lines
                                   # (absent in logs predating playout cap randomization)
 
@@ -242,8 +251,16 @@ def parse_log(path):
                 top_action_counter[m.group(1)] += 1
                 continue
 
+            m = RE_POLICY_ROWS.search(line)
+            if m:
+                policy_rows.append((int(m.group(1)), int(m.group(2))))
+                continue
+
             m = RE_BUFFER_STATE.search(line)
             if m:
+                _mp = RE_TRAINER_PROCESSED.search(line)
+                if _mp:
+                    experiences_processed += int(_mp.group(1))
                 last_buffer_state = {
                     'time': parse_time(m.group(1)),
                     'bootstrap': int(m.group(2)),
@@ -347,6 +364,8 @@ def parse_log(path):
         'no_kill_games': no_kill_games,
         'oversample_threshold': oversample_threshold,
         'search_costs': search_costs,
+        'experiences_processed': experiences_processed,
+        'policy_rows': policy_rows,
     }
 
 
@@ -446,6 +465,84 @@ def print_value_trajectory(mcts_games, value_checks):
 
 
 # ── trigger vs winner ─────────────────────────────────────────────────────────
+
+def print_sample_reuse(data, batch_size_arg=None):
+    """How hard each generated experience is worked: gradient steps vs unique data.
+
+    Sample reuse = (gradient steps x batch size) / unique experiences. AlphaZero-style
+    runs typically sit around 4-8x; far below that wastes self-play compute, far above
+    risks overfitting a stale buffer.
+
+    Also reports whether the training cadence is timer-bound or data-bound. The trainer
+    fires on `experiences_processed > batch_size // 2 OR elapsed >= train_interval_seconds`,
+    so when experiences per step is well under half the batch size, the timer is setting
+    the pace and reuse will fall automatically as self-play gets faster.
+    """
+    steps = len(data.get('trainer_losses', []))
+    total = data.get('experiences_processed', 0)
+    if steps == 0 or total == 0:
+        return
+
+    section('SAMPLE REUSE / TRAINING CADENCE')
+
+    # Batch size: newer logs state it directly ("Policy rows used: N/M"); older ones
+    # do not, so fall back to --batch-size. Reuse scales linearly with it, so say which.
+    policy_rows = data.get('policy_rows', [])
+    if policy_rows:
+        batch = max(b for _, b in policy_rows)
+        batch_src = 'detected from log'
+    elif batch_size_arg:
+        batch = batch_size_arg
+        batch_src = 'from --batch-size'
+    else:
+        batch = 128
+        batch_src = 'assumed default; pass --batch-size to correct'
+
+    drawn = steps * batch
+    print(f'  Unique experiences        : {total:,}')
+    print(f'  Gradient steps            : {steps:,}')
+    print(f'  Batch size                : {batch}  ({batch_src})')
+    print(f'  Samples drawn             : {drawn:,}')
+    print(f'  Sample reuse              : {drawn/total:.2f}x  '
+          f'(each experience trained on this many times)')
+
+    per_step = total / steps
+    print(f'  Experiences / grad step   : {per_step:,.1f}')
+
+    # Which branch of the training gate is actually firing.
+    if per_step < batch / 2:
+        print(f'  Training cadence          : TIMER-bound  '
+              f'({per_step:,.1f} new experiences per step is below the '
+              f'{batch//2} threshold, so train_interval_seconds sets the pace)')
+        print(f'    → as self-play gets faster, reuse drops rather than steps rising.')
+        print(f'      Lower train_interval_seconds to convert speedup into gradient steps.')
+    else:
+        print(f'  Training cadence          : DATA-bound  '
+              f'(new experiences exceed the {batch//2} threshold, '
+              f'so training keeps up with generation)')
+
+    first, last = data.get('first_time'), data.get('last_time')
+    if first and last:
+        hours = (last - first).total_seconds() / 3600
+        if hours > 0:
+            print(f'  Gradient steps / hour     : {steps/hours:,.0f}')
+            print(f'  Experiences / hour        : {total/hours:,.0f}')
+
+    # With playout cap on, only recorded-policy rows train the policy head, so the
+    # policy head sees materially less reuse than the value head.
+    if policy_rows:
+        rec = sum(r for r, _ in policy_rows)
+        tot_rows = sum(b for _, b in policy_rows)
+        if rec < tot_rows:
+            print(f'  Policy rows per batch     : {rec/len(policy_rows):.1f} of {batch} avg '
+                  f'({pct(rec, tot_rows)})')
+            print(f'    → playout cap is active. Reuse above applies to the value head; '
+                  f'the policy')
+            print(f'      head sees the same {drawn/total:.2f}x ratio (its rows are a uniform '
+                  f'subsample)')
+            print(f'      but an effective batch of {rec/len(policy_rows):.0f}, so its '
+                  f'gradients are noisier per step.')
+
 
 def print_search_cost(search_costs, window=25):
     """Self-play search cost per game: simulations, NN evaluations, cache effectiveness.
@@ -705,7 +802,7 @@ def print_win_timeout_comparison(mcts_games, sample_n=5):
 
 # ── report ────────────────────────────────────────────────────────────────────
 
-def report(data, window=50, show_early_terminations=False):
+def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
     games = data['games']
     received = data['received']
     losses = data['losses']
@@ -836,6 +933,7 @@ def report(data, window=50, show_early_terminations=False):
                   f'{pct(b_player_wins[p], b_player_games[p]):6s}  {bar(wr, 0.5)}')
 
     # ── Self-play search cost ────────────────────────────────────────────
+    print_sample_reuse(data, batch_size_arg=batch_size_arg)
     print_search_cost(data.get('search_costs', []))
 
     # ── Win conditions (MCTS only) ────────────────────────────────────────────
@@ -1691,13 +1789,17 @@ def main():
     parser.add_argument('--ssh-password', default=None, metavar='PASSWORD',
                         help=f'SSH password for {_REMOTE_SSH_USER}@{_REMOTE_SSH_HOST} '
                              f'to fetch remote-actor value checks and merge into CSV')
+    parser.add_argument('--batch-size', type=int, default=None, metavar='N',
+                        help='Training batch size, used to compute sample reuse. Only needed '
+                             'for logs predating the "Policy rows used" line, which states it.')
     parser.add_argument('--show-early-terminations', action='store_true', default=False,
                         help='Include the EARLY TERMINATIONS section (long; off by default)')
     args = parser.parse_args()
 
     print(f'Parsing {args.log_file} ...')
     data = parse_log(args.log_file)
-    report(data, window=args.window, show_early_terminations=args.show_early_terminations)
+    report(data, window=args.window, show_early_terminations=args.show_early_terminations,
+           batch_size_arg=args.batch_size)
     print()
     csv_path = write_value_check_csv(data, args.log_file, ssh_password=args.ssh_password)
 
