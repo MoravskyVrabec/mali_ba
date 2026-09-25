@@ -66,6 +66,11 @@ RE_NO_KILL_WOULD = re.compile(
 RE_OVERSAMPLE_THRESH = re.compile(
     r'Oversampling threshold set to (\d+)|Oversampling disabled'
 )
+RE_SEARCH_COST = re.compile(
+    r'(\d{8}-\d{6}) \[INFO\] \[Python:0\] Actor (\d+), Game (\d+): SEARCH COST — '
+    r'moves=(\d+) \(full=(\d+), fast=(\d+)\) sims=(\d+) '
+    r'nn_evals=(\d+) cache_hits=(\d+) hit_rate=([\d.]+)'
+)
 RE_VALUE_CHECK = re.compile(
     r'\[Python:\d+\] Actor (\d+), Game (\d+), Move (\d+): '
     r'Value check: \[([^\]]+)\] '
@@ -118,6 +123,8 @@ def parse_log(path):
     value_checks = []             # list of dicts from Value check lines
     no_kill_games = {}            # (actor, game_n) -> list of would-have-terminated events
     oversample_threshold = None   # set from log; None means log predates this feature
+    search_costs = []             # per-game search cost from SEARCH COST lines
+                                  # (absent in logs predating playout cap randomization)
 
     with open(path) as f:
         for line in f:
@@ -156,6 +163,24 @@ def parse_log(path):
                     'is_win': is_win,
                     'is_remote': int(actor) >= 100000,
                     'is_bootstrap': is_bootstrap,
+                })
+                continue
+
+            m = RE_SEARCH_COST.search(line)
+            if m:
+                ts, actor, game_n, moves, full, fast, sims, nn_evals, hits, rate = m.groups()
+                search_costs.append({
+                    'time':       parse_time(ts),
+                    'actor':      int(actor),
+                    'game_n':     int(game_n),
+                    'moves':      int(moves),
+                    'full_moves': int(full),
+                    'fast_moves': int(fast),
+                    'sims':       int(sims),
+                    'nn_evals':   int(nn_evals),
+                    'cache_hits': int(hits),
+                    'hit_rate':   float(rate),
+                    'is_remote':  int(actor) >= 100000,
                 })
                 continue
 
@@ -321,6 +346,7 @@ def parse_log(path):
         'value_checks': value_checks,
         'no_kill_games': no_kill_games,
         'oversample_threshold': oversample_threshold,
+        'search_costs': search_costs,
     }
 
 
@@ -420,6 +446,80 @@ def print_value_trajectory(mcts_games, value_checks):
 
 
 # ── trigger vs winner ─────────────────────────────────────────────────────────
+
+def print_search_cost(search_costs, window=25):
+    """Self-play search cost per game: simulations, NN evaluations, cache effectiveness.
+
+    Fed by the SEARCH COST line each actor logs at the end of a game. Absent from
+    logs predating playout cap randomization, in which case this section is skipped.
+    """
+    if not search_costs:
+        return
+
+    section('SELF-PLAY SEARCH COST')
+
+    n = len(search_costs)
+    tot_moves = sum(c['moves'] for c in search_costs)
+    tot_full  = sum(c['full_moves'] for c in search_costs)
+    tot_fast  = sum(c['fast_moves'] for c in search_costs)
+    tot_sims  = sum(c['sims'] for c in search_costs)
+    tot_nn    = sum(c['nn_evals'] for c in search_costs)
+    tot_hits  = sum(c['cache_hits'] for c in search_costs)
+
+    print(f'  Games with cost data      : {n}')
+    print(f'  Simulations per game      : {tot_sims/n:,.0f} avg')
+    if tot_moves > 0:
+        print(f'  Simulations per move      : {tot_sims/tot_moves:,.1f} avg')
+    print(f'  NN evaluations per game   : {tot_nn/n:,.0f} avg')
+
+    # Cache effectiveness: how many evaluator calls were served without a forward pass.
+    lookups = tot_nn + tot_hits
+    if lookups > 0:
+        print(f'  Evaluator cache hit rate  : {pct(tot_hits, lookups)}  '
+              f'({tot_hits:,} hits / {lookups:,} lookups)')
+        if tot_nn > 0:
+            print(f'  Forward passes saved      : {tot_hits:,}  '
+                  f'({lookups/tot_nn:.2f}x fewer than uncached)')
+
+    # Playout cap split. With the cap off every move is "full", which is how you
+    # tell from the log alone whether the cap is actually active on the workers.
+    if tot_moves > 0:
+        if tot_fast == 0:
+            print(f'  Playout cap               : OFF (all {tot_full:,} moves full-search)')
+        else:
+            print(f'  Playout cap               : ON  — full {pct(tot_full, tot_moves)}, '
+                  f'fast {pct(tot_fast, tot_moves)}')
+            print(f'  Policy targets per game   : {tot_full/n:,.0f} of {tot_moves/n:,.0f} moves')
+            print(f'    (value targets come from every move, so the value head still '
+                  f'sees all {tot_moves/n:,.0f})')
+
+    # Cost trend: first vs last quarter. Sims/game climbs when games get longer,
+    # which is the usual reason throughput sags mid-run.
+    if n >= 8:
+        q = max(2, n // 4)
+        first, last = search_costs[:q], search_costs[-q:]
+        f_sims = sum(c['sims'] for c in first) / len(first)
+        l_sims = sum(c['sims'] for c in last) / len(last)
+        f_mv = sum(c['moves'] for c in first) / len(first)
+        l_mv = sum(c['moves'] for c in last) / len(last)
+        f_hr = sum(c['hit_rate'] for c in first) / len(first)
+        l_hr = sum(c['hit_rate'] for c in last) / len(last)
+        arrow = '↑' if l_sims > f_sims else ('↓' if l_sims < f_sims else '=')
+        _label = f'Trend (first {q} → last {q})'
+        print(f'  {_label:<26}: '
+              f'sims/game {f_sims:,.0f} → {l_sims:,.0f} {arrow}  |  '
+              f'moves {f_mv:.0f} → {l_mv:.0f}  |  '
+              f'hit rate {f_hr:.3f} → {l_hr:.3f}')
+
+    # Remote vs local, so a slow worker fleet is visible here too.
+    remote = [c for c in search_costs if c['is_remote']]
+    local  = [c for c in search_costs if not c['is_remote']]
+    if remote and local:
+        print(f'  Local  : {len(local):4d} games, {sum(c["sims"] for c in local)/len(local):,.0f} sims/game, '
+              f'hit rate {sum(c["hit_rate"] for c in local)/len(local):.3f}')
+        print(f'  Remote : {len(remote):4d} games, {sum(c["sims"] for c in remote)/len(remote):,.0f} sims/game, '
+              f'hit rate {sum(c["hit_rate"] for c in remote)/len(remote):.3f}')
+
 
 def print_trigger_vs_winner(mcts_games):
     """Report cases where the player who triggered the end condition differs from the winner."""
@@ -734,6 +834,9 @@ def report(data, window=50, show_early_terminations=False):
             wr = b_player_wins[p] / b_player_games[p] if b_player_games[p] else 0
             print(f'    Player {p}: {b_player_wins[p]:4d} wins / {b_player_games[p]:4d} games = '
                   f'{pct(b_player_wins[p], b_player_games[p]):6s}  {bar(wr, 0.5)}')
+
+    # ── Self-play search cost ────────────────────────────────────────────
+    print_search_cost(data.get('search_costs', []))
 
     # ── Win conditions (MCTS only) ────────────────────────────────────────────
     mcts_games = [g for g in games if not g['is_bootstrap']]
@@ -1302,6 +1405,86 @@ _REMOTE_SSH_USER = 'robp'
 _REMOTE_LOG_DIR  = '/media/robp/UD/Projects/open_spiel'
 
 
+def plot_search_cost(search_costs, window=25, run_start=None):
+    """Two stacked panels sharing the win-rate chart's x-axis (hours since run start):
+    simulations and NN evaluations per game on top, cache hit rate and full-search
+    share below. Makes it obvious when self-play cost creeps up as games lengthen.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print('matplotlib not available. Install with: pip install matplotlib')
+        return
+
+    if not search_costs:
+        return
+    if len(search_costs) < window:
+        print(f'  Not enough SEARCH COST games for a {window}-game moving average '
+              f'(have {len(search_costs)}).')
+        return
+
+    if run_start is None:
+        run_start = search_costs[0]['time']
+
+    def to_hours(t):
+        return (t - run_start).total_seconds() / 3600
+
+    def moving(key, scale=1.0):
+        xs, ys = [], []
+        vals = [c[key] * scale for c in search_costs]
+        for i in range(window - 1, len(search_costs)):
+            xs.append(to_hours(search_costs[i]['time']))
+            ys.append(sum(vals[i - window + 1:i + 1]) / window)
+        return xs, ys
+
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, sharex=True, figsize=(13, 7), dpi=100,
+        gridspec_kw={'height_ratios': [3, 2]})
+
+    xs, sims = moving('sims')
+    _, nn = moving('nn_evals')
+    _, moves = moving('moves')
+    ax_top.plot(xs, sims, linewidth=1.5, color='darkorange',
+                label=f'Simulations / game ({window}-game avg)')
+    ax_top.plot(xs, nn, linewidth=1.5, color='seagreen',
+                label=f'NN evaluations / game ({window}-game avg)')
+    ax_top.set_ylabel('Per game')
+    ax_top.grid(True, alpha=0.3)
+    ax_top.legend(loc='upper left')
+    ax_top.set_title('Self-play search cost')
+
+    # Game length on a secondary axis: the usual driver of rising cost.
+    ax_len = ax_top.twinx()
+    ax_len.plot(xs, moves, linewidth=1.0, color='slategray', alpha=0.6,
+                linestyle='--', label=f'Moves / game ({window}-game avg)')
+    ax_len.set_ylabel('Moves / game', color='slategray')
+    ax_len.tick_params(axis='y', labelcolor='slategray')
+    ax_len.legend(loc='upper right')
+
+    _, hit = moving('hit_rate', 100.0)
+    ax_bot.plot(xs, hit, linewidth=1.5, color='steelblue',
+                label=f'Evaluator cache hit rate ({window}-game avg)')
+
+    # Full-search share: flat at 100% with the playout cap off, near
+    # playout_cap_full_prob with it on.
+    full_share = []
+    for i in range(window - 1, len(search_costs)):
+        chunk = search_costs[i - window + 1:i + 1]
+        tm = sum(c['moves'] for c in chunk)
+        full_share.append(100.0 * sum(c['full_moves'] for c in chunk) / tm if tm else 0.0)
+    ax_bot.plot(xs, full_share, linewidth=1.5, color='purple',
+                label=f'Full-search moves ({window}-game avg)')
+
+    ax_bot.set_ylabel('Percent')
+    ax_bot.set_xlabel('Hours since run start')
+    ax_bot.set_ylim(0, 100)
+    ax_bot.grid(True, alpha=0.3)
+    ax_bot.legend(loc='upper left')
+
+    plt.tight_layout()
+    plt.show()
+
+
 def fetch_remote_value_checks(log_path, ssh_password):
     """SSH to the laptop actor host and return raw log lines containing 'Value check'.
 
@@ -1532,6 +1715,8 @@ def main():
     if show_charts:
         if csv_path:
             plot_value_checks(csv_path)
+        plot_search_cost(data.get('search_costs', []), window=args.window,
+                         run_start=data.get('first_time'))
         mcts_games = [g for g in data['games'] if not g['is_bootstrap']]
         plot_win_rate(mcts_games, window=args.window,
                      trainer_losses=data.get('trainer_losses', []),
