@@ -192,7 +192,8 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                     if args.save_buffer_path:
                         try:
                             tmp_path = args.save_buffer_path + ".tmp"
-                            with gzip.open(tmp_path, 'wb') as f:
+                            with gzip.open(tmp_path, 'wb',
+                                           compresslevel=getattr(args, 'buffer_compresslevel', 1)) as f:
                                 pickle.dump({
                                     'bootstrap_buffer':      local_replay_buffer.bootstrap_buffer,
                                     'mcts_natural_buffer':   local_replay_buffer.mcts_natural_buffer,
@@ -307,7 +308,14 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                 try:
                     tmp_path = args.save_buffer_path + ".tmp"
                     log(LogLevel.INFO, f"Trainer: Saving buffer to {tmp_path} ...")
-                    with gzip.open(tmp_path, 'wb') as f:
+                    # compresslevel matters a lot here: gzip's default of 9 costs about
+                    # 41s for 34k entries and ~4 minutes for 200k, and this save is
+                    # synchronous, so that time is training time lost. Level 1 saves
+                    # 200k in ~32s -- faster than level 9 managed for 34k -- for a file
+                    # roughly 2x larger, which is irrelevant at these sizes.
+                    _save_t0 = time.time()
+                    with gzip.open(tmp_path, 'wb',
+                                   compresslevel=getattr(args, 'buffer_compresslevel', 1)) as f:
                         pickle.dump({
                             'bootstrap_buffer':      local_replay_buffer.bootstrap_buffer,
                             'mcts_natural_buffer':   local_replay_buffer.mcts_natural_buffer,
@@ -315,6 +323,12 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                             'mcts_raregoods_buffer': local_replay_buffer.mcts_raregoods_buffer,
                         }, f)
                     os.replace(tmp_path, args.save_buffer_path)
+                    _save_el = time.time() - _save_t0
+                    _save_mb = os.path.getsize(args.save_buffer_path) / (1024 * 1024)
+                    log(LogLevel.INFO,
+                        f"Trainer: BUFFER SAVE took {_save_el:.1f}s for {len(local_replay_buffer):,} "
+                        f"entries ({_save_mb:.1f} MB, compresslevel="
+                        f"{getattr(args, 'buffer_compresslevel', 1)})")
                     log(LogLevel.INFO,
                         f"Trainer: Buffer saved to {args.save_buffer_path} — "
                         f"bootstrap={len(local_replay_buffer.bootstrap_buffer)}, "
@@ -1523,6 +1537,11 @@ def main(args):
     actor_pool = {}
     next_actor_id = 0
     total_games_processed = 0
+    # Value-target range tracking. tanh caps the value head at [-1, +1], so any
+    # target outside that range is unreachable and its gradient vanishes -- worth
+    # knowing about rather than discovering it in a buffer dump months later.
+    _vt_min, _vt_max = float('inf'), float('-inf')
+    _vt_saturation_warned = False
     jobs_dispatched = 0
     jobs_timed_out = 0        # cumulative jobs assumed lost to spot preemption / crash
     start_time = time.time()
@@ -1548,6 +1567,15 @@ def main(args):
 
     # --- 3. UNIFIED Main Learner Loop ---
     bootstrap_transition_logged = False
+    log(LogLevel.INFO,
+        f"Learner: VALUE TARGET CONFIG = gamma {getattr(args, 'gamma', 0.997)}, "
+        f"buffer {args.replay_buffer_size}, batch {args.batch_size}, "
+        f"train_interval {getattr(args, 'train_interval_seconds', 10)}s"
+        + ("  [gamma=1.0: targets independent of moves remaining]"
+           if getattr(args, 'gamma', 0.997) >= 1.0 else
+           "  [gamma<1: targets depend on moves remaining, which the observation "
+           "does not encode -- see mali_ba.ini]"))
+
     while total_games_processed < args.num_episodes:
 
 
@@ -1651,7 +1679,15 @@ def main(args):
             log(LogLevel.INFO, f"LEARNER ({phase_label}) RECEIVED GAME #{total_games_processed}/{args.num_episodes}. "
                             f"Length: {len(trajectory)} moves. Returns: {returns}")
 
-            GAMMA = 0.997  # Discount factor. Rewards further in the future are worth slightly less.
+            # Discount factor for the value target. NOTE: with gamma < 1 the target for
+            # a given position depends on how many moves remain, but the observation
+            # tensor encodes no move count or progress-to-timeout -- so the network
+            # cannot tell a certain win 400 moves out (target ~ +0.36 at gamma=0.997)
+            # from the same win 20 moves out (target ~ +1.13), and regresses to the
+            # mean of the two. gamma = 1.0 removes that unobservable dependency; the
+            # "win sooner" incentive is already carried by time_penalty and
+            # max_moves_penalty, so gamma < 1 is largely redundant with them.
+            GAMMA = getattr(args, 'gamma', 0.997)
 
             # The 'returns' variable from the C++ state is the final terminal outcome.
             # Length penalty is handled in C++ via time_penalty (per-step) and
@@ -1677,6 +1713,19 @@ def main(args):
                 
                 # Add this step's data with the correctly calculated value to our list.
                 trajectory_with_values.append((observation, player, policy_target, current_state_value_vector))
+
+                _step_min = min(current_state_value_vector)
+                _step_max = max(current_state_value_vector)
+                if _step_min < _vt_min: _vt_min = _step_min
+                if _step_max > _vt_max: _vt_max = _step_max
+                if not _vt_saturation_warned and (_step_min < -1.0 or _step_max > 1.0):
+                    _vt_saturation_warned = True
+                    log(LogLevel.WARN,
+                        f"Trainer: VALUE TARGET OUT OF RANGE — saw {_step_min:+.3f}..{_step_max:+.3f}, "
+                        f"outside the value head's tanh range [-1, +1]. Those targets are "
+                        f"unreachable and their gradients vanish. Reduce the reward magnitudes "
+                        f"(max_moves_penalty, loss_penalty, rare_goods_bonus) so the discounted "
+                        f"returns stay inside [-1, +1].")
                 
                 # The value we just calculated becomes the "next state value" for the previous step in the next iteration.
                 next_state_discounted_returns = current_state_value_vector
@@ -1743,6 +1792,11 @@ def main(args):
                             break
             if not args.heuristic_only:
                 log(LogLevel.INFO, f"  [DBG] Queued {queued_count} experiences to replay_buffer_queue.")
+
+            if total_games_processed % 25 == 0 and _vt_max > _vt_min:
+                log(LogLevel.INFO,
+                    f"Trainer: VALUE TARGET RANGE = {_vt_min:+.3f}..{_vt_max:+.3f} "
+                    f"(gamma={GAMMA}, tanh limit ±1.0)")
 
             # Send a per-game summary so the trainer can track average game lengths
             # and adaptively adjust the MCTS/bootstrap sampling fraction.
@@ -1890,6 +1944,14 @@ if __name__ == "__main__":
                         help="Play-phase move count where tier 3 begins. Overrides ini.")
     parser.add_argument('--sim_tier3_sims', type=int, default=None,
                         help="MCTS simulations for tier 3 moves (late game). Overrides ini.")
+    parser.add_argument('--buffer_compresslevel', type=int, default=None, choices=range(0, 10),
+                        help="gzip level for replay-buffer saves (0-9). The save is synchronous, "
+                             "so this is training time: level 9 costs ~4 min for a 200k buffer, "
+                             "level 1 about 32s. Overrides ini.")
+    parser.add_argument('--gamma', type=float, default=None,
+                        help="Discount factor for value targets. 1.0 makes a position's target "
+                             "independent of how many moves remain, which the observation tensor "
+                             "does not encode. Overrides ini.")
     parser.add_argument('--playout_cap_enabled', action='store_true', default=None,
                         help="Enable playout cap randomization: most moves get a cheap "
                              "search and are used as value-only samples, a minority get "
@@ -2068,6 +2130,10 @@ if __name__ == "__main__":
         parsed_args.sim_tier3_start = _ini_int('sim_tier3_start', 300)
     if parsed_args.sim_tier3_sims is None:
         parsed_args.sim_tier3_sims = _ini_int('sim_tier3_sims', 500)
+    if parsed_args.buffer_compresslevel is None:
+        parsed_args.buffer_compresslevel = _ini_int('buffer_compresslevel', 1)
+    if parsed_args.gamma is None:
+        parsed_args.gamma = _ini_float('gamma', 0.997)
     if parsed_args.playout_cap_enabled is None:
         parsed_args.playout_cap_enabled = _ini_bool('playout_cap_enabled', False)
     if parsed_args.playout_cap_full_prob is None:

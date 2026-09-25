@@ -23,7 +23,9 @@ def load_buffer(path):
 
 
 def save_buffer(buf, path):
-    with gzip.open(path, 'wb') as f:
+    # compresslevel=1: level 9 (gzip's default) takes ~4 minutes on a 200k-entry
+    # buffer for a file only ~2x smaller. See buffer_compresslevel in mali_ba.ini.
+    with gzip.open(path, 'wb', compresslevel=1) as f:
         pickle.dump(buf, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 

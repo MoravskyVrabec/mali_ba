@@ -112,7 +112,9 @@ def main():
     }
 
     print(f"Saving to {dst_path} ...")
-    with gzip.open(dst_path, "wb") as f:
+    # compresslevel=1: level 9 (gzip's default) takes ~4 minutes on a 200k-entry
+    # buffer for a file only ~2x smaller. See buffer_compresslevel in mali_ba.ini.
+    with gzip.open(dst_path, "wb", compresslevel=1) as f:
         pickle.dump(new_buf, f)
 
     print("Done.")
