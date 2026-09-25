@@ -413,6 +413,7 @@ def print_value_trajectory(mcts_games, value_checks):
                  'rare':     defaultdict(list),
                  'timeout':  defaultdict(list)}
     cat_counts = {'timbuktu': 0, 'rare': 0, 'timeout': 0}
+    cat_returns = {'timbuktu': [], 'rare': [], 'timeout': []}
 
     # Group checks by game first so we can look up the outcome once per game
     game_checks = defaultdict(list)
@@ -433,15 +434,15 @@ def print_value_trajectory(mcts_games, value_checks):
         else:
             cat = 'timeout'
         cat_counts[cat] += 1
+        if returns:
+            cat_returns[cat].append(max(returns))
 
         for vc in checks:
             pvals = [vc.get('p0'), vc.get('p1'), vc.get('p2')]
             pvals = [v for v in pvals if v is not None]
             if not pvals:
                 continue
-            if cat == 'timeout':
-                cat_moves[cat][vc['move']].append(max(pvals))
-            elif widx >= 0 and widx < len([vc.get('p0'), vc.get('p1'), vc.get('p2')]):
+            if 0 <= widx < 3:
                 wval = [vc.get('p0'), vc.get('p1'), vc.get('p2')][widx]
                 if wval is not None:
                     cat_moves[cat][vc['move']].append(wval)
@@ -456,8 +457,19 @@ def print_value_trajectory(mcts_games, value_checks):
     n_t = cat_counts['timbuktu']
     n_r = cat_counts['rare']
     n_o = cat_counts['timeout']
-    print(f'  Winner\'s value at checkpoint (timeouts: max player value).')
+    def mean_ret(cat):
+        vals = cat_returns[cat]
+        return f'{sum(vals)/len(vals):+.2f}' if vals else '  n/a'
+
+    print(f'  Value the net assigned to the player who finished with the BEST return,')
+    print(f'  averaged over games, at each 20-move checkpoint. Same rule for all three')
+    print(f'  columns, so they are directly comparable.')
     print(f'  Games with checks: Timbuktu={n_t}  Rare goods={n_r}  Timeout={n_o}')
+    print(f'  Actual mean best return: Timbuktu={mean_ret("timbuktu")}  '
+          f'Rare goods={mean_ret("rare")}  Timeout={mean_ret("timeout")}')
+    print(f'  (compare each column against its own actual return above -- the value')
+    print(f'   target late in a game approaches it, so a large gap near the last')
+    print(f'   checkpoints is miscalibration, not discounting)')
     print()
     print(f'  {"Move":>5}  {"Timbuktu":>14}  {"Rare goods":>14}  {"Timeout":>14}')
     print(f'  {"─"*5}  {"─"*14}  {"─"*14}  {"─"*14}')
