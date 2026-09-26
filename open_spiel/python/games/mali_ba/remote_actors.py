@@ -5,9 +5,14 @@ Run this on a second machine to contribute actor processes to an existing
 train_mali_ba.py session that was started with --distributed.
 
 Both machines must have the same codebase and compiled pyspiel/mali_ba.
-The remote actors use CPU for MCTS (same as local actors); if the remote
-machine has a GPU it will be used for the neural network inference inside
-the evaluator unless you pass --cpu_only.
+
+Actors always run MCTS on the CPU. Neural-network inference is the real cost:
+with TF single-threaded (which actors force, to avoid oversubscribing the CPU)
+one batch-1 forward pass through both nets costs ~37ms, and that is essentially
+all of self-play time. If this machine has a GPU, pass --inference_server to run
+one process that owns it and batches every local actor's evaluations over shared
+memory; measured ~7x more games on the trainer host. Without it each actor does
+its own single-threaded CPU inference.
 
 Setup on the remote machine
 ---------------------------
@@ -25,6 +30,7 @@ Usage
         [--server_port 50000] \\
         [--num_actors 8] \\
         [--authkey malibatraining2024] \\
+        [--inference_server] [--inference_max_batch 32] \\
         [--cpu_only]
 """
 
@@ -52,7 +58,8 @@ def _should_relay(line):
 
 
 def _actor_worker(actor_id, initial_game_params, actor_args,
-                  job_queue, result_queue, games_per_actor, log_queue=None):
+                  job_queue, result_queue, games_per_actor, log_queue=None,
+                  arena=None, server_weights_queue=None, inference_slot=None):
     """
     Thin wrapper that imports actor_process from train_mali_ba and runs it.
     Defined at module level so it is picklable for mp.Process on all platforms.
@@ -97,7 +104,9 @@ def _actor_worker(actor_id, initial_game_params, actor_args,
     from train_mali_ba import actor_process
     try:
         actor_process(actor_id, initial_game_params, actor_args,
-                      job_queue, result_queue, games_per_actor)
+                      job_queue, result_queue, games_per_actor,
+                      arena=arena, server_weights_queue=server_weights_queue,
+                      inference_slot=inference_slot)
     finally:
         if relay_thread is not None:
             # Replace fd 1/2 with devnull so the relay thread sees EOF and exits.
@@ -121,11 +130,25 @@ def main():
     parser.add_argument('--actor_id_start', type=int, default=100000,
                         help='Starting actor ID for this remote process '
                              '(use different values per machine to avoid log collisions)')
+    parser.add_argument('--inference_server', action='store_true',
+                        help='Run a batched inference server on this machine\'s GPU and '
+                             'route every local actor through it. Actors otherwise do '
+                             'their own single-threaded CPU inference at ~37ms per call, '
+                             'which is essentially all of self-play cost.')
+    parser.add_argument('--inference_max_batch', type=int, default=32,
+                        help='Largest batch the inference server assembles (default 32).')
+    parser.add_argument('--inference_vram_mb', type=int, default=4096,
+                        help='VRAM cap for the inference server (default 4096 MB).')
     parser.add_argument('--cpu_only', action='store_true',
                         help='Force CPU-only TF even if a GPU is present')
     args = parser.parse_args()
 
-    if args.cpu_only:
+    if args.cpu_only and args.inference_server:
+        print("[Remote] --cpu_only with --inference_server would put the server on the "
+              "CPU, where batching is no faster than per-actor inference "
+              "(batch-32 single-threaded is 36.6ms/sample vs 37.1 at batch 1). "
+              "Ignoring --cpu_only; actors remain CPU-only regardless.")
+    elif args.cpu_only:
         os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
     # --- Connect to the queue server ---
@@ -193,21 +216,77 @@ def main():
     )
     initial_game_params = config['initial_game_params']
 
+    # --- Optional batched inference server on this machine's GPU ---------------
+    # Unlike the trainer host, this process has no direct source of weights: they
+    # only arrive inside the jobs the actors pull off the queue. So each actor
+    # republishes its job's weights to the server, which coalesces to the newest
+    # (see actor_process). That means the server sits idle until the first actor
+    # picks up a job, which is expected.
+    inference_arena = None
+    inference_server_proc = None
+    inference_weights_queue = None
+    inference_stop = None
+    inference_free_slots = []
+    inference_slot_by_proc = {}
+    if args.inference_server:
+        try:
+            import pyspiel
+            from inference_server import InferenceArena, server_loop, STOP as INF_STOP
+            _g = pyspiel.load_game(config['game_name'], initial_game_params)
+            _shape = _g.observation_tensor_shape()
+            _obs = 1
+            for _d in _shape:
+                _obs *= _d
+            _n_slots = max(1, args.num_actors) + 4
+            inference_arena = InferenceArena(_n_slots, _obs,
+                                             _g.num_distinct_actions(), _g.num_players())
+            inference_weights_queue = mp.Queue()
+            inference_stop = mp.Event()
+            inference_server_proc = mp.Process(
+                target=server_loop,
+                args=(inference_arena, _shape, initial_game_params,
+                      inference_weights_queue, inference_stop),
+                kwargs=dict(max_batch=args.inference_max_batch,
+                            gpu_memory_limit_mb=args.inference_vram_mb,
+                            log_every=300),
+                # daemon so a killed worker cannot leave the server orphaned and
+                # still holding VRAM.
+                daemon=True)
+            inference_server_proc.start()
+            inference_free_slots = list(range(_n_slots))
+            print(f"[Remote] Inference server started (slots={_n_slots}, "
+                  f"max_batch={args.inference_max_batch}, "
+                  f"vram_cap={args.inference_vram_mb}MB). Waiting for the first "
+                  f"actor's weights...", flush=True)
+        except Exception as e:
+            print(f"[Remote] ERROR: could not start inference server ({e}). "
+                  f"Actors will use local CPU inference.", flush=True)
+            inference_arena = None
+            inference_server_proc = None
+
     # --- Actor pool management ---
     actor_pool = {}
     next_actor_id = args.actor_id_start
 
     def spawn():
         nonlocal next_actor_id
+        # Slots are assigned here rather than claimed in the child so a finished
+        # actor's slot can be reused; claiming in the child leaks one per respawn
+        # and silently drops later actors back to CPU inference once the arena fills.
+        slot = inference_free_slots.pop(0) if inference_free_slots else None
         p = mp.Process(
             target=_actor_worker,
             args=(next_actor_id, initial_game_params, actor_args,
-                  job_queue, result_queue, actor_args.games_per_actor, log_queue),
+                  job_queue, result_queue, actor_args.games_per_actor, log_queue,
+                  inference_arena, inference_weights_queue, slot),
             daemon=False
         )
         p.start()
         actor_pool[p] = next_actor_id
-        print(f"[Remote] Spawned actor {next_actor_id}", flush=True)
+        if slot is not None:
+            inference_slot_by_proc[p] = slot
+        print(f"[Remote] Spawned actor {next_actor_id}"
+              + (f" (inference slot {slot})" if slot is not None else ""), flush=True)
         next_actor_id += 1
 
     # Initial spawn
@@ -216,14 +295,25 @@ def main():
         spawn()
 
     # Keep the pool full: respawn actors that finish their quota
+    last_stat = time.time()
     try:
         while True:
             dead = [p for p in list(actor_pool) if not p.is_alive()]
             for p in dead:
                 aid = actor_pool.pop(p)
                 p.join()
+                freed = inference_slot_by_proc.pop(p, None)
+                if freed is not None:
+                    inference_free_slots.append(freed)
                 print(f"[Remote] Actor {aid} finished, respawning...", flush=True)
                 spawn()
+            if inference_arena is not None and time.time() - last_stat >= 300:
+                st = inference_arena.stats()
+                print(f"[Remote] InferenceServer: {st['requests']:,} evals in "
+                      f"{st['batches']:,} batches (avg batch {st['avg_batch']:.1f}, "
+                      f"{st['avg_infer_ms']:.2f} ms/batch, "
+                      f"{st['ms_per_request']:.3f} ms/eval)", flush=True)
+                last_stat = time.time()
             time.sleep(2.0)
     except KeyboardInterrupt:
         print("\n[Remote] Shutting down...")
@@ -231,6 +321,22 @@ def main():
             p.terminate()
         for p in list(actor_pool):
             p.join(timeout=5)
+        if inference_server_proc is not None:
+            try:
+                if inference_arena is not None:
+                    st = inference_arena.stats()
+                    print(f"[Remote] InferenceServer totals: {st['requests']:,} evals in "
+                          f"{st['batches']:,} batches (avg batch {st['avg_batch']:.1f}, "
+                          f"{st['ms_per_request']:.3f} ms/eval)")
+                if inference_stop is not None:
+                    inference_stop.set()
+                if inference_weights_queue is not None:
+                    inference_weights_queue.put(INF_STOP)
+                inference_server_proc.join(timeout=30)
+                if inference_server_proc.is_alive():
+                    inference_server_proc.terminate()
+            except Exception as e:
+                print(f"[Remote] Inference server shutdown issue: {e}")
         print("[Remote] All actors stopped.")
 
 

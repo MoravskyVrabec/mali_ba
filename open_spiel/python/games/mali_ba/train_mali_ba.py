@@ -410,7 +410,7 @@ def log_pass_diagnostic(state, player, root, actor_id, episode_num, move_count):
 
 
 def actor_process(actor_id, game_params, args, job_queue, result_queue, games_per_actor,
-                  arena=None):
+                  arena=None, server_weights_queue=None, inference_slot=None):
     # --- (Delayed imports are the same and correct) ---
     import numpy as np
     import random
@@ -453,7 +453,8 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
     if arena is not None:
         try:
             from mali_ba.inference_server import InferenceClient
-            _infer_client = InferenceClient(arena, game.observation_tensor_shape())
+            _infer_client = InferenceClient(arena, game.observation_tensor_shape(),
+                                            slot=inference_slot)
             log(LogLevel.INFO,
                 f"Actor {actor_id}: using batched inference server (slot {_infer_client.slot}).")
         except Exception as e:
@@ -496,6 +497,20 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
         else:
             job_heuristic_weight = compute_heuristic_weight(_mcts_game_num, args)
             log(LogLevel.INFO, f"Actor {actor_id}, Game {episode_num}: heuristic_guidance_weight={job_heuristic_weight:.3f}")
+
+        # Feed the local inference server, if this machine runs one. On the trainer
+        # host main() owns the weights and forwards them directly, but a remote
+        # worker has no such hub: weights only ever arrive inside the jobs its
+        # actors pull off the queue. So each actor republishes the weights from its
+        # job to the local server, which coalesces to the newest. One push per game
+        # per actor, against games lasting minutes, so the cost is irrelevant.
+        if server_weights_queue is not None:
+            try:
+                server_weights_queue.put((policy_weights, value_weights))
+            except Exception as _e:
+                log(LogLevel.WARN,
+                    f"Actor {actor_id}: could not publish weights to local inference "
+                    f"server: {_e}")
 
         # Set weights on the two separate models
         policy_model.set_weights(policy_weights)
@@ -1393,16 +1408,23 @@ def compute_heuristic_weight(mcts_games, args):
 
 
 def spawn_actor(actor_id, initial_game_params, args, job_queue, result_queue, actor_pool,
-                actor_function, arena=None):
+                actor_function, arena=None, slot=None, slot_map=None):
     """
     Creates, starts, and tracks a new actor process using the specified actor function.
     """
-    _extra = () if (arena is None or actor_function is not actor_process) else (arena,)
+    # Slots are assigned by the parent, not claimed by the child, so a slot freed by
+    # a finished actor can be reused. Claiming in the child leaked one slot per
+    # respawn, and once the arena filled the next actor silently fell back to local
+    # CPU inference -- a 7x regression with no error anywhere.
+    _extra = (() if (arena is None or actor_function is not actor_process)
+              else (arena, None, slot))
     p = mp.Process(target=actor_function, args=(
         actor_id, initial_game_params, args, job_queue, result_queue, args.games_per_actor)
         + _extra)
     p.start()
     actor_pool[p] = actor_id # Associates the process object with its ID
+    if slot_map is not None and slot is not None:
+        slot_map[p] = slot
     print(f"Main: Spawned new actor (type: {actor_function.__name__}) with ID {actor_id}.")
 
 def log_game_outcome_debug(total_games_processed, returns, game_length, max_game_length):
@@ -1514,6 +1536,8 @@ def main(args):
     inference_server_proc = None
     inference_weights_queue = None
     inference_stop = None
+    inference_free_slots = []      # parent-managed free list
+    inference_slot_by_proc = {}    # process -> slot, so a reaped actor frees its slot
     if getattr(args, 'inference_server', False):
         try:
             from mali_ba.inference_server import (InferenceArena, server_loop as
@@ -1524,7 +1548,9 @@ def main(args):
             for _d in _shape:
                 _obs_size *= _d
             # One slot per local actor, plus headroom for respawns claiming new slots.
-            _n_slots = max(1, args.num_actors) * 4 + 8
+            # Exactly one slot per concurrent actor (plus a little headroom), since
+            # slots are now recycled when an actor is reaped.
+            _n_slots = max(1, args.num_actors) + 4
             inference_arena = InferenceArena(_n_slots, _obs_size,
                                              _tmp_game.num_distinct_actions(),
                                              _tmp_game.num_players())
@@ -1543,6 +1569,7 @@ def main(args):
                 # shutdown path below still runs first on a normal exit.
                 daemon=True)
             inference_server_proc.start()
+            inference_free_slots = list(range(_n_slots))
             log(LogLevel.INFO,
                 f"Main: inference server started (slots={_n_slots}, "
                 f"max_batch={getattr(args, 'inference_max_batch', 32)}).")
@@ -1751,16 +1778,22 @@ def main(args):
             
             # Remove the dead process from the pool
             del actor_pool[p]
+            # Recycle its inference slot before spawning the replacement.
+            _freed = inference_slot_by_proc.pop(p, None)
+            if _freed is not None:
+                inference_free_slots.append(_freed)
             
             # Immediately spawn its replacement
-            spawn_actor(next_actor_id, initial_game_params, args, job_queue, result_queue, actor_pool, current_actor_function, arena=inference_arena)
+            _slot = inference_free_slots.pop(0) if inference_free_slots else None
+            spawn_actor(next_actor_id, initial_game_params, args, job_queue, result_queue, actor_pool, current_actor_function, arena=inference_arena, slot=_slot, slot_map=inference_slot_by_proc)
             next_actor_id += 1
             
         # This separate loop is now only necessary for the initial startup,
         # but it's harmless to keep it for ensuring the pool is always full.
         while len(actor_pool) < args.num_actors:
             log(LogLevel.INFO, f"Actor pool below target ({len(actor_pool)}/{args.num_actors}). Spawning new actor.")
-            spawn_actor(next_actor_id, initial_game_params, args, job_queue, result_queue, actor_pool, current_actor_function, arena=inference_arena)
+            _slot = inference_free_slots.pop(0) if inference_free_slots else None
+            spawn_actor(next_actor_id, initial_game_params, args, job_queue, result_queue, actor_pool, current_actor_function, arena=inference_arena, slot=_slot, slot_map=inference_slot_by_proc)
             next_actor_id += 1
             
         # --- Maintain a healthy job queue size ---
