@@ -386,14 +386,21 @@ class AlphaZeroEvaluator:
     """
 
     def __init__(self, game, policy_model, value_model, heuristic_guidance_weight=0.40,
-                 cache_size=8192):
+                 cache_size=8192, client=None):
         self._game = game
         self._policy_model = policy_model
         self._value_model = value_model
         self._shape = game.observation_tensor_shape()
         self._num_actions = game.num_distinct_actions()
         self.heuristic_guidance_weight = heuristic_guidance_weight
-        self._infer = _get_shared_infer_fn(policy_model, value_model, self._shape)
+        # When an InferenceClient is supplied, forward passes go to the batched GPU
+        # inference server instead of running here. Actors run TF single-threaded
+        # (OMP_NUM_THREADS=1), where one batch-1 pass through both nets costs ~37ms
+        # and is essentially the whole cost of self-play; the same nets batched on
+        # the GPU measured ~6.9x more evaluations per second.
+        self._client = client
+        self._infer = (None if client is not None
+                       else _get_shared_infer_fn(policy_model, value_model, self._shape))
 
         # state.observation_tensor() marshals a std::vector<float> into a Python
         # list (pybind11 list_caster), which np.asarray then walks element by
@@ -438,6 +445,20 @@ class AlphaZeroEvaluator:
 
         self.cache_misses += 1
         _cp = state.current_player()
+        if self._client is not None:
+            # Server path: hand the flat observation straight over shared memory.
+            if self._obs_helper is not None and _cp >= 0:
+                self._obs_helper.set_from(state, _cp)
+                flat = self._obs_helper.tensor
+            else:
+                flat = np.asarray(state.observation_tensor(), dtype=np.float32)
+            pol, val = self._client.infer(flat)
+            entry = [val, pol, None]
+            self._cache[key] = entry
+            if len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)
+            return entry
+
         if self._obs_helper is not None and _cp >= 0:
             # set_from needs a real player; at a chance node fall through to the
             # plain call, which matches the previous behaviour exactly.

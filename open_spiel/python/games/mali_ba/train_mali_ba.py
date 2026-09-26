@@ -397,7 +397,8 @@ def log_pass_diagnostic(state, player, root, actor_id, episode_num, move_count):
             f"  [PASS_DIAG] Near-forced pass. All legal actions: {action_strs}")
 
 
-def actor_process(actor_id, game_params, args, job_queue, result_queue, games_per_actor):
+def actor_process(actor_id, game_params, args, job_queue, result_queue, games_per_actor,
+                  arena=None):
     # --- (Delayed imports are the same and correct) ---
     import numpy as np
     import random
@@ -425,11 +426,29 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
     tf.config.set_visible_devices([], 'GPU')
     if getattr(args, 'debug', False):
         pyspiel.mali_ba.set_log_level(pyspiel.mali_ba.LogLevel.DEBUG)
-    log(LogLevel.INFO, f"Actor {actor_id} started, configured for CPU-only execution.")
+    log(LogLevel.INFO, f"Actor {actor_id} started, configured for CPU-only execution "
+                       f"(inference arena: {'attached' if arena is not None else 'none'}).")
 
     # --- Create ONE game object and ONE model for the actor's lifetime ---
     log(LogLevel.INFO, f"Actor {actor_id}: Initializing its game instance and model.")
     game = pyspiel.load_game(args.game_name, game_params)
+
+    # Batched GPU inference client -- must come after `game`, whose observation shape
+    # it needs. Local models are still built below: they serve the periodic
+    # early-termination value checks and debug dumps, roughly 21 calls per game.
+    # Only the MCTS evaluator, which is ~99.8% of move-loop time, uses the server.
+    _infer_client = None
+    if arena is not None:
+        try:
+            from mali_ba.inference_server import InferenceClient
+            _infer_client = InferenceClient(arena, game.observation_tensor_shape())
+            log(LogLevel.INFO,
+                f"Actor {actor_id}: using batched inference server (slot {_infer_client.slot}).")
+        except Exception as e:
+            log(LogLevel.WARN,
+                f"Actor {actor_id}: could not attach to inference server ({e}); "
+                f"falling back to local CPU inference.")
+            _infer_client = None
         # Get the max game length
     max_game_length = game.max_game_length()
     log(LogLevel.INFO, f"Using max game length: {max_game_length}")
@@ -503,7 +522,8 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
 
         # Pass both models to the evaluator
         evaluator = AlphaZeroEvaluator(game, policy_model, value_model,
-                                       heuristic_guidance_weight=job_heuristic_weight)
+                                       heuristic_guidance_weight=job_heuristic_weight,
+                                       client=_infer_client)
         
         bot = mcts.MCTSBot(
             game=game, uct_c=args.uct_c, max_simulations=args.max_simulations,
@@ -1360,12 +1380,15 @@ def compute_heuristic_weight(mcts_games, args):
     return initial + t * (final - initial)
 
 
-def spawn_actor(actor_id, initial_game_params, args, job_queue, result_queue, actor_pool, actor_function):
+def spawn_actor(actor_id, initial_game_params, args, job_queue, result_queue, actor_pool,
+                actor_function, arena=None):
     """
     Creates, starts, and tracks a new actor process using the specified actor function.
     """
+    _extra = () if (arena is None or actor_function is not actor_process) else (arena,)
     p = mp.Process(target=actor_function, args=(
-        actor_id, initial_game_params, args, job_queue, result_queue, args.games_per_actor))
+        actor_id, initial_game_params, args, job_queue, result_queue, args.games_per_actor)
+        + _extra)
     p.start()
     actor_pool[p] = actor_id # Associates the process object with its ID
     print(f"Main: Spawned new actor (type: {actor_function.__name__}) with ID {actor_id}.")
@@ -1468,6 +1491,55 @@ def main(args):
     replay_buffer_queue = mp.Queue(maxsize=max_replay_items)
 
     weights_queue = mp.Queue()
+
+    # --- Batched GPU inference server ---------------------------------------
+    # Actors run TF single-threaded on purpose, where one batch-1 pass through both
+    # nets costs ~37ms and is essentially all of self-play cost. One process owning
+    # the GPU and batching every actor's requests measured ~6.9x more evaluations
+    # per second. Local (same-machine) actors attach via shared memory; remote
+    # actors are unaffected and keep doing their own CPU inference.
+    inference_arena = None
+    inference_server_proc = None
+    inference_weights_queue = None
+    inference_stop = None
+    if getattr(args, 'inference_server', False):
+        try:
+            from mali_ba.inference_server import (InferenceArena, server_loop as
+                                                  _inference_server_loop, STOP as _INF_STOP)
+            _tmp_game = pyspiel.load_game(args.game_name, initial_game_params)
+            _shape = _tmp_game.observation_tensor_shape()
+            _obs_size = 1
+            for _d in _shape:
+                _obs_size *= _d
+            # One slot per local actor, plus headroom for respawns claiming new slots.
+            _n_slots = max(1, args.num_actors) * 4 + 8
+            inference_arena = InferenceArena(_n_slots, _obs_size,
+                                             _tmp_game.num_distinct_actions(),
+                                             _tmp_game.num_players())
+            inference_weights_queue = mp.Queue()
+            inference_stop = mp.Event()
+            inference_server_proc = mp.Process(
+                target=_inference_server_loop,
+                args=(inference_arena, _shape, initial_game_params,
+                      inference_weights_queue, inference_stop),
+                kwargs=dict(max_batch=getattr(args, 'inference_max_batch', 32),
+                            log_every=300),
+                # daemon=True so the server cannot outlive the parent. With
+                # daemon=False a killed run (SIGTERM, timeout, Ctrl-C) left the
+                # server orphaned and still holding several GB of VRAM -- observed
+                # five such strays pinning the full 24GB card. The graceful
+                # shutdown path below still runs first on a normal exit.
+                daemon=True)
+            inference_server_proc.start()
+            log(LogLevel.INFO,
+                f"Main: inference server started (slots={_n_slots}, "
+                f"max_batch={getattr(args, 'inference_max_batch', 32)}).")
+        except Exception as _e:
+            log(LogLevel.ERROR,
+                f"Main: failed to start inference server ({_e}); actors will use "
+                f"local CPU inference.")
+            inference_arena = None
+            inference_server_proc = None
     stats_queue = mp.Queue()
     trainer_signal_queue = mp.Queue()  # main sends control signals to trainer
 
@@ -1599,6 +1671,13 @@ def main(args):
     else:
         log(LogLevel.INFO, "Learner waiting for initial weights from trainer...")
         current_weights = weights_queue.get()
+        if inference_weights_queue is not None:
+            inference_weights_queue.put(current_weights)
+            if inference_arena is not None and not inference_arena.ready.wait(600):
+                log(LogLevel.ERROR,
+                    "Main: inference server did not become ready; actors will fall back "
+                    "to local CPU inference.")
+                inference_arena = None
         log(LogLevel.INFO, "Learner received initial weights.")
 
     # --- 3. UNIFIED Main Learner Loop ---
@@ -1662,14 +1741,14 @@ def main(args):
             del actor_pool[p]
             
             # Immediately spawn its replacement
-            spawn_actor(next_actor_id, initial_game_params, args, job_queue, result_queue, actor_pool, current_actor_function)
+            spawn_actor(next_actor_id, initial_game_params, args, job_queue, result_queue, actor_pool, current_actor_function, arena=inference_arena)
             next_actor_id += 1
             
         # This separate loop is now only necessary for the initial startup,
         # but it's harmless to keep it for ensuring the pool is always full.
         while len(actor_pool) < args.num_actors:
             log(LogLevel.INFO, f"Actor pool below target ({len(actor_pool)}/{args.num_actors}). Spawning new actor.")
-            spawn_actor(next_actor_id, initial_game_params, args, job_queue, result_queue, actor_pool, current_actor_function)
+            spawn_actor(next_actor_id, initial_game_params, args, job_queue, result_queue, actor_pool, current_actor_function, arena=inference_arena)
             next_actor_id += 1
             
         # --- Maintain a healthy job queue size ---
@@ -1877,6 +1956,8 @@ def main(args):
                 except: break
             if latest_weights is not None:
                 current_weights = latest_weights
+                if inference_weights_queue is not None:
+                    inference_weights_queue.put(current_weights)
                 log(LogLevel.INFO, f"Learner updated to latest weights at game #{total_games_processed}. Distributing to {len(actor_pool)} actors.")
 
             
@@ -1925,6 +2006,29 @@ def main(args):
     for p in actor_pool:
         p.join(timeout=60)
         if p.is_alive(): p.terminate()
+
+    # Stop the inference server last: actors may still be blocked on it above, and
+    # a client waiting on a dead server would only unblock on its timeout.
+    if inference_server_proc is not None:
+        try:
+            if inference_arena is not None:
+                _s = inference_arena.stats()
+                log(LogLevel.INFO,
+                    f"InferenceServer totals: {_s['requests']:,} evals in "
+                    f"{_s['batches']:,} batches (avg batch {_s['avg_batch']:.1f}, "
+                    f"{_s['avg_infer_ms']:.2f} ms/batch, "
+                    f"{_s['ms_per_request']:.3f} ms/eval)")
+            if inference_stop is not None:
+                inference_stop.set()
+            if inference_weights_queue is not None:
+                from mali_ba.inference_server import STOP as _INF_STOP2
+                inference_weights_queue.put(_INF_STOP2)
+            inference_server_proc.join(timeout=60)
+            if inference_server_proc.is_alive():
+                log(LogLevel.WARN, "Inference server did not stop gracefully. Forcing.")
+                inference_server_proc.terminate()
+        except Exception as _e:
+            log(LogLevel.WARN, f"Inference server shutdown issue: {_e}")
 
     log(LogLevel.INFO, "All processes terminated.")
     end_time = time.time()
@@ -1984,6 +2088,17 @@ if __name__ == "__main__":
                         help="gzip level for replay-buffer saves (0-9). The save is synchronous, "
                              "so this is training time: level 9 costs ~4 min for a 200k buffer, "
                              "level 1 about 32s. Overrides ini.")
+    parser.add_argument('--inference_server', action='store_true', default=None,
+                        help="Route MCTS neural-network evaluation through a single "
+                             "batched GPU inference server instead of each actor running "
+                             "its own single-threaded CPU forward passes. Measured ~6.9x "
+                             "more evaluations per second. Overrides ini.")
+    parser.add_argument('--no_inference_server', dest='inference_server',
+                        action='store_false',
+                        help="Disable the batched inference server even if the ini enables it.")
+    parser.set_defaults(inference_server=None)
+    parser.add_argument('--inference_max_batch', type=int, default=None,
+                        help="Maximum batch the inference server assembles. Overrides ini.")
     parser.add_argument('--gamma', type=float, default=None,
                         help="Discount factor for value targets. 1.0 makes a position's target "
                              "independent of how many moves remain, which the observation tensor "
@@ -2166,6 +2281,10 @@ if __name__ == "__main__":
         parsed_args.sim_tier3_start = _ini_int('sim_tier3_start', 300)
     if parsed_args.sim_tier3_sims is None:
         parsed_args.sim_tier3_sims = _ini_int('sim_tier3_sims', 500)
+    if parsed_args.inference_server is None:
+        parsed_args.inference_server = _ini_bool('inference_server', False)
+    if parsed_args.inference_max_batch is None:
+        parsed_args.inference_max_batch = _ini_int('inference_max_batch', 32)
     if parsed_args.buffer_compresslevel is None:
         parsed_args.buffer_compresslevel = _ini_int('buffer_compresslevel', 1)
     if parsed_args.gamma is None:
