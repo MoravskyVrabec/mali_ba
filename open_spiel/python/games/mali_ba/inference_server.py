@@ -75,6 +75,11 @@ class InferenceArena:
         self.stat_scatter_ns = mp.Value("q", 0)
         self.stat_poll_ns = mp.Value("q", 0)
         self.ready = mp.Event()                        # server has loaded weights
+        # Set as soon as the server confirms it has a GPU, before any weights
+        # arrive. A remote worker cannot wait for `ready` (weights only reach it
+        # via its own actors' jobs), so this is what the parent checks to decide
+        # whether using the server is safe at all.
+        self.gpu_ok = mp.Event()
 
     def claim_slot(self):
         """Reserve a slot index for one client. Raises if the arena is full."""
@@ -169,11 +174,25 @@ def server_loop(arena, shape, game_params, weights_queue, stop_event,
         log(LogLevel.INFO,
             f"InferenceServer: COMPUTE DEVICE = GPU x{len(gpus)}, max_batch={max_batch}, "
             f"vram_cap={gpu_memory_limit_mb or 'growth'}MB")
+        arena.gpu_ok.set()
     else:
-        log(LogLevel.WARN,
-            "InferenceServer: COMPUTE DEVICE = CPU ONLY -- no GPU visible. Serving "
-            "batched inference on CPU is not a win over per-actor inference; check the "
-            "CUDA runtime wheels (pip install 'tensorflow[and-cuda]').")
+        # REFUSE to serve. A CPU-only batched server is not merely no better than
+        # per-actor inference, it is dramatically worse: every client serialises
+        # through one single-threaded inference stream. Measured, batch-32
+        # single-threaded takes ~1170ms, so N clients share ~27 evals/s, against
+        # ~27 evals/s PER actor when each does its own. With 28 actors that is a
+        # ~28x regression. Exiting here leaves gpu_ok unset, which the parent takes
+        # as "do not hand the arena to actors", so they fall back to local
+        # inference -- slow, but the correct slow.
+        log(LogLevel.ERROR,
+            f"InferenceServer: COMPUTE DEVICE = CPU ONLY -- no GPU visible to "
+            f"TensorFlow {tf.__version__} (built_with_cuda="
+            f"{tf.test.is_built_with_cuda()}). Refusing to serve: a batched CPU "
+            f"server would serialise every actor through one inference stream and "
+            f"be far slower than letting each actor infer locally. If this machine "
+            f"has an NVIDIA GPU the CUDA runtime wheels are probably missing: "
+            f"pip install 'tensorflow[and-cuda]=={tf.__version__}'")
+        return
 
     game = pyspiel.load_game("mali_ba", game_params)
     pm = create_mali_ba_policy_network(shape, game.num_distinct_actions())

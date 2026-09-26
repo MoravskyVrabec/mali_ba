@@ -253,11 +253,28 @@ def main():
                 # still holding VRAM.
                 daemon=True)
             inference_server_proc.start()
-            inference_free_slots = list(range(_n_slots))
-            print(f"[Remote] Inference server started (slots={_n_slots}, "
-                  f"max_batch={args.inference_max_batch}, "
-                  f"vram_cap={args.inference_vram_mb}MB). Waiting for the first "
-                  f"actor's weights...", flush=True)
+            # The server sets gpu_ok as soon as it confirms a GPU, before any
+            # weights arrive. If it does not, it has refused to serve (a batched
+            # CPU server is far slower than per-actor inference), so drop the arena
+            # and let actors infer locally.
+            if not inference_arena.gpu_ok.wait(180):
+                print("[Remote] Inference server reported no usable GPU, so it will not "
+                      "serve. Actors will use local CPU inference instead. See the "
+                      "InferenceServer error above -- most likely the CUDA runtime "
+                      "wheels are missing (pip install 'tensorflow[and-cuda]').",
+                      flush=True)
+                inference_arena = None
+                inference_weights_queue = None
+                if inference_server_proc.is_alive():
+                    inference_stop.set()
+                    inference_server_proc.join(timeout=15)
+                inference_server_proc = None
+            else:
+                inference_free_slots = list(range(_n_slots))
+                print(f"[Remote] Inference server started (slots={_n_slots}, "
+                      f"max_batch={args.inference_max_batch}, "
+                      f"vram_cap={args.inference_vram_mb}MB). Waiting for the first "
+                      f"actor's weights...", flush=True)
         except Exception as e:
             print(f"[Remote] ERROR: could not start inference server ({e}). "
                   f"Actors will use local CPU inference.", flush=True)

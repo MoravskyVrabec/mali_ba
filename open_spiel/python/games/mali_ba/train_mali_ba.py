@@ -1569,10 +1569,25 @@ def main(args):
                 # shutdown path below still runs first on a normal exit.
                 daemon=True)
             inference_server_proc.start()
-            inference_free_slots = list(range(_n_slots))
-            log(LogLevel.INFO,
-                f"Main: inference server started (slots={_n_slots}, "
-                f"max_batch={getattr(args, 'inference_max_batch', 32)}).")
+            # gpu_ok is set as soon as the server confirms a GPU, before weights
+            # arrive. If it is not set, the server refused to serve (a batched CPU
+            # server is far slower than per-actor inference), so drop the arena.
+            if not inference_arena.gpu_ok.wait(180):
+                log(LogLevel.ERROR,
+                    "Main: inference server reported no usable GPU and will not serve. "
+                    "Actors will use local CPU inference. Most likely the CUDA runtime "
+                    "wheels are missing (pip install 'tensorflow[and-cuda]').")
+                if inference_server_proc.is_alive():
+                    inference_stop.set()
+                    inference_server_proc.join(timeout=15)
+                inference_arena = None
+                inference_server_proc = None
+                inference_weights_queue = None
+            else:
+                inference_free_slots = list(range(_n_slots))
+                log(LogLevel.INFO,
+                    f"Main: inference server started (slots={_n_slots}, "
+                    f"max_batch={getattr(args, 'inference_max_batch', 32)}).")
         except Exception as _e:
             log(LogLevel.ERROR,
                 f"Main: failed to start inference server ({_e}); actors will use "
