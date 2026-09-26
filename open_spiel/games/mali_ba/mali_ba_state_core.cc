@@ -166,7 +166,25 @@ namespace open_spiel
               moves_history_(other.moves_history_),
               rng_(other.rng_),
               is_terminal_(other.is_terminal_),
-              undo_stack_(other.undo_stack_),
+              // undo_stack_ is deliberately NOT copied. Each StateSnapshot holds a full
+              // copy of the board maps plus moves_history_, and one is pushed on every
+              // DoApplyAction without ever being cleared, so by move 400 the stack holds
+              // 400 snapshots. Copying it made Clone() cost grow linearly with game
+              // length -- measured 0.24 ms at move 25 rising to 3.09 ms at move 400, a
+              // constant ~0.0074 ms per move elapsed, i.e. ~97% of clone cost late in a
+              // game was this one member.
+              //
+              // That matters because MCTS clones the root state once per simulation
+              // (mcts.py _apply_tree_policy), which at ~330 sims/move over 420 moves is
+              // ~139,000 clones per game -- making this the single largest cost in
+              // self-play, well ahead of neural network inference (~1.3 ms, flat).
+              //
+              // Nothing in the training pipeline undoes moves: UndoAction is referenced
+              // only by mali_ba_test.cc, whose call site is commented out, and the Python
+              // trainer and bindings never call it. A clone therefore starts with an empty
+              // undo stack and cannot be undone -- UndoAction/UndoLastAction remain valid
+              // on a state that has had actions applied to it directly (the GUI's state),
+              // because that state pushes its own snapshots as normal.
               game_end_triggered_by_player_(other.game_end_triggered_by_player_),
               winning_player_(other.winning_player_),
               game_end_reason_(other.game_end_reason_),
