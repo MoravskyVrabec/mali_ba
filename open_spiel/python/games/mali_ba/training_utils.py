@@ -223,9 +223,35 @@ class SimpleAgent:
             log(LogLevel.ERROR, f"Agent: Full traceback: {traceback.format_exc()}")
 
     def load_model(self, path):
-        # Load both models' weights
-        self.policy_model.load_weights(path.replace("weights.h5", "_policy.weights.h5"))
-        self.value_model.load_weights(path.replace("weights.h5", "_value.weights.h5"))
+        """Load the policy and value heads independently.
+
+        Returns the list of heads actually loaded, e.g. ["policy", "value"] or
+        ["policy"].
+
+        A missing file for one head is deliberately not an error. Dropping only the
+        value head is a real workflow: when the value-target definition changes (for
+        instance gamma 0.997 -> 1.0) the old value head is calibrated to targets that
+        no longer exist, while the policy head is unaffected because policy targets
+        are MCTS visit counts and carry no discounting.
+
+        Previously this loaded both unconditionally, so a policy-only checkpoint
+        raised FileNotFoundError after the policy had already been loaded. The
+        weights survived by load-order luck, but the caller reported "Starting from
+        scratch", which was untrue and actively misleading.
+        """
+        policy_path = path.replace("weights.h5", "_policy.weights.h5")
+        value_path = path.replace("weights.h5", "_value.weights.h5")
+        loaded = []
+        for name, file_path, model in (("policy", policy_path, self.policy_model),
+                                       ("value", value_path, self.value_model)):
+            if os.path.exists(file_path):
+                model.load_weights(file_path)
+                loaded.append(name)
+            else:
+                log(LogLevel.WARN,
+                    f"Agent: no {name} weights at {file_path}; leaving the {name} head "
+                    f"at its initial random values.")
+        return loaded
 
     
     def train(self, replay_buffer, batch_size):

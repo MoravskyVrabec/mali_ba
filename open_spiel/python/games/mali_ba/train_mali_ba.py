@@ -87,10 +87,22 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
     )
     del temp_game
 
-    if args.load_model_path and os.path.exists(args.load_model_path.replace("weights.h5", "_policy.weights.h5")):
+    _pol_file = args.load_model_path.replace("weights.h5", "_policy.weights.h5") \
+        if args.load_model_path else None
+    _val_file = args.load_model_path.replace("weights.h5", "_value.weights.h5") \
+        if args.load_model_path else None
+    if args.load_model_path and (os.path.exists(_pol_file) or os.path.exists(_val_file)):
         try:
-            agent.load_model(args.load_model_path)
-            log(LogLevel.INFO, "Trainer loaded initial model weights.")
+            _loaded = agent.load_model(args.load_model_path)
+            if len(_loaded) == 2:
+                log(LogLevel.INFO, "Trainer loaded initial model weights (policy and value).")
+            elif _loaded:
+                log(LogLevel.INFO,
+                    f"Trainer loaded initial model weights: {_loaded[0]} head only. The "
+                    f"other head starts from random initialisation -- intentional when the "
+                    f"value-target definition has changed (see gamma in mali_ba.ini).")
+            else:
+                log(LogLevel.WARN, "Trainer: no weight files found. Starting from scratch.")
         except Exception as e:
             log(LogLevel.WARN, f"Could not load model weights: {e}. Starting from scratch.")
     else:
