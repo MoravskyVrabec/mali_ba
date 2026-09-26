@@ -394,6 +394,25 @@ class AlphaZeroEvaluator:
         self._num_actions = game.num_distinct_actions()
         self.heuristic_guidance_weight = heuristic_guidance_weight
         self._infer = _get_shared_infer_fn(policy_model, value_model, self._shape)
+
+        # state.observation_tensor() marshals a std::vector<float> into a Python
+        # list (pybind11 list_caster), which np.asarray then walks element by
+        # element -- 21,375 Python float objects per call. A py-spy profile of a
+        # live actor put ~27% of samples in that conversion
+        # (PyArray_DiscoverDTypeAndShape_Recursive / FLOAT_setitem / list_caster).
+        #
+        # The Observation API has C++ write straight into a numpy buffer instead.
+        # Measured on a real late-game position: 0.876 ms -> 0.045 ms (19.5x),
+        # values identical. Falls back to the old path if unavailable, since this
+        # depends on the game exposing an observer.
+        self._obs_helper = None
+        try:
+            from open_spiel.python.observation import make_observation
+            _h = make_observation(game)
+            if _h is not None and getattr(_h, 'tensor', None) is not None:
+                self._obs_helper = _h
+        except Exception:
+            self._obs_helper = None
         # key -> [value_vector, raw_nn_policy or None, mixed legal prior or None]
         self._cache = collections.OrderedDict()
         self._cache_size = cache_size
@@ -418,7 +437,14 @@ class AlphaZeroEvaluator:
             return entry
 
         self.cache_misses += 1
-        obs = np.asarray(state.observation_tensor(), dtype=np.float32)
+        _cp = state.current_player()
+        if self._obs_helper is not None and _cp >= 0:
+            # set_from needs a real player; at a chance node fall through to the
+            # plain call, which matches the previous behaviour exactly.
+            self._obs_helper.set_from(state, _cp)
+            obs = np.asarray(self._obs_helper.tensor, dtype=np.float32)
+        else:
+            obs = np.asarray(state.observation_tensor(), dtype=np.float32)
         policy_t, value_t = self._infer(obs.reshape((1, *self._shape)))
         entry = [value_t[0].numpy(), policy_t[0].numpy(), None]
 

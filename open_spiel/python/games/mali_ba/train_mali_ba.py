@@ -477,6 +477,14 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
         _n_fast_moves = 0
         _n_full_moves = 0
         _total_sims = 0
+        # Wall-clock buckets. External sampling profilers disagreed with production
+        # by more than an order of magnitude, so the actor now measures itself.
+        _t_search = 0.0      # inside bot.mcts_search()
+        _t_obs = 0.0         # state.observation_tensor() at the top of each move
+        _t_pick = 0.0        # visit-count extraction, action choice, policy target
+        _t_apply = 0.0       # state.apply_action() + state.rewards()
+        _t_replay = 0.0      # state.serialize() + replay write
+        _t_move_all = 0.0    # whole move-loop iteration
         
         # --- Use the existing game object to create a new state ---
         # DO NOT RELOAD THE GAME.
@@ -579,7 +587,10 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
 
         # Switch to PLAY mode
         while not state.is_terminal():
+            _t_iter0 = time.perf_counter()
+            _t0 = time.perf_counter()
             observation = np.array(state.observation_tensor(), dtype=np.float32)
+            _t_obs += time.perf_counter() - _t0
             player = state.current_player()
 
             # --- Early termination checks (every 20 moves) ---
@@ -803,6 +814,7 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
             _saved_dirichlet = bot._dirichlet_noise
             if _fast_search:
                 bot._dirichlet_noise = None
+            _t0 = time.perf_counter()
             try:
                 root = bot.mcts_search(state)
             except Exception as e:
@@ -815,6 +827,7 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                 raise  # Re-raise so the process still dies (and gets respawned) but we now see why
             finally:
                 bot._dirichlet_noise = _saved_dirichlet
+                _t_search += time.perf_counter() - _t0
             
             temperature = 1.0 if move_count < 150 else 0.5
 
@@ -904,6 +917,7 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                 except Exception as e:
                     log(LogLevel.ERROR, f"  Neural network prediction failed: {e}")
             
+            _t0 = time.perf_counter()
             action_map = {action: i for i, action in enumerate(legal_actions)}
 
             visit_counts = np.zeros(len(legal_actions))
@@ -965,9 +979,13 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
 
             if action == pyspiel.INVALID_ACTION: break
 
+            _t_pick += time.perf_counter() - _t0
+            _t0 = time.perf_counter()
             state.apply_action(action)
             reward_vector = state.rewards()  # Called after apply_action so Rewards() sees the move in moves_history_
+            _t_apply += time.perf_counter() - _t0
             episode_trajectory.append((observation, player, mcts_policy_full, reward_vector))
+            _t0 = time.perf_counter()
             if replay_file:
                 try:
                     replay_move_num += 1
@@ -977,7 +995,25 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                 except Exception as _e:
                     log(LogLevel.WARN,
                         f"Actor {actor_id}: Replay write failed at move {replay_move_num}: {_e}")
+            _t_replay += time.perf_counter() - _t0
             move_count += 1
+            _t_move_all += time.perf_counter() - _t_iter0
+
+        _t_other = max(0.0, _t_move_all - (_t_search + _t_obs + _t_pick
+                                          + _t_apply + _t_replay))
+        def _pc(x):
+            return f"{100.0*x/_t_move_all:.1f}%" if _t_move_all > 0 else "n/a"
+        log(LogLevel.INFO,
+            f"Actor {actor_id}, Game {episode_num}: TIME BREAKDOWN \u2014 "
+            f"total={_t_move_all:.0f}s "
+            f"search={_t_search:.0f}s({_pc(_t_search)}) "
+            f"obs={_t_obs:.0f}s({_pc(_t_obs)}) "
+            f"pick={_t_pick:.0f}s({_pc(_t_pick)}) "
+            f"apply={_t_apply:.0f}s({_pc(_t_apply)}) "
+            f"replay={_t_replay:.0f}s({_pc(_t_replay)}) "
+            f"other={_t_other:.0f}s({_pc(_t_other)})"
+            + (f" | per-sim search={1000.0*_t_search/_total_sims:.2f}ms "
+               f"total={1000.0*_t_move_all/_total_sims:.2f}ms" if _total_sims else ""))
 
         _cache_hits, _cache_misses, _cache_rate = evaluator.cache_stats()
         log(LogLevel.INFO,
