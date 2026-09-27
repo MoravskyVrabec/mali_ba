@@ -451,6 +451,16 @@ namespace open_spiel
       int near_win_extension_moves = 20;
       // Extra bonus added to winner's terminal return for Rare goods wins (to break Timbuktu mode collapse)
       double rare_goods_bonus = 0.0;
+      // Reward given to the highest-scoring player when a game ends by hitting the
+      // move limit rather than by a win condition. Defaults to 1.0, which is the
+      // historical behaviour: Returns() awarded the score leader the full win
+      // reward regardless of HOW the game ended, and max_moves_penalty was then
+      // added on top. That left very little contrast between actually winning and
+      // merely being ahead when the clock ran out -- with max_moves_penalty at
+      // -0.6 a timeout leader scored +0.40 against a real win's +1.00.
+      // Lower values restore that contrast; the value head has to learn the
+      // distinction from this gap alone.
+      double timeout_leader_reward = 1.0;
     };
 
 

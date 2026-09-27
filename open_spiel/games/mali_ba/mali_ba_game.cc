@@ -583,6 +583,8 @@ namespace open_spiel
                 training_params_.max_play_moves = parse_int("max_play_moves", 460);
                 training_params_.near_win_extension_moves = parse_int("near_win_extension_moves", 20);
                 training_params_.rare_goods_bonus = parse_double("rare_goods_bonus", 0.0);
+                training_params_.timeout_leader_reward =
+                    parse_double("timeout_leader_reward", 1.0);
 
                 LOG_INFO("Training parameters loaded from INI:");
                 LOG_INFO("  time_penalty: ", training_params_.time_penalty);
@@ -599,6 +601,7 @@ namespace open_spiel
                 LOG_INFO("  max_play_moves: ", training_params_.max_play_moves);
                 LOG_INFO("  near_win_extension_moves: ", training_params_.near_win_extension_moves);
                 LOG_INFO("  rare_goods_bonus: ", training_params_.rare_goods_bonus);
+                LOG_INFO("  timeout_leader_reward: ", training_params_.timeout_leader_reward);
             }
 
 

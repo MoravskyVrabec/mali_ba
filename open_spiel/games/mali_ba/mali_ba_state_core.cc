@@ -1792,8 +1792,20 @@ namespace open_spiel
             }
 
             std::vector<double> returns(NumPlayers(), 0.0);
+            // A game that ran out of moves was not won by anybody. Previously the
+            // score leader still received the full 1.0 win reward here, and only the
+            // separate max_moves_penalty below distinguished the two outcomes -- so
+            // with max_moves_penalty at -0.6 a timeout leader ended on +0.40 against
+            // a real win's +1.00. That 0.6 gap is the entire signal the value head
+            // has for telling "I won" from "I was ahead when time ran out", and with
+            // most games timing out it was weak enough that predicting a constant
+            // was competitive. timeout_leader_reward makes it tunable (1.0 preserves
+            // the old behaviour exactly).
+            const bool timed_out =
+                (int)PlayMoveCount() >= GetGame()->GetMaxPlayMoves();
             if (winners.size() == 1) {
-                returns[winners[0]] = 1.0;
+                returns[winners[0]] =
+                    timed_out ? training_params.timeout_leader_reward : 1.0;
                 // Bonus for Rare goods wins to counteract Timbuktu mode collapse
                 if (training_params.rare_goods_bonus != 0.0 &&
                     game_end_reason_.find("Rare good") != std::string::npos) {
