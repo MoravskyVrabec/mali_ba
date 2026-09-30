@@ -79,6 +79,11 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
     log(LogLevel.INFO, "Trainer process started.")
 
     temp_game = pyspiel.load_game(args.game_name, initial_game_params)
+    # Size of one observation as THIS game produces it; used to refuse a saved
+    # replay buffer written under a different observation layout.
+    expected_obs_size = 1
+    for _d in temp_game.observation_tensor_shape():
+        expected_obs_size *= _d
     agent = SimpleAgent(
         temp_game.observation_tensor_shape(),
         temp_game.num_distinct_actions(),
@@ -133,6 +138,34 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
         try:
             with gzip.open(args.save_buffer_path, 'rb') as f:
                 saved = pickle.load(f)
+
+            # Refuse a buffer whose observations don't match this game's layout
+            # (e.g. after the observation planes changed). Nothing downstream
+            # catches it: 192 planes is exactly twice 96, so reshaping a batch of
+            # old observations "succeeds" by gluing pairs of unrelated positions
+            # into fake ones. Move the file aside rather than leave it, so the
+            # next buffer save cannot overwrite it.
+            _saved_obs_size = None
+            for _k in ('mcts_natural_buffer', 'mcts_nearwin_buffer',
+                       'mcts_raregoods_buffer', 'mcts_buffer', 'bootstrap_buffer'):
+                for _exp in saved.get(_k, []):
+                    _o = _exp[0]      # numpy is not imported in trainer_process
+                    _saved_obs_size = int(_o.size) if hasattr(_o, 'size') else len(_o)
+                    break
+                if _saved_obs_size is not None:
+                    break
+            if _saved_obs_size is not None and _saved_obs_size != expected_obs_size:
+                del saved                      # don't keep the rejected buffer in memory
+                _aside = f"{args.save_buffer_path}.obs{_saved_obs_size}"
+                _n = 1
+                while os.path.exists(_aside):
+                    _n += 1
+                    _aside = f"{args.save_buffer_path}.obs{_saved_obs_size}.{_n}"
+                os.replace(args.save_buffer_path, _aside)
+                raise ValueError(
+                    f"saved observations have {_saved_obs_size} values but this game "
+                    f"produces {expected_obs_size} (observation planes changed?). "
+                    f"Starting with an EMPTY buffer; the old file was moved to {_aside}")
             # Copy into correctly-sized deques so the current run's maxlen is respected,
             # not the maxlen that was baked into the saved deques.
             saved_bootstrap = list(saved['bootstrap_buffer'])
