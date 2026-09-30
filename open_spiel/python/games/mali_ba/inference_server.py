@@ -139,7 +139,8 @@ class InferenceClient:
 
 def server_loop(arena, shape, game_params, weights_queue, stop_event,
                 max_batch=32, spin_before_sleep=200000, idle_sleep=0.001,
-                log_every=0, gpu_memory_limit_mb=4096):
+                log_every=0, gpu_memory_limit_mb=4096, jit_compile=True,
+                bucket_step=8):
     """Run in its own process. Owns the GPU and serves batched inference.
 
     weights_queue carries (policy_weights, value_weights) tuples, or STOP.
@@ -203,16 +204,26 @@ def server_loop(arena, shape, game_params, weights_queue, stop_event,
     # a graph per distinct batch size (1..max_batch) made the first call at each
     # size ruinously slow -- measured worse than not batching at all. Padding a
     # batch of 11 up to 16 wastes a few GPU-milliseconds; retracing wasted ~1000.
+    #
+    # Above 16 the buckets step linearly (bucket_step) rather than doubling. With
+    # doubling, a batch of 48 under max_batch=56 was padded straight to 56, so 17%
+    # of every full GPU call processed throwaway rows; saturated servers sit at
+    # exactly those sizes. Finer buckets cost a few more graphs to warm at startup.
     def _buckets(n):
         out, b = [], 1
-        while b < n:
+        while b < min(n, 16):
             out.append(b)
             b *= 2
+        b = 16
+        while b < n:
+            out.append(b)
+            b += max(1, bucket_step)
         out.append(n)
-        return sorted(set(out))
+        return sorted(set(x for x in out if x <= n))
 
     BUCKETS = _buckets(max_batch)
     traced = {}
+    _use_jit = [bool(jit_compile)]      # list so the fallback below can flip it
 
     def bucket_for(bs):
         for b in BUCKETS:
@@ -225,7 +236,10 @@ def server_loop(arena, shape, game_params, weights_queue, stop_event,
         if fn is None:
             spec = tf.TensorSpec(shape=(bs, *shape), dtype=tf.float32)
 
-            @tf.function(input_signature=[spec])
+            # XLA fuses the many small conv/bn/relu kernels into a few larger
+            # ones. At these batch sizes the GPU call is dominated by per-kernel
+            # launch overhead rather than arithmetic, which is what fusion removes.
+            @tf.function(input_signature=[spec], jit_compile=_use_jit[0])
             def _f(batch):
                 return pm(batch, training=False), vm(batch, training=False)
 
@@ -254,15 +268,44 @@ def server_loop(arena, shape, game_params, weights_queue, stop_event,
     if not have_weights:
         return
 
-    # Warm every bucket so no actor ever eats a tracing stall mid-game.
-    for bs in BUCKETS:
-        get_traced(bs)(tf.zeros((bs, *shape), dtype=tf.float32))
+    # Warm every bucket so no actor ever eats a tracing stall mid-game. With XLA
+    # this is also where each size is compiled. If XLA is unavailable on this
+    # machine (e.g. ptxas missing from the CUDA wheels), fall back to plain graphs
+    # rather than refusing to serve.
+    _w0 = time.time()
+    try:
+        for bs in BUCKETS:
+            get_traced(bs)(tf.zeros((bs, *shape), dtype=tf.float32))
+    except Exception as e:
+        if not _use_jit[0]:
+            raise
+        log(LogLevel.WARN,
+            f"InferenceServer: XLA compilation failed ({str(e)[:160]}); "
+            f"falling back to non-XLA graphs.")
+        _use_jit[0] = False
+        traced.clear()
+        for bs in BUCKETS:
+            get_traced(bs)(tf.zeros((bs, *shape), dtype=tf.float32))
+    log(LogLevel.INFO,
+        f"InferenceServer: warmed {len(BUCKETS)} batch sizes in "
+        f"{time.time() - _w0:.1f}s (XLA {'on' if _use_jit[0] else 'off'}).")
     arena.ready.set()
     log(LogLevel.INFO, "InferenceServer: ready, weights loaded and graphs traced.")
 
     batch_buf = np.empty((max_batch, *shape), dtype=np.float32)
+    flat_buf = batch_buf.reshape(max_batch, -1)   # view: same memory, one row per request
+    done_events = arena.done
     log(LogLevel.INFO, f"InferenceServer: batch buckets {BUCKETS}")
     last_log = time.time()
+
+    # Round-robin serving cursor. See the fair-selection block below: without it,
+    # any slot numbered above max_batch can starve indefinitely.
+    serve_cursor = 0
+    if n_slots > max_batch:
+        log(LogLevel.WARN,
+            f"InferenceServer: {n_slots} slots but max_batch={max_batch}; serving "
+            f"round-robin so no slot starves. Raise inference_max_batch to "
+            f">= {n_slots} to serve every pending request in one batch.")
 
     while not stop_event.is_set():
         # Drain any newly published weights (keep only the freshest).
@@ -307,12 +350,35 @@ def server_loop(arena, shape, game_params, weights_queue, stop_event,
                 arena.stat_poll_ns.value += poll_ns
             continue
         if len(pending) > max_batch:
-            pending = pending[:max_batch]
+            # FAIR SELECTION (fixed 2026-09-29).
+            # `pending` comes out of the spin scan in ascending slot order, so the
+            # previous `pending[:max_batch]` always served the LOWEST slots. With
+            # 64 actors through a 32-wide window the batch was full every cycle
+            # (observed avg batch 32.0), so slots above max_batch were only served
+            # in the rare lull -- slots 57-67 hit the client's 120s timeout and
+            # their actor processes died, 24 of them in 15 minutes. Crashes landed
+            # at move 0, where every actor requests at once and contention peaks.
+            #
+            # Rotating the start point bounds the wait: every slot is served
+            # within ceil(n_slots / max_batch) cycles (3 cycles ~= 7ms here)
+            # regardless of how far n_slots exceeds max_batch.
+            start = 0
+            for j, sl in enumerate(pending):
+                if sl >= serve_cursor:
+                    start = j
+                    break
+            pending = (pending[start:] + pending[:start])[:max_batch]
+        # Advance past the last slot served, so the next cycle begins after it.
+        serve_cursor = (pending[-1] + 1) % n_slots
 
         bs = len(pending)
         _g0 = time.perf_counter_ns()
+        # Per-row copies. A single np.take over the batch was tried and measured
+        # SLOWER (0.35 -> 0.68 ms at batch 48): fancy indexing out of the shared
+        # RawArray costs more than these contiguous row copies.
         for k, slot in enumerate(pending):
-            batch_buf[k] = obs_all[slot].reshape(shape)
+            flat_buf[k] = obs_all[slot]
+        idx = np.asarray(pending, dtype=np.intp)
         padded = bucket_for(bs)
         if padded > bs:
             batch_buf[bs:padded] = batch_buf[0]      # pad with a repeat, results ignored
@@ -325,11 +391,11 @@ def server_loop(arena, shape, game_params, weights_queue, stop_event,
         infer_ns = time.perf_counter_ns() - t0
 
         _s0 = time.perf_counter_ns()
-        for k, slot in enumerate(pending):
-            pol_all[slot] = pol[k]
-            val_all[slot] = val[k]
+        pol_all[idx] = pol[:bs]      # whole-batch copies into shared memory
+        val_all[idx] = val[:bs]
+        for slot in pending:
             flags[slot] = 0          # clear before signalling
-            arena.done[slot].set()
+            done_events[slot].set()
         scatter_ns = time.perf_counter_ns() - _s0
 
         with arena.stat_batches.get_lock():
@@ -350,7 +416,9 @@ def server_loop(arena, shape, game_params, weights_queue, stop_event,
             log(LogLevel.INFO,
                 f"InferenceServer: {s['requests']:,} evals in {s['batches']:,} batches "
                 f"(avg batch {s['avg_batch']:.1f}, {s['avg_infer_ms']:.2f} ms/batch, "
-                f"{s['ms_per_request']:.3f} ms/eval)")
+                f"{s['ms_per_request']:.3f} ms/eval) "
+                f"[per batch: gather {s['gather_ms']:.2f}, scatter {s['scatter_ms']:.2f}, "
+                f"waiting for requests {s['poll_ms']:.2f} ms]")
             last_log = time.time()
 
     log(LogLevel.INFO, "InferenceServer: stopping.")
