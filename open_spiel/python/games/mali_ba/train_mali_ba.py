@@ -184,6 +184,14 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                 f"mcts_natural={len(local_replay_buffer.mcts_natural_buffer)}, "
                 f"mcts_nearwin={len(local_replay_buffer.mcts_nearwin_buffer)}, "
                 f"mcts_raregoods={len(local_replay_buffer.mcts_raregoods_buffer)} experiences.")
+            # Release the loaded copy. These locals live as long as trainer_process,
+            # so without this every restored experience stays referenced after the
+            # pools evict it: once the pools turned over the trainer held two full
+            # buffers (B008: 51 GB resident for a ~18 GB buffer), including every
+            # entry dropped when a pool was shrunk at load.
+            del saved, saved_bootstrap, saved_natural, saved_nearwin, saved_raregoods
+            import gc
+            gc.collect()
         except Exception as e:
             log(LogLevel.WARN, f"Trainer: Could not restore buffer from {args.save_buffer_path}: {e}")
 
