@@ -1653,6 +1653,158 @@ def fetch_remote_value_checks(log_path, ssh_password):
         return []
 
 
+def _game_outcomes(data):
+    """(actor, game_n) -> outcome info. Shared by the value-check CSV and the
+    calibration report so both join value checks to games identically.
+
+    Returns come from each game's own FINISHED line. This previously paired
+    games[i] with received[i] by log order, but the two lists are not in the same
+    order: on B007, 172 of 672 games (26%) were matched to another game's result
+    and 80 timeouts were given a win's returns -- so the value-check CSV and plot
+    marked the wrong player as winner for about a quarter of games. The FINISHED
+    returns were verified complete and consistent (every win max 1.0, every
+    timeout max 0.1). 'order' is the game's position in finish order.
+    """
+    game_info = {}
+    for i, g in enumerate(data['games']):
+        returns = g['returns']
+        # Always use max(returns) for winner — the trigger field records which player
+        # caused the end-game condition, not necessarily the player with the highest score.
+        winner_idx = returns.index(max(returns)) if returns else -1
+        if g['is_win']:
+            win_type = 'timbuktu' if 'Timbuktu' in g.get('reason', '') else 'rare'
+        else:
+            win_type = ''
+        game_info[(g['actor'], g['game_n'])] = {
+            'order':             i,
+            'outcome':           'win' if g['is_win'] else 'timeout',
+            'win_type':          win_type,
+            'winner_player':     f'P{winner_idx}' if winner_idx >= 0 else '?',
+            'winner_idx':        winner_idx,
+            'game_length':       g['moves'],
+            'returns':           list(returns) if returns else [],
+        }
+    return game_info
+
+
+def print_value_calibration(data):
+    """How well the value head's mid-game predictions match what games actually return.
+
+    Why this exists: until B008 the value head trained on ~88% win positions while
+    ~84% of games timed out. Measured on B007 (after fixing the game/result join),
+    it picked the eventual leader 51% of the time (chance 33%) but was too
+    optimistic about everyone: average prediction per player +0.01 against an
+    average actual return of -0.35, mostly from trailing players (predicted about
+    -0.08, actual -0.63). B008 rebalanced the training mix toward timeouts; if that
+    works, the average prediction should drift down toward the actual.
+
+    Uses local value checks only (laptop actors log to the laptop's own log).
+    """
+    import statistics as st
+    checks = data.get('value_checks', [])
+    info = _game_outcomes(data)
+    rows = []
+    for vc in checks:
+        gi = info.get((vc['actor'], vc['game_n']))
+        if gi is None or not gi['returns']:
+            continue
+        pred = [vc['p0'], vc['p1'], vc['p2']]
+        if any(v is None for v in pred):
+            continue
+        ret = gi['returns'][:len(pred)]
+        w = gi['winner_idx']
+        kind = ('timeout' if gi['outcome'] == 'timeout'
+                else 'Timbuktu win' if gi['win_type'] == 'timbuktu' else 'rare-goods win')
+        others = [i for i in range(len(pred)) if i != w]
+        rows.append({
+            'kind': kind, 'move': vc['move'], 'order': gi['order'],
+            'lead_pred': pred[w], 'lead_act': ret[w],
+            'oth_pred': st.mean(pred[i] for i in others),
+            'oth_act': st.mean(ret[i] for i in others),
+            'top_pred': max(pred),
+            'hit': pred.index(max(pred)) == w,
+            'abs_err': st.mean(abs(pred[i] - ret[i]) for i in range(len(pred))),
+        })
+
+    print()
+    print('─' * 60)
+    print('  VALUE HEAD CALIBRATION  (mid-game value checks vs actual game returns)')
+    print('─' * 60)
+    if not rows:
+        print('  No value checks could be matched to finished games.')
+        return
+    games = {r['order'] for r in rows}
+    print(f'  {len(rows):,} value checks from {len(games):,} games '
+          f'(local actors; moves {min(r["move"] for r in rows)}-{max(r["move"] for r in rows)})')
+    print('  "leader" = player with the highest actual return (the winner, or the')
+    print('  leader at timeout). Top-pick = value head rates that player highest;')
+    print('  chance is 33% with three players.')
+    print()
+    print('  WHAT WE WANT TO SEE (judge by trend, not by any one number):')
+    print('   - "avg per player" pred moving toward its actual. This is the fairest')
+    print('     calibration check: it does not depend on knowing who won.')
+    print('   - top-pick rising further above 33%, and mean |err| falling.')
+    print('  Note: mid-game predictions SHOULD be less extreme than final results, because')
+    print('  the outcome is still uncertain -- a winner predicted at +0.2 at move 200 is')
+    print('  not by itself an error.')
+    print()
+    hdr = (f'  {"":15} {"checks":>7}  {"leader pred / actual":>21}  '
+           f'{"others pred / actual":>21}  {"top-pick":>8}  {"mean |err|":>10}')
+    print(hdr)
+
+    def line(label, rs):
+        if not rs:
+            return
+        print(f'  {label:15} {len(rs):7,}  '
+              f'{st.mean(r["lead_pred"] for r in rs):+9.2f} / {st.mean(r["lead_act"] for r in rs):+.2f}  '
+              f'{st.mean(r["oth_pred"] for r in rs):+9.2f} / {st.mean(r["oth_act"] for r in rs):+.2f}  '
+              f'{100 * sum(r["hit"] for r in rs) / len(rs):7.0f}%  '
+              f'{st.mean(r["abs_err"] for r in rs):10.3f}')
+
+    for kind in ('timeout', 'Timbuktu win', 'rare-goods win'):
+        line(kind, [r for r in rows if r['kind'] == kind])
+    line('ALL', rows)
+    ap = st.mean((r['lead_pred'] + 2 * r['oth_pred']) / 3 for r in rows)
+    aa = st.mean((r['lead_act'] + 2 * r['oth_act']) / 3 for r in rows)
+    print(f'  {"avg per player":15} {len(rows):7,}  {ap:+9.2f} / {aa:+.2f}   '
+          f'<- positive gap = too optimistic about everyone')
+
+    # Does the value head use the move-count plane? Near the cap, a timeout
+    # leader's true value converges on its actual return (+0.1 at present).
+    to = [r for r in rows if r['kind'] == 'timeout']
+    if to:
+        print()
+        print('  Timeout games by move -- the leader\'s prediction should approach its')
+        print('  actual return as the move cap nears, if the move-count plane is being used:')
+        print('  WANT: "leader pred" falling toward "actual" in the later move buckets.')
+        for lo, hi in ((0, 260), (260, 320), (320, 380), (380, 10 ** 6)):
+            b = [r for r in to if lo <= r['move'] < hi]
+            if b:
+                rng = f'{lo}-{hi - 1}' if hi < 10 ** 6 else f'{lo}+'
+                print(f'    moves {rng:>8}: leader pred {st.mean(r["lead_pred"] for r in b):+.2f} '
+                      f'(actual {st.mean(r["lead_act"] for r in b):+.2f}), '
+                      f'top-pick {100 * sum(r["hit"] for r in b) / len(b):.0f}%  [{len(b)} checks]')
+
+    # Trend over the run: is it improving?
+    order = sorted(games)
+    if len(order) >= 30:
+        print()
+        print('  Over the run (games in thirds, by arrival order):')
+        print('  WANT: "avg/player pred" moving toward its actual, top-pick rising, mean |err|')
+        print('  falling. Flat across thirds = no change yet.')
+        cut = [order[len(order) * k // 3] for k in (1, 2)]
+        for label, lo, hi in (('first third', -1, cut[0]), ('middle third', cut[0], cut[1]),
+                              ('last third', cut[1], order[-1] + 1)):
+            b = [r for r in rows if (lo <= r['order'] < hi if lo >= 0 else r['order'] < hi)]
+            bt = [r for r in b if r['kind'] == 'timeout']
+            if b:
+                bp = st.mean((r['lead_pred'] + 2 * r['oth_pred']) / 3 for r in b)
+                ba = st.mean((r['lead_act'] + 2 * r['oth_act']) / 3 for r in b)
+                print(f'    {label:12}: avg/player pred {bp:+.2f} (actual {ba:+.2f})   '
+                      f'top-pick {100 * sum(r["hit"] for r in b) / len(b):3.0f}%   '
+                      f'mean |err| {st.mean(r["abs_err"] for r in b):.3f}')
+
+
 def write_value_check_csv(data, log_path, ssh_password=None):
     """Write value check entries joined with game outcomes to a timestamped CSV.
 
@@ -1694,25 +1846,7 @@ def write_value_check_csv(data, log_path, ssh_password=None):
     # games[i] and received[i] are paired in log order.
     # We use received returns for winner determination since the surviving-games
     # display is also built from received returns.
-    game_info = {}
-    for i, g in enumerate(data['games']):
-        rcv = data['received'][i] if i < len(data['received']) else None
-        returns = rcv['returns'] if rcv and rcv.get('returns') else g['returns']
-        # Always use max(returns) for winner — the trigger field records which player
-        # caused the end-game condition, not necessarily the player with the highest score.
-        winner_idx = returns.index(max(returns)) if returns else -1
-        if g['is_win']:
-            win_type = 'timbuktu' if 'Timbuktu' in g.get('reason', '') else 'rare'
-        else:
-            win_type = ''
-        game_info[(g['actor'], g['game_n'])] = {
-            'received_game_num': rcv['game_num'] if rcv else None,
-            'outcome':           'win' if g['is_win'] else 'timeout',
-            'win_type':          win_type,
-            'winner_player':     f'P{winner_idx}' if winner_idx >= 0 else '?',
-            'winner_idx':        winner_idx,
-            'game_length':       g['moves'],
-        }
+    game_info = _game_outcomes(data)
 
     log_stem = os.path.splitext(os.path.basename(log_path))[0]
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1727,8 +1861,8 @@ def write_value_check_csv(data, log_path, ssh_password=None):
     rows = []
     for vc in value_checks:
         info = game_info.get((vc['actor'], vc['game_n']))
-        if info is None or info['received_game_num'] is None:
-            continue  # no matching FINISHED/RECEIVED pair (e.g. early-terminated)
+        if info is None or not info['returns']:
+            continue  # no matching finished game (e.g. early-terminated)
         p_vals = [vc['p0'], vc['p1'], vc['p2']]
         widx = info['winner_idx']
         winner_val = p_vals[widx] if 0 <= widx < len(p_vals) else ''
@@ -1837,6 +1971,7 @@ def main():
     data = parse_log(args.log_file)
     report(data, window=args.window, show_early_terminations=args.show_early_terminations,
            batch_size_arg=args.batch_size)
+    print_value_calibration(data)
     print()
     csv_path = write_value_check_csv(data, args.log_file, ssh_password=args.ssh_password)
 
