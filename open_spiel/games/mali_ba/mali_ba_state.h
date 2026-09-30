@@ -145,6 +145,8 @@ namespace mali_ba
         bool IsNearWin(int rare_region_threshold) const;
         int GetGameEndTriggeringPlayer() const { return game_end_triggered_by_player_; }
         std::string GetScoreBreakdownString() const;
+        // Every player's current score, as the game would score it if it ended now.
+        std::vector<double> ComputeScores(bool log_breakdown = false) const;
 
         
         // --- Make GetRNG() a const method ---

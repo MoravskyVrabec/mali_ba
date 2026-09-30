@@ -52,6 +52,9 @@ namespace open_spiel
       double MaxUtility() const override { return WinUtility(); }
       int GetMaxPlayMoves() const { return training_params_.max_play_moves; }
       bool HasMoveCountPlane() const { return training_params_.move_count_plane; }
+      bool HasScorePlanes() const { return training_params_.score_planes; }
+      bool HasSeatPlanes() const { return training_params_.seat_planes; }
+      bool HasAllGoodsPlanes() const { return training_params_.all_goods_planes; }
       int GetNearWinExtensionMoves() const { return training_params_.near_win_extension_moves; }
       int MaxGameLength() const override { return GetMaxPlayMoves() + GetNearWinExtensionMoves() + NumSetupMoves(); }
       // --- End OpenSpiel API ---

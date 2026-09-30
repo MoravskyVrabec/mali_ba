@@ -1595,20 +1595,12 @@ namespace open_spiel
             return out;
         }
 
-        std::vector<double> Mali_BaState::Returns() const {
-            if (!IsTerminal()) {
-                // For non-terminal states, it's just the sum of rewards so far.
-                return cumulative_returns_;
-            }
-
-            const auto& training_params = GetGame()->GetTrainingParameters();
-
-            if (PlayMoveCount() >= GetGame()->GetMaxPlayMoves()) {
-                LOG_DEBUG("======== GAME END: MAX LENGTH REACHED — scoring normally ========");
-            }
-
-            LOG_DEBUG("======== FINAL SCORE CALCULATION ========");
-            LOG_DEBUG("Moves in history: ", history_.size());
+        // Current score of every player, computed exactly as at game end. Returns()
+        // uses this for the final result; the observer uses it (with logging off)
+        // for the optional score planes, so the network sees the same numbers that
+        // decide the game. Valid for non-terminal states: it scores the position as
+        // if the game ended now.
+        std::vector<double> Mali_BaState::ComputeScores(bool log_breakdown) const {
             std::vector<double> scores(NumPlayers(), 0.0);
             const GameRules& rules = GetGame()->GetRules();
 
@@ -1764,6 +1756,7 @@ namespace open_spiel
                             region_control_scores[p] +
                             regions_crossed_scores[p];
 
+                if (!log_breakdown) continue;
                 LOG_DEBUG("--- Player ", p, " (", PlayerColorToString(GetPlayerColor(p)), ") Score: ", scores[p], " ---");
                 LOG_DEBUG("  - Posts & Centers:     ", infrastructure_scores[p]);
                 LOG_DEBUG("  - Unique Goods Sets:   ", unique_goods_scores[p]);
@@ -1771,7 +1764,25 @@ namespace open_spiel
                 LOG_DEBUG("  - Region Control:      ", region_control_scores[p]);
                 LOG_DEBUG("  - Regions Crossed:     ", regions_crossed_scores[p]);
             }
-            LOG_DEBUG("========================================");
+            if (log_breakdown) LOG_DEBUG("========================================");
+            return scores;
+        }
+
+        std::vector<double> Mali_BaState::Returns() const {
+            if (!IsTerminal()) {
+                // For non-terminal states, it's just the sum of rewards so far.
+                return cumulative_returns_;
+            }
+
+            const auto& training_params = GetGame()->GetTrainingParameters();
+
+            if (PlayMoveCount() >= GetGame()->GetMaxPlayMoves()) {
+                LOG_DEBUG("======== GAME END: MAX LENGTH REACHED — scoring normally ========");
+            }
+
+            LOG_DEBUG("======== FINAL SCORE CALCULATION ========");
+            LOG_DEBUG("Moves in history: ", history_.size());
+            std::vector<double> scores = ComputeScores(/*log_breakdown=*/true);
             
             double max_score = -1.0 * std::numeric_limits<double>::infinity();
             for (double score : scores) {

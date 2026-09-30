@@ -469,6 +469,24 @@ namespace open_spiel
       // very different correct values. Changing this changes the tensor shape and
       // so invalidates all saved weights.
       bool move_count_plane = true;
+      // Optional public-information planes, appended after the move-count plane in
+      // this order. All default OFF: enabling any of them changes the tensor shape,
+      // which invalidates saved weights and the replay buffer -- only switch them on
+      // when starting a new run from scratch.
+      //  score_planes:     one plane per seat, current score / kScorePlaneScale.
+      //                    The winner is the points leader, and opponents' scores
+      //                    cannot be reconstructed from the other planes.
+      //  seat_planes:      one-hot, the seat to move. Observations are always from
+      //                    the mover's perspective, so the old current_player plane
+      //                    is constant 1 and the network could not tell which
+      //                    colour it is.
+      //  all_goods_planes: per seat, a count plane for each of the 15 common and 15
+      //                    rare goods (30 per seat). Goods are public; the existing
+      //                    per-type planes cover only the mover, and scoring depends
+      //                    on each player's DISTINCT types, not their totals.
+      bool score_planes = false;
+      bool seat_planes = false;
+      bool all_goods_planes = false;
     };
 
 

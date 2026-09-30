@@ -587,6 +587,12 @@ namespace open_spiel
                     parse_double("timeout_leader_reward", 1.0);
                 training_params_.move_count_plane =
                     parse_double("move_count_plane", 1.0) != 0.0;
+                training_params_.score_planes =
+                    parse_double("score_planes", 0.0) != 0.0;
+                training_params_.seat_planes =
+                    parse_double("seat_planes", 0.0) != 0.0;
+                training_params_.all_goods_planes =
+                    parse_double("all_goods_planes", 0.0) != 0.0;
 
                 LOG_INFO("Training parameters loaded from INI:");
                 LOG_INFO("  time_penalty: ", training_params_.time_penalty);
@@ -605,6 +611,9 @@ namespace open_spiel
                 LOG_INFO("  rare_goods_bonus: ", training_params_.rare_goods_bonus);
                 LOG_INFO("  timeout_leader_reward: ", training_params_.timeout_leader_reward);
                 LOG_INFO("  move_count_plane: ", training_params_.move_count_plane ? "true" : "false");
+                LOG_INFO("  score_planes: ", training_params_.score_planes ? "true" : "false");
+                LOG_INFO("  seat_planes: ", training_params_.seat_planes ? "true" : "false");
+                LOG_INFO("  all_goods_planes: ", training_params_.all_goods_planes ? "true" : "false");
             }
 
 
@@ -626,6 +635,10 @@ namespace open_spiel
             // Optional trailing game-progress plane. Appended LAST so enabling or
             // disabling it never shifts any existing plane index.
             if (training_params_.move_count_plane) kNumPlanes += 1;
+            // Optional public-information planes (see TrainingParams), in this order.
+            if (training_params_.score_planes)     kNumPlanes += num_players_;
+            if (training_params_.seat_planes)      kNumPlanes += num_players_;
+            if (training_params_.all_goods_planes) kNumPlanes += num_players_ * 30;
             observation_tensor_shape_ = {kNumPlanes, dimension, dimension};
 
             LOG_INFO("Mali_BaGame: Dynamically configured observation tensor shape to: {",

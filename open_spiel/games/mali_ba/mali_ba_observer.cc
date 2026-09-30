@@ -136,6 +136,20 @@ namespace open_spiel
       const bool has_move_count_plane = mali_ba_game->HasMoveCountPlane();
       const int move_count_plane = has_move_count_plane ? plane_idx++ : -1;
 
+      // Optional public-information planes (see TrainingParams), appended last in
+      // this fixed order so that none of them shifts an existing plane index.
+      constexpr int kGoodsPerKind = 15;          // matches the 15+15 per-type planes above
+      constexpr double kScorePlaneScale = 200.0; // late-game scores are ~100-250
+      const bool has_score_planes = mali_ba_game->HasScorePlanes();
+      const int score_base = has_score_planes ? plane_idx : -1;
+      if (has_score_planes) plane_idx += state.NumPlayers();
+      const bool has_seat_planes = mali_ba_game->HasSeatPlanes();
+      const int seat_base = has_seat_planes ? plane_idx : -1;
+      if (has_seat_planes) plane_idx += state.NumPlayers();
+      const bool has_all_goods_planes = mali_ba_game->HasAllGoodsPlanes();
+      const int all_goods_base = has_all_goods_planes ? plane_idx : -1;
+      if (has_all_goods_planes) plane_idx += state.NumPlayers() * 2 * kGoodsPerKind;
+
       // Verify calculated plane count matches the shape declared at game init.
       SPIEL_CHECK_EQ(plane_idx, num_planes);
 
@@ -161,6 +175,54 @@ namespace open_spiel
         for (int i = 0; i < HxW; ++i)
         {
           values[plane_offset + i] = progress;
+        }
+      }
+
+      // --- Score planes: each seat's current score, constant across the board ---
+      if (has_score_planes)
+      {
+        const std::vector<double> scores = mali_ba_state->ComputeScores(/*log_breakdown=*/false);
+        for (int p = 0; p < state.NumPlayers() && p < static_cast<int>(scores.size()); ++p)
+        {
+          const float v = static_cast<float>(scores[p] / kScorePlaneScale);
+          const int off = (score_base + p) * HxW;
+          for (int i = 0; i < HxW; ++i) values[off + i] = v;
+        }
+      }
+
+      // --- Seat-to-move planes: one-hot on the absolute seat of the player to move ---
+      if (has_seat_planes)
+      {
+        const Player mover = mali_ba_state->CurrentPlayer();
+        if (mover >= 0 && mover < state.NumPlayers())
+        {
+          const int off = (seat_base + mover) * HxW;
+          for (int i = 0; i < HxW; ++i) values[off + i] = 1.0f;
+        }
+      }
+
+      // --- Every seat's per-type goods (public information) ---
+      // Layout per seat p: 15 common-good planes, then 15 rare-good planes, each
+      // holding that good's count, same indexing as the mover-only planes above.
+      if (has_all_goods_planes)
+      {
+        for (int p = 0; p < state.NumPlayers(); ++p)
+        {
+          const int seat_off = all_goods_base + p * 2 * kGoodsPerKind;
+          for (const auto &[good_name, count] : mali_ba_state->GetPlayerCommonGoods(p))
+          {
+            const int gi = GoodsManager::GetInstance().GetCommonGoodIndex(good_name);
+            if (gi < 0 || gi >= kGoodsPerKind) continue;
+            const int off = (seat_off + gi) * HxW;
+            for (int i = 0; i < HxW; ++i) values[off + i] = static_cast<float>(count);
+          }
+          for (const auto &[good_name, count] : mali_ba_state->GetPlayerRareGoods(p))
+          {
+            const int gi = GoodsManager::GetInstance().GetRareGoodIndex(good_name);
+            if (gi < 0 || gi >= kGoodsPerKind) continue;
+            const int off = (seat_off + kGoodsPerKind + gi) * HxW;
+            for (int i = 0; i < HxW; ++i) values[off + i] = static_cast<float>(count);
+          }
         }
       }
 
