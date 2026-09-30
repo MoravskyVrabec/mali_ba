@@ -554,8 +554,20 @@ class AlphaZeroEvaluator:
 def create_mali_ba_policy_network(observation_shape, num_actions):
     """Creates the policy network."""
     inputs = layers.Input(shape=observation_shape)
+    # --- Axis order fix (2026-09-27) ---
+    # observation_tensor_shape() is (planes, height, width), but Keras defaults to
+    # channels_last and so reads the LAST axis as the feature count. Fed raw, the
+    # stem kernel was (3, 3, 15, 128): board WIDTH used as channels, and each 3x3
+    # kernel spanning 3 adjacent PLANE indices x 3 board columns -- treating
+    # unrelated feature planes as spatially adjacent and the two board axes
+    # asymmetrically. Permute to (height, width, planes) so convolutions run over
+    # the board. The declared input shape is unchanged, so the evaluator, the
+    # inference server and the trainer all keep passing observations as before, and
+    # the replay buffer stays valid. Existing weights do NOT load: the stem kernel
+    # becomes (3, 3, num_planes, 128).
+    x = layers.Permute((2, 3, 1))(inputs)
     # Use a slightly simpler body for the policy net
-    x = layers.Conv2D(128, 3, padding='same')(inputs)
+    x = layers.Conv2D(128, 3, padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('relu')(x)
     for _ in range(5): # Fewer residual blocks
@@ -580,8 +592,20 @@ def create_mali_ba_policy_network(observation_shape, num_actions):
 def create_mali_ba_value_network(observation_shape, num_players):
     """Creates the value network."""
     inputs = layers.Input(shape=observation_shape)
+    # --- Axis order fix (2026-09-27) ---
+    # observation_tensor_shape() is (planes, height, width), but Keras defaults to
+    # channels_last and so reads the LAST axis as the feature count. Fed raw, the
+    # stem kernel was (3, 3, 15, 128): board WIDTH used as channels, and each 3x3
+    # kernel spanning 3 adjacent PLANE indices x 3 board columns -- treating
+    # unrelated feature planes as spatially adjacent and the two board axes
+    # asymmetrically. Permute to (height, width, planes) so convolutions run over
+    # the board. The declared input shape is unchanged, so the evaluator, the
+    # inference server and the trainer all keep passing observations as before, and
+    # the replay buffer stays valid. Existing weights do NOT load: the stem kernel
+    # becomes (3, 3, num_planes, 64).
+    x = layers.Permute((2, 3, 1))(inputs)
     # Use a slightly simpler body for the value net as well
-    x = layers.Conv2D(64, 3, padding='same')(inputs)
+    x = layers.Conv2D(64, 3, padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('relu')(x)
     for _ in range(3): # Fewer residual blocks

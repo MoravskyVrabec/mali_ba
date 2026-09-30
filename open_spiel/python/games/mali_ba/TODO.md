@@ -7,6 +7,13 @@ future session doesn't have to re-derive it.
 
 ## 1. Convolutions run over the wrong axes  (IMPORTANT, unproven, needs a full retrain)
 
+**STATUS 2026-09-30: IMPLEMENTED.** `layers.Permute((2, 3, 1))` is in both networks as of the
+B-series runs (B001 onward), bundled with the move-count plane and the heuristic-weight decay,
+so a result cannot be attributed to any one of the three. Whether it helped is still open: on
+the fixed-reference probe, B002/B005 sit ~4-5pp top-1 above an untrained net and flat within
+runs. Note that probe's reference is heuristic-guided search, so it cannot credit learning that
+departs from the heuristic -- head-to-head play is the test that can.
+
 `observation_tensor_shape()` is `[95, 15, 15]` — planes, height, width. The Python
 model feeds that straight into Keras, which defaults to `channels_last` and therefore
 reads the **last** axis as the feature count:
@@ -56,6 +63,8 @@ hours of GPU time that self-play is currently using.
 
 ## 2. `clear_winner_thresh` is discarding ~47% of self-play compute
 
+**STATUS 2026-09-30: set back to 0.30 in mali_ba.ini.**
+
 Measured on runA003: 73 games culled at a **median of move 400**, discarding 28,460 MCTS
 moves against 32,017 kept. Games are culled after nearly all their cost has been paid,
 and the whole trajectory is thrown away.
@@ -71,6 +80,12 @@ for culling less rather than tuning the number.
 ---
 
 ## 3. No way to tell whether the agent is improving
+
+**STATUS 2026-09-30: `policy_probe.py` added** (see its docstring). Use `--reference` mode: the
+self-search mode is circular (a random net scored 40% top-1 that way). Top-1 is the usable
+metric; policy CE rewards flat distributions even against the fixed reference, and two
+untrained nets beat every trained checkpoint on CE. The random-init floor is 28.4% +/- 1.1
+top-1 on the 593-position reference (5 inits). Pre-B001 checkpoints cannot be scored (95 planes).
 
 **Self-play win rate cannot measure strength.** Both sides improve together, so it mostly
 reflects how often games reach a win condition before the move cap. It has sat near 34%
