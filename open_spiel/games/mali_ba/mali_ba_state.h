@@ -350,7 +350,7 @@ namespace mali_ba
         void ApplyTradeRouteUpdate(const Move& move);
         void ApplyTradeRouteDelete(const Move& move);
         void InitializeBoard();
-        void ApplyChanceSetup();
+        void ApplyChanceSetup(int setup_index);
         void PushStateToUndoStack();
         absl::optional<std::vector<double>> MaybeFinalReturns() const;
         void ClearAllState();

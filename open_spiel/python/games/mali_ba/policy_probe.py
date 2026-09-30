@@ -152,7 +152,10 @@ def generate_positions(n, config_file, seed, min_move, stride, max_move):
     while len(out) < n:
         state = game.new_initial_state()
         while state.is_chance_node():
-            state.apply_action(state.legal_actions()[0])
+            # Sample the meeple layout. It is recorded in the history as a chance
+            # outcome, so replay() reproduces the same board in any process.
+            la = state.legal_actions()
+            state.apply_action(la[rng.randrange(len(la))])
         ms = pyspiel.mali_ba.downcast_state(state)
         while ms.current_phase() == pyspiel.mali_ba.Phase.PLACE_TOKEN:
             la = state.legal_actions()

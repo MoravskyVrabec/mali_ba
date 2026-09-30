@@ -571,7 +571,10 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
         # Chance node startup
         episode_trajectory = []
         if state.is_chance_node():
-            state.apply_action(state.legal_actions()[0])
+            # The opening chance node picks the meeple layout (one of 65,536).
+            # Sample it: taking legal_actions()[0] would start every game from
+            # the same board.
+            state.apply_action(random.choice(state.legal_actions()))
 
         # Now do place tokens
         mali_ba_state = pyspiel.mali_ba.downcast_state(state)
@@ -1247,7 +1250,10 @@ def heuristic_actor_process(actor_id, game_params, args, job_queue, result_queue
 
         # Handle initial chance node
         if state.is_chance_node():
-            state.apply_action(state.legal_actions()[0])
+            # The opening chance node picks the meeple layout (one of 65,536).
+            # Sample it: taking legal_actions()[0] would start every game from
+            # the same board.
+            state.apply_action(random.choice(state.legal_actions()))
 
         mali_ba_state = pyspiel.mali_ba.downcast_state(state)
         # Use the heuristic for token placement so players start near cities

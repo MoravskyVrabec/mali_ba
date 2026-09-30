@@ -110,7 +110,10 @@ def play_game(game, actors, seed):
     rng = random.Random(seed)
     state = game.new_initial_state()
     while state.is_chance_node():
-        state.apply_action(state.legal_actions()[0])
+        # Meeple layout: sampled from this game's seed, so evaluations vary the
+        # board but stay reproducible.
+        la = state.legal_actions()
+        state.apply_action(la[rng.randrange(len(la))])
     ms = pyspiel.mali_ba.downcast_state(state)
     # Token placement: uniform random, as in training. Same distribution for everyone.
     while ms.current_phase() == pyspiel.mali_ba.Phase.PLACE_TOKEN:

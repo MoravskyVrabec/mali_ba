@@ -19,7 +19,12 @@ namespace open_spiel {
 namespace mali_ba {
 
 // Performs the random meeple setup distribution
-void Mali_BaState::ApplyChanceSetup() {
+void Mali_BaState::ApplyChanceSetup(int setup_index) {
+    SPIEL_CHECK_GE(setup_index, 0);
+    SPIEL_CHECK_LT(setup_index, kNumSetupOutcomes);
+    // The layout depends ONLY on setup_index, so it is identical in every process.
+    std::seed_seq setup_seq{0x4D616C69u, 0x2D426121u, static_cast<unsigned>(setup_index)};
+    std::mt19937 setup_rng(setup_seq);
     // LOG_INFO("ApplyChanceSetup: START");
     
     for (auto const &[hex, meeples] : hex_meeples_) {
@@ -50,7 +55,7 @@ void Mali_BaState::ApplyChanceSetup() {
         hex_meeples_[hex].clear();
 
         for (int i = 0; i < 3; ++i) {
-            int random_index = dist(rng_);
+            int random_index = dist(setup_rng);
             hex_meeples_[hex].push_back(all_meeple_colors[random_index]);
         }
 
@@ -432,7 +437,8 @@ void Mali_BaState::ResetToInitialState() {
     }
     
     // Regenerate initial meeple distribution using existing setup function
-    ApplyChanceSetup();
+    std::uniform_int_distribution<int> setup_dist(0, kNumSetupOutcomes - 1);
+    ApplyChanceSetup(setup_dist(rng_));
     
     // Move to play phase after setup
     current_phase_ = Phase::kPlay;

@@ -264,7 +264,12 @@ namespace open_spiel
 
         std::vector<std::pair<Action, double>> Mali_BaState::ChanceOutcomes() const {
             SPIEL_CHECK_TRUE(IsChanceNode());
-            return {{kChanceSetupAction, 1.0}};
+            std::vector<std::pair<Action, double>> outcomes;
+            outcomes.reserve(kNumSetupOutcomes);
+            const double p = 1.0 / kNumSetupOutcomes;
+            for (int i = 0; i < kNumSetupOutcomes; ++i)
+                outcomes.emplace_back(kChanceSetupAction + i, p);
+            return outcomes;
         }
         
         // =============================================================================
@@ -279,7 +284,9 @@ namespace open_spiel
             if (IsTerminal()) return result;
 
             if (IsChanceNode()) {
-                result.actions.push_back(kChanceSetupAction);
+                result.actions.reserve(kNumSetupOutcomes);
+                for (int i = 0; i < kNumSetupOutcomes; ++i)
+                    result.actions.push_back(kChanceSetupAction + i);
                 cached_legal_actions_result_ = result;
                 return result;
             }
@@ -888,7 +895,14 @@ namespace open_spiel
             is_terminal_ = false;
 
             if (IsChanceNode()) {
-                ApplyChanceSetup();
+                const int setup_index = static_cast<int>(action - kChanceSetupAction);
+                ApplyChanceSetup(setup_index);
+                // Vary the state's own generator per layout too, so heuristic
+                // tie-breaking is not the identical sequence in every game an
+                // actor plays from one game object.
+                rng_.seed(static_cast<std::mt19937::result_type>(
+                    GetGame()->GetRNGSeed() ^
+                    (0x9E3779B97F4A7C15ULL * static_cast<uint64_t>(setup_index + 1))));
                 SetCurrentPhase(Phase::kPlaceToken);
                 current_player_id_ = 0;
                 current_player_color_ = GetPlayerColor(current_player_id_);
@@ -1108,6 +1122,9 @@ namespace open_spiel
         }
 
         std::string Mali_BaState::ActionToString(Player player, Action action) const {
+            if (player == kChancePlayerId && action >= kChanceSetupAction &&
+                action < kChanceSetupAction + kNumSetupOutcomes)
+                return absl::StrCat("Setup_", action - kChanceSetupAction);
             if (action == kPassAction) return "Pass";
             if (action == kIncomeAction) return "TakeIncome";
             if (action == kPlacePostAction) return "PlacePost";
@@ -2087,9 +2104,8 @@ namespace open_spiel
             Action chosen_action = kInvalidAction;
 
             if (IsChanceNode()) {
-                auto outcomes = ChanceOutcomes();
-                SPIEL_CHECK_EQ(outcomes.size(), 1);
-                chosen_action = outcomes[0].first;
+                std::uniform_int_distribution<int> setup_dist(0, kNumSetupOutcomes - 1);
+                chosen_action = kChanceSetupAction + setup_dist(rng_);
             } else {
                 // *** THIS IS THE CORE LOGIC CHANGE ***
                 Player current_player = CurrentPlayer();

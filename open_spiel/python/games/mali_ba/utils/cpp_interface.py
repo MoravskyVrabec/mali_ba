@@ -78,7 +78,9 @@ class GameInterface:
                 print("🎲 Advancing past initial chance node...")
                 chance_actions = self.spiel_state.legal_actions()
                 if chance_actions:
-                    self.spiel_state.apply_action(chance_actions[0])
+                    # Pick a random meeple layout (one of 65,536).
+                    import random
+                    self.spiel_state.apply_action(random.choice(chance_actions))
                 print("✅ Initial board state is ready.")
         
         except Exception as e:

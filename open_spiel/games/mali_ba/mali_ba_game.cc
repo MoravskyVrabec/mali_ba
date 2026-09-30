@@ -659,7 +659,7 @@ namespace open_spiel
             return NewInitialState();
         }
 
-        int Mali_BaGame::MaxChanceOutcomes() const { return 1; }
+        int Mali_BaGame::MaxChanceOutcomes() const { return kNumSetupOutcomes; }
 
         std::unique_ptr<State> Mali_BaGame::NewInitialState() const {
             auto state = std::make_unique<Mali_BaState>(shared_from_this());
