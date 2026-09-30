@@ -21,7 +21,7 @@
 #include <map>
 #include <set>
 #include <iomanip>
-#include <sstream>  // for stringstream
+#include <sstream>  // for stringstream 
 #include <ostream>
 #include <ctime>    // for std::tm and std::time
 #include <algorithm> // For std::transform
@@ -461,6 +461,14 @@ namespace open_spiel
       // Lower values restore that contrast; the value head has to learn the
       // distinction from this gap alone.
       double timeout_leader_reward = 1.0;
+      // Append one observation plane holding normalised game progress
+      // (play moves so far / max_play_moves, constant across the board).
+      // Without it the value head cannot distinguish "ahead with 10 moves left"
+      // (worth ~timeout_leader_reward, near certain) from "ahead with 320 moves
+      // left" (still open) -- those states can have identical observations but
+      // very different correct values. Changing this changes the tensor shape and
+      // so invalidates all saved weights.
+      bool move_count_plane = true;
     };
 
 

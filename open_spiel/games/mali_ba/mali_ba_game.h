@@ -51,6 +51,7 @@ namespace open_spiel
       absl::optional<double> UtilitySum() const override { return absl::nullopt; }
       double MaxUtility() const override { return WinUtility(); }
       int GetMaxPlayMoves() const { return training_params_.max_play_moves; }
+      bool HasMoveCountPlane() const { return training_params_.move_count_plane; }
       int GetNearWinExtensionMoves() const { return training_params_.near_win_extension_moves; }
       int MaxGameLength() const override { return GetMaxPlayMoves() + GetNearWinExtensionMoves() + NumSetupMoves(); }
       // --- End OpenSpiel API ---

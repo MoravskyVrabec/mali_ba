@@ -131,11 +131,38 @@ namespace open_spiel
       const int rare_good_region_base = plane_idx;  // Planes 77+ (num_players * num_regions)
       plane_idx += state.NumPlayers() * num_regions_obs;
 
+      // Optional trailing game-progress plane (see TrainingParams::move_count_plane).
+      // Appended last so toggling it never shifts an existing plane index.
+      const bool has_move_count_plane = mali_ba_game->HasMoveCountPlane();
+      const int move_count_plane = has_move_count_plane ? plane_idx++ : -1;
+
       // Verify calculated plane count matches the shape declared at game init.
       SPIEL_CHECK_EQ(plane_idx, num_planes);
 
       int grid_radius = mali_ba_game->GetGridRadius();
       int HxW = height * width;                      // Calculate once
+
+      // --- Game progress plane ---
+      // Constant across the board, like current_player_plane. Linear in play moves
+      // so far over max_play_moves, clamped to [0,1]. This is what lets the value
+      // head tell a near-certain timeout result from a still-open position.
+      if (has_move_count_plane)
+      {
+        const int max_moves = mali_ba_game->GetMaxPlayMoves();
+        float progress = 0.0f;
+        if (max_moves > 0)
+        {
+          progress = static_cast<float>(mali_ba_state->PlayMoveCount()) /
+                     static_cast<float>(max_moves);
+          if (progress < 0.0f) progress = 0.0f;
+          if (progress > 1.0f) progress = 1.0f;
+        }
+        const int plane_offset = move_count_plane * HxW;
+        for (int i = 0; i < HxW; ++i)
+        {
+          values[plane_offset + i] = progress;
+        }
+      }
 
       // --- Fill Planes ---
       // Iterate through valid hexes
