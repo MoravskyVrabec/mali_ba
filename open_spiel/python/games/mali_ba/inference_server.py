@@ -64,7 +64,19 @@ class InferenceArena:
         self.policy = mp.RawArray("f", n_slots * n_actions)
         self.value = mp.RawArray("f", n_slots * n_players)
         self.req_flag = mp.RawArray("b", n_slots)      # 1 = request pending
-        self.done = [mp.Event() for _ in range(n_slots)]
+        # Per-slot wake-up: a plain semaphore, NOT mp.Event. Event.set() goes
+        # through Condition.notify(), which BLOCKS until the woken process has
+        # actually been scheduled -- a full context-switch round trip per actor,
+        # serialised inside the server. Measured ~28 us per actor on the desktop
+        # and ~100 us on the laptop, i.e. 31-44% of every batch cycle. Releasing a
+        # semaphore is one non-blocking syscall; the actor wakes on its own time.
+        self.wake = [mp.Semaphore(0) for _ in range(n_slots)]
+        # Request/response sequence numbers. A semaphore COUNTS, so a release left
+        # over from a request that timed out would otherwise satisfy the next
+        # request with stale results. Clients only accept a wake-up whose
+        # response sequence matches their current request.
+        self.req_seq = mp.RawArray("q", n_slots)
+        self.resp_seq = mp.RawArray("q", n_slots)
         self.slot_lock = mp.Lock()
         self.next_slot = mp.Value("i", 0)
         # Server-side stats, readable by the parent for logging.
@@ -122,13 +134,50 @@ class InferenceClient:
             arena.policy, dtype=np.float32, count=a, offset=self.slot * a * 4)
         self._val_view = np.frombuffer(
             arena.value, dtype=np.float32, count=v, offset=self.slot * v * 4)
-        self._event = arena.done[self.slot]
+        # Legacy arena: a run started before the semaphore protocol hands its
+        # arena (pickled, per-slot mp.Event in `done`) to actors that re-import
+        # this file from disk -- e.g. an actor respawned after the file was
+        # updated mid-run. Speak the old protocol to it rather than failing and
+        # silently dropping to CPU inference.
+        self._legacy = not hasattr(arena, "wake")
+        if self._legacy:
+            self._event = arena.done[self.slot]
+            return
+        self._sem = arena.wake[self.slot]
+        # A recycled slot may carry a wake-up left by its previous owner's last,
+        # timed-out request. Drain it, and continue the slot's sequence so an
+        # in-flight response to the old owner can never match a new request.
+        while self._sem.acquire(False):
+            pass
+        self._seq = max(arena.req_seq[self.slot], arena.resp_seq[self.slot])
 
     def infer(self, obs_flat, timeout=120.0):
         """Submit one observation, block until served. Returns (policy, value) copies."""
+        if self._legacy:
+            return self._infer_legacy(obs_flat, timeout)
+        slot = self.slot
+        self._seq += 1
+        seq = self._seq
         self._obs_view[:] = obs_flat                   # write payload first
+        self.arena.req_seq[slot] = seq
+        self.arena.req_flag[slot] = 1                  # then publish
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not self._sem.acquire(True, remaining):
+                self.arena.req_flag[slot] = 0
+                raise TimeoutError(
+                    f"inference slot {slot} timed out after {timeout}s "
+                    f"(is the inference server alive?)")
+            if self.arena.resp_seq[slot] == seq:
+                return self._pol_view.copy(), self._val_view.copy()
+            # otherwise: a stale wake-up from an earlier, abandoned request -- keep waiting
+
+    def _infer_legacy(self, obs_flat, timeout):
+        """The pre-semaphore protocol, for an arena built by an older server."""
+        self._obs_view[:] = obs_flat
         self._event.clear()
-        self.arena.req_flag[self.slot] = 1             # then publish
+        self.arena.req_flag[self.slot] = 1
         if not self._event.wait(timeout):
             self.arena.req_flag[self.slot] = 0
             raise TimeoutError(
@@ -294,7 +343,9 @@ def server_loop(arena, shape, game_params, weights_queue, stop_event,
 
     batch_buf = np.empty((max_batch, *shape), dtype=np.float32)
     flat_buf = batch_buf.reshape(max_batch, -1)   # view: same memory, one row per request
-    done_events = arena.done
+    wake = arena.wake
+    req_seq = arena.req_seq
+    resp_seq = arena.resp_seq
     log(LogLevel.INFO, f"InferenceServer: batch buckets {BUCKETS}")
     last_log = time.time()
 
@@ -376,6 +427,9 @@ def server_loop(arena, shape, game_params, weights_queue, stop_event,
         # Per-row copies. A single np.take over the batch was tried and measured
         # SLOWER (0.35 -> 0.68 ms at batch 48): fancy indexing out of the shared
         # RawArray costs more than these contiguous row copies.
+        # Sequence numbers are read with the payload: the client writes the
+        # observation, then req_seq, then the flag, so all are current here.
+        seqs = [req_seq[slot] for slot in pending]
         for k, slot in enumerate(pending):
             flat_buf[k] = obs_all[slot]
         idx = np.asarray(pending, dtype=np.intp)
@@ -393,9 +447,13 @@ def server_loop(arena, shape, game_params, weights_queue, stop_event,
         _s0 = time.perf_counter_ns()
         pol_all[idx] = pol[:bs]      # whole-batch copies into shared memory
         val_all[idx] = val[:bs]
-        for slot in pending:
-            flags[slot] = 0          # clear before signalling
-            done_events[slot].set()
+        for slot, sq in zip(pending, seqs):
+            resp_seq[slot] = sq      # stamp which request these results answer
+            # Clear the flag only if the client has not already posted a newer
+            # request on this slot (possible if it timed out and moved on).
+            if req_seq[slot] == sq:
+                flags[slot] = 0
+            wake[slot].release()     # non-blocking; the actor wakes on its own
         scatter_ns = time.perf_counter_ns() - _s0
 
         with arena.stat_batches.get_lock():
