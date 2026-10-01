@@ -212,6 +212,14 @@ def main():
         hopeless_move3=config.get('hopeless_move3', 360),
         hopeless_thresh3=config.get('hopeless_thresh3', 0.30),
         clear_winner_thresh=config.get('clear_winner_thresh', 0.35),
+        declining_best_thresh=config.get('declining_best_thresh', 0.0),
+        # Sent by the server but previously not copied, so remote actors used the
+        # defaults (exempt near-win games at every level, never no-kill) while
+        # desktop actors followed the ini -- the two machines culled differently.
+        hopeless_nearwin_override1=config.get('hopeless_nearwin_override1', True),
+        hopeless_nearwin_override2=config.get('hopeless_nearwin_override2', True),
+        hopeless_nearwin_override3=config.get('hopeless_nearwin_override3', True),
+        random_no_kill_thresh=config.get('random_no_kill_thresh', 0.0),
         debug=config.get('debug', False),
     )
     initial_game_params = config['initial_game_params']

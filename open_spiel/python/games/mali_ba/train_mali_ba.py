@@ -749,8 +749,13 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                         _declining_best.append(max(_val))
                         if len(_declining_best) > 2:
                             _declining_best.pop(0)
+                        # Threshold from the ini (declining_best_thresh, default 0.0 =
+                        # the original "negative" rule). The calibrated value head
+                        # predicts ~0.00 for the best player in an ordinary late
+                        # position, so 0.0 culls a large share of normal games.
+                        _dthr = getattr(args, 'declining_best_thresh', 0.0)
                         if (len(_declining_best) == 2
-                                and all(v < 0 for v in _declining_best)
+                                and all(v < _dthr for v in _declining_best)
                                 and _declining_best[1] < _declining_best[0]):
                             _msg = (
                                 f"best value negative and declining "
@@ -1703,6 +1708,7 @@ def main(args):
             'hopeless_nearwin_override3':          args.hopeless_nearwin_override3,
             'clear_winner_thresh':                 args.clear_winner_thresh,
             'random_no_kill_thresh':               getattr(args, 'random_no_kill_thresh', 0.0),
+            'declining_best_thresh':               getattr(args, 'declining_best_thresh', 0.0),
             'rare_goods_actor_fraction':           getattr(args, 'rare_goods_actor_fraction', 0.0),
             'rare_goods_added_heuristic_weight':   getattr(args, 'rare_goods_added_heuristic_weight', 0.30),
             'rare_goods_added_tier1_sims':         getattr(args, 'rare_goods_added_tier1_sims', 0),
@@ -2380,6 +2386,7 @@ if __name__ == "__main__":
     parsed_args.hopeless_nearwin_override3 = _ini_bool('hopeless_nearwin_override3', True)
     parsed_args.clear_winner_thresh = _ini_float('clear_winner_thresh', 0.35)
     parsed_args.random_no_kill_thresh = _ini_float('random_no_kill_thresh', 0.0)
+    parsed_args.declining_best_thresh = _ini_float('declining_best_thresh', 0.0)
     if parsed_args.sim_tier1_sims is None:
         parsed_args.sim_tier1_sims = _ini_int('sim_tier1_sims', 150)
     if parsed_args.sim_tier2_start is None:
