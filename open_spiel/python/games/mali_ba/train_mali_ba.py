@@ -123,7 +123,8 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                                         mcts_buffer_fraction=args.mcts_buffer_fraction,
                                         near_win_pool_fraction=args.near_win_pool_fraction,
                                         raregoods_pool_fraction=args.raregoods_pool_fraction,
-                                        replace_bootstrap_with_mcts=args.replace_bootstrap_with_mcts)
+                                        replace_bootstrap_with_mcts=args.replace_bootstrap_with_mcts,
+                                        timbuktu_pool_fraction=getattr(args, 'timbuktu_pool_fraction', 0.0))
     training_counter = 0
     last_save_time = time.time()
     last_checkpoint_time = time.time()
@@ -146,8 +147,9 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
             # into fake ones. Move the file aside rather than leave it, so the
             # next buffer save cannot overwrite it.
             _saved_obs_size = None
-            for _k in ('mcts_natural_buffer', 'mcts_nearwin_buffer',
-                       'mcts_raregoods_buffer', 'mcts_buffer', 'bootstrap_buffer'):
+            for _k in ('mcts_timeout_buffer', 'mcts_natural_buffer', 'mcts_nearwin_buffer',
+                       'mcts_raregoods_buffer', 'mcts_timbuktu_buffer', 'mcts_buffer',
+                       'bootstrap_buffer'):
                 for _exp in saved.get(_k, []):
                     _o = _exp[0]      # numpy is not imported in trainer_process
                     _saved_obs_size = int(_o.size) if hasattr(_o, 'size') else len(_o)
@@ -166,63 +168,48 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                     f"saved observations have {_saved_obs_size} values but this game "
                     f"produces {expected_obs_size} (observation planes changed?). "
                     f"Starting with an EMPTY buffer; the old file was moved to {_aside}")
-            # Copy into correctly-sized deques so the current run's maxlen is respected,
-            # not the maxlen that was baked into the saved deques.
-            saved_bootstrap = list(saved['bootstrap_buffer'])
-            # Support both old single-pool saves and new two-sub-pool saves.
-            saved_natural = list(saved.get('mcts_natural_buffer',
-                                           saved.get('mcts_buffer', [])))
-            saved_nearwin   = list(saved.get('mcts_nearwin_buffer', []))
-            saved_raregoods = list(saved.get('mcts_raregoods_buffer', []))
-            # Migration: old buffers lack the raregoods pool — split natural 50/50 to seed it.
-            if 'mcts_raregoods_buffer' not in saved and saved_natural:
-                half = len(saved_natural) // 2
-                saved_raregoods = saved_natural[half:]
-                saved_natural   = saved_natural[:half]
-                log(LogLevel.INFO,
-                    f"Trainer: Migrating old buffer — split {len(saved_natural) + len(saved_raregoods)} "
-                    f"natural entries 50/50 into natural ({len(saved_natural)}) "
-                    f"and raregoods ({len(saved_raregoods)}) pools.")
-            bootstrap_cap  = local_replay_buffer.bootstrap_buffer.maxlen
-            natural_cap    = local_replay_buffer.mcts_natural_buffer.maxlen
-            nearwin_cap    = local_replay_buffer.mcts_nearwin_buffer.maxlen
-            raregoods_cap  = local_replay_buffer.mcts_raregoods_buffer.maxlen
-            if len(saved_bootstrap) > bootstrap_cap:
-                log(LogLevel.WARN,
-                    f"Trainer: Saved bootstrap pool ({len(saved_bootstrap)}) exceeds new capacity "
-                    f"({bootstrap_cap}). Sampling {bootstrap_cap} entries randomly.")
-                saved_bootstrap = random.sample(saved_bootstrap, bootstrap_cap)
-            if len(saved_natural) > natural_cap:
-                log(LogLevel.WARN,
-                    f"Trainer: Saved MCTS-natural pool ({len(saved_natural)}) exceeds new capacity "
-                    f"({natural_cap}). Keeping most recent {natural_cap} entries.")
-                saved_natural = saved_natural[-natural_cap:]
-            if len(saved_nearwin) > nearwin_cap:
-                log(LogLevel.WARN,
-                    f"Trainer: Saved MCTS-nearwin pool ({len(saved_nearwin)}) exceeds new capacity "
-                    f"({nearwin_cap}). Keeping most recent {nearwin_cap} entries.")
-                saved_nearwin = saved_nearwin[-nearwin_cap:]
-            if len(saved_raregoods) > raregoods_cap:
-                log(LogLevel.WARN,
-                    f"Trainer: Saved MCTS-raregoods pool ({len(saved_raregoods)}) exceeds new capacity "
-                    f"({raregoods_cap}). Keeping most recent {raregoods_cap} entries.")
-                saved_raregoods = saved_raregoods[-raregoods_cap:]
-            local_replay_buffer.bootstrap_buffer      = collections.deque(saved_bootstrap, maxlen=bootstrap_cap)
-            local_replay_buffer.mcts_natural_buffer   = collections.deque(saved_natural,   maxlen=natural_cap)
-            local_replay_buffer.mcts_nearwin_buffer   = collections.deque(saved_nearwin,   maxlen=nearwin_cap)
-            local_replay_buffer.mcts_raregoods_buffer = collections.deque(saved_raregoods, maxlen=raregoods_cap)
+            # Convert any older format (e.g. the pre-2026-10-01 "natural" pool of
+            # Timbuktu wins + ordinary timeouts) through the shared helper, then copy
+            # each pool into a deque sized for THIS run, so its maxlen is respected
+            # rather than the one baked into the save.
+            from mali_ba.buffer_format import normalize_saved_buffer
+            _pools_in, _notes = normalize_saved_buffer(saved)
+            del saved
+            for _n in _notes:
+                log(LogLevel.INFO, f"Trainer: Converting saved buffer -- {_n}.")
+            _targets = (('bootstrap_buffer',      'bootstrap'),
+                        ('mcts_timeout_buffer',   'MCTS-timeout'),
+                        ('mcts_nearwin_buffer',   'MCTS-nearwin'),
+                        ('mcts_raregoods_buffer', 'MCTS-raregoods'),
+                        ('mcts_timbuktu_buffer',  'MCTS-timbuktu'))
+            for _key, _label in _targets:
+                _cap = getattr(local_replay_buffer, _key).maxlen
+                _src = _pools_in[_key]
+                if len(_src) > _cap:
+                    if _key == 'bootstrap_buffer':
+                        log(LogLevel.WARN,
+                            f"Trainer: Saved {_label} pool ({len(_src)}) exceeds new capacity "
+                            f"({_cap}). Sampling {_cap} entries randomly.")
+                        _src = random.sample(_src, _cap)
+                    else:
+                        log(LogLevel.WARN,
+                            f"Trainer: Saved {_label} pool ({len(_src)}) exceeds new capacity "
+                            f"({_cap}). Keeping most recent {_cap} entries.")
+                        _src = _src[-_cap:]
+                setattr(local_replay_buffer, _key, collections.deque(_src, maxlen=_cap))
             log(LogLevel.INFO,
                 f"Trainer: Restored buffer from {args.save_buffer_path} — "
                 f"bootstrap={len(local_replay_buffer.bootstrap_buffer)}, "
-                f"mcts_natural={len(local_replay_buffer.mcts_natural_buffer)}, "
+                f"mcts_timeout={len(local_replay_buffer.mcts_timeout_buffer)}, "
                 f"mcts_nearwin={len(local_replay_buffer.mcts_nearwin_buffer)}, "
-                f"mcts_raregoods={len(local_replay_buffer.mcts_raregoods_buffer)} experiences.")
+                f"mcts_raregoods={len(local_replay_buffer.mcts_raregoods_buffer)}, "
+                f"mcts_timbuktu={len(local_replay_buffer.mcts_timbuktu_buffer)} experiences.")
             # Release the loaded copy. These locals live as long as trainer_process,
             # so without this every restored experience stays referenced after the
             # pools evict it: once the pools turned over the trainer held two full
             # buffers (B008: 51 GB resident for a ~18 GB buffer), including every
             # entry dropped when a pool was shrunk at load.
-            del saved, saved_bootstrap, saved_natural, saved_nearwin, saved_raregoods
+            del _pools_in, _src
             import gc
             gc.collect()
         except Exception as e:
@@ -249,9 +236,10 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                                            compresslevel=getattr(args, 'buffer_compresslevel', 1)) as f:
                                 pickle.dump({
                                     'bootstrap_buffer':      local_replay_buffer.bootstrap_buffer,
-                                    'mcts_natural_buffer':   local_replay_buffer.mcts_natural_buffer,
+                                    'mcts_timeout_buffer':   local_replay_buffer.mcts_timeout_buffer,
                                     'mcts_nearwin_buffer':   local_replay_buffer.mcts_nearwin_buffer,
                                     'mcts_raregoods_buffer': local_replay_buffer.mcts_raregoods_buffer,
+                                    'mcts_timbuktu_buffer':  local_replay_buffer.mcts_timbuktu_buffer,
                                 }, f)
                             os.replace(tmp_path, args.save_buffer_path)
                             log(LogLevel.INFO, f"Trainer: Buffer saved on shutdown to {args.save_buffer_path}.")
@@ -286,12 +274,15 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                                     f"Bootstrap avg={bootstrap_avg:.0f} moves. "
                                     f"mcts_fraction → {new_fraction:.2f}")
                     continue
-                # experience is (obs, policy, value, is_bootstrap [, is_near_win [, is_rare_goods]])
+                # experience is (obs, policy, value, is_bootstrap
+                #                [, is_near_win [, is_rare_goods [, is_timbuktu]]])
                 is_bootstrap  = experience[3] if len(experience) > 3 else False
                 is_near_win   = experience[4] if len(experience) > 4 else False
                 is_rare_goods = experience[5] if len(experience) > 5 else False
+                is_timbuktu   = experience[6] if len(experience) > 6 else False
                 local_replay_buffer.add(experience[:3], is_bootstrap=is_bootstrap,
-                                        is_near_win=is_near_win, is_rare_goods=is_rare_goods)
+                                        is_near_win=is_near_win, is_rare_goods=is_rare_goods,
+                                        is_timbuktu=is_timbuktu)
                 experiences_processed += 1
         except Exception as _trainer_exc:
             import queue as _queue_mod
@@ -303,10 +294,11 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
             # Log every batch so we can confirm trainer is receiving data
             log(LogLevel.INFO, f"Trainer processed {experiences_processed} new experiences. "
                 f"Bootstrap: {len(local_replay_buffer.bootstrap_buffer)}  "
-                f"MCTS-natural: {len(local_replay_buffer.mcts_natural_buffer)}  "
+                f"MCTS-timeout: {len(local_replay_buffer.mcts_timeout_buffer)}  "
                 f"MCTS-nearwin: {len(local_replay_buffer.mcts_nearwin_buffer)}  "
                 f"MCTS-raregoods: {len(local_replay_buffer.mcts_raregoods_buffer)}  "
-                f"| batch shares nat/nw/rg: "
+                f"MCTS-timbuktu: {len(local_replay_buffer.mcts_timbuktu_buffer)}  "
+                f"| batch shares to/nw/rg/tb: "
                 + "/".join(f"{x:.2f}" for x in local_replay_buffer.effective_pool_shares))
 
         # Train in batches
@@ -373,9 +365,10 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                                    compresslevel=getattr(args, 'buffer_compresslevel', 1)) as f:
                         pickle.dump({
                             'bootstrap_buffer':      local_replay_buffer.bootstrap_buffer,
-                            'mcts_natural_buffer':   local_replay_buffer.mcts_natural_buffer,
+                            'mcts_timeout_buffer':   local_replay_buffer.mcts_timeout_buffer,
                             'mcts_nearwin_buffer':   local_replay_buffer.mcts_nearwin_buffer,
                             'mcts_raregoods_buffer': local_replay_buffer.mcts_raregoods_buffer,
+                            'mcts_timbuktu_buffer':  local_replay_buffer.mcts_timbuktu_buffer,
                         }, f)
                     os.replace(tmp_path, args.save_buffer_path)
                     _save_el = time.time() - _save_t0
@@ -387,9 +380,10 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                     log(LogLevel.INFO,
                         f"Trainer: Buffer saved to {args.save_buffer_path} — "
                         f"bootstrap={len(local_replay_buffer.bootstrap_buffer)}, "
-                        f"mcts_natural={len(local_replay_buffer.mcts_natural_buffer)}, "
+                        f"mcts_timeout={len(local_replay_buffer.mcts_timeout_buffer)}, "
                         f"mcts_nearwin={len(local_replay_buffer.mcts_nearwin_buffer)}, "
-                        f"mcts_raregoods={len(local_replay_buffer.mcts_raregoods_buffer)} experiences.")
+                        f"mcts_raregoods={len(local_replay_buffer.mcts_raregoods_buffer)}, "
+                        f"mcts_timbuktu={len(local_replay_buffer.mcts_timbuktu_buffer)} experiences.")
                 except Exception as e:
                     log(LogLevel.ERROR, f"Trainer: Buffer save failed: {e}")
 
@@ -1979,8 +1973,13 @@ def main(args):
             is_rare_goods_game = (any(r >= 1.0 for r in returns)
                                   and not is_bootstrap_game
                                   and 'Timbuktu' not in finished_msg)
+            # Natural win via the Timbuktu end-condition: routed to its own pool.
+            is_timbuktu_game = (any(r >= 1.0 for r in returns)
+                                and not is_bootstrap_game
+                                and 'Timbuktu' in finished_msg)
             log(LogLevel.INFO, f"  [DBG] game={total_games_processed} bootstrap={is_bootstrap_game} "
                 f"timeout={is_timeout_game} near_win={near_win_flag} rare_goods={is_rare_goods_game} "
+                f"timbuktu={is_timbuktu_game} "
                 f"skip_timeout_games={args.skip_timeout_games} returns={[round(r,3) for r in returns]}")
             # Skip timeout games during bootstrap always, and during MCTS when skip_timeout_games is set.
             # Exception: retain near-win timeout games regardless.
@@ -2015,7 +2014,7 @@ def main(args):
                     # (heuristic_only skips this entirely since there is no trainer.)
                     if not args.heuristic_only:
                         if not replay_buffer_queue.full():
-                            replay_buffer_queue.put((observation, policy_target, value_data, is_bootstrap_game, near_win_flag and is_timeout_game, is_rare_goods_game))
+                            replay_buffer_queue.put((observation, policy_target, value_data, is_bootstrap_game, near_win_flag and is_timeout_game, is_rare_goods_game, is_timbuktu_game))
                             queued_count += 1
                         else:
                             log(LogLevel.INFO, f"  [DBG] Replay buffer queue FULL after {queued_count} puts.")
@@ -2179,7 +2178,7 @@ if __name__ == "__main__":
                          "(remainder goes to bootstrap). Overrides ini value if set. Default: from ini or 0.80.")
     parser.add_argument('--replace_bootstrap_with_mcts', type=lambda x: x.lower() in ('1','true','yes'),
                     default=None,
-                    help="When the MCTS natural-win pool is full, promote evicted entries into "
+                    help="When the MCTS timeout pool is full, promote evicted entries into "
                          "the bootstrap pool instead of discarding them. Overrides ini value if set.")
 
     parser.add_argument('--batch_size', type=int, default=128)
@@ -2259,6 +2258,10 @@ if __name__ == "__main__":
     parser.add_argument('--raregoods_pool_fraction', type=float, default=None,
                          help="Fraction of the MCTS buffer capacity reserved for Rare goods natural wins. "
                               "Overrides ini value if set. Default: from ini or 0.15.")
+    parser.add_argument('--timbuktu_pool_fraction', type=float, default=None,
+                         help="Fraction of the MCTS buffer capacity (and of every batch) for "
+                              "Timbuktu wins. 0 keeps them in the timeout pool (old behaviour). "
+                              "Default: from ini or 0.")
     parser.add_argument('--heuristic_guidance_weight', type=float, default=None,
                          help="Starting weight of heuristic policy in MCTS prior. Default: from ini or 0.40.")
     parser.add_argument('--heuristic_guidance_weight_final', type=float, default=None,
@@ -2347,6 +2350,8 @@ if __name__ == "__main__":
         parsed_args.near_win_pool_fraction = _ini_float('near_win_pool_fraction', 0.30)
     if parsed_args.raregoods_pool_fraction is None:
         parsed_args.raregoods_pool_fraction = _ini_float('raregoods_pool_fraction', 0.15)
+    if parsed_args.timbuktu_pool_fraction is None:
+        parsed_args.timbuktu_pool_fraction = _ini_float('timbuktu_pool_fraction', 0.0)
     if parsed_args.heuristic_guidance_weight is None:
         parsed_args.heuristic_guidance_weight = _ini_float('heuristic_guidance_weight', 0.40)
     if parsed_args.heuristic_guidance_weight_final is None:
@@ -2462,6 +2467,7 @@ if __name__ == "__main__":
     print(f'  near_win_mcts_pct           : {parsed_args.near_win_mcts_pct}')
     print(f'  near_win_pool_fraction      : {parsed_args.near_win_pool_fraction}')
     print(f'  raregoods_pool_fraction     : {parsed_args.raregoods_pool_fraction}')
+    print(f'  timbuktu_pool_fraction      : {parsed_args.timbuktu_pool_fraction}')
     if parsed_args.rare_goods_actor_fraction > 0.0:
         _rg_t1_str = (f', tier1_sims={parsed_args.sim_tier1_sims}+{parsed_args.rare_goods_added_tier1_sims}'
                       if parsed_args.rare_goods_added_tier1_sims > 0 else '')

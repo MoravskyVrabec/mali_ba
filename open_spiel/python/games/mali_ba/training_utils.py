@@ -78,63 +78,83 @@ def monitor_memory(func):
 
 # A simple replay buffer
 class ReplayBuffer:
-    """Replay buffer with four pools: bootstrap, MCTS-natural, MCTS-near-win, MCTS-rare-goods.
+    """Replay buffer with a bootstrap pool and four MCTS pools.
 
-    mcts_buffer_fraction controls both the MCTS capacity share (vs bootstrap) and
-    the target batch sampling ratio.  near_win_pool_fraction controls what fraction
-    of the MCTS capacity is reserved for near-win timeout games.
-    raregoods_pool_fraction controls what fraction is reserved for Rare goods natural wins
-    (guaranteeing Rare goods exposure each batch regardless of self-play frequency).
-    The natural pool gets the remaining MCTS fraction (Timbuktu wins).
+      timeout    ordinary timeouts (no near-win)   gets the remaining MCTS share
+      nearwin    near-win timeouts                 near_win_pool_fraction
+      raregoods  rare-goods wins                   raregoods_pool_fraction
+      timbuktu   Timbuktu wins                     timbuktu_pool_fraction
 
-    When any pool is short, the others compensate so the batch always reaches the
-    full requested size.
+    The timeout pool was called "natural" until 2026-10-01 and also held the
+    Timbuktu wins, so their share of training depended on how many timeouts
+    arrived: relaxing the culls in C004 would have cut it from ~18% to ~2-3%.
+    With timbuktu_pool_fraction = 0, Timbuktu wins still go to the timeout pool
+    (the old behaviour). File format and conversion of older saves: buffer_format.py.
+
+    mcts_buffer_fraction sets the MCTS capacity share (vs bootstrap) and the batch
+    ratio. Each MCTS pool's fraction sets both its capacity and its share of every
+    batch, scaled by how full the pool is (see sample()). When a pool is short,
+    the others make up the difference so the batch reaches the requested size.
     """
     def __init__(self, buffer_size, mcts_buffer_fraction: float = 0.8,
                  near_win_pool_fraction: float = 0.30,
                  raregoods_pool_fraction: float = 0.15,
-                 replace_bootstrap_with_mcts: bool = False):
-        mcts_cap         = max(1, int(buffer_size * mcts_buffer_fraction))
-        bootstrap_cap    = max(1, buffer_size - mcts_cap)
-        nearwin_cap      = max(1, int(mcts_cap * near_win_pool_fraction))
-        raregoods_cap    = max(1, int(mcts_cap * raregoods_pool_fraction))
-        natural_cap      = max(1, mcts_cap - nearwin_cap - raregoods_cap)
+                 replace_bootstrap_with_mcts: bool = False,
+                 timbuktu_pool_fraction: float = 0.0):
+        mcts_cap      = max(1, int(buffer_size * mcts_buffer_fraction))
+        bootstrap_cap = max(1, buffer_size - mcts_cap)
+        nearwin_cap   = max(1, int(mcts_cap * near_win_pool_fraction))
+        raregoods_cap = max(1, int(mcts_cap * raregoods_pool_fraction))
+        timbuktu_cap  = max(1, int(mcts_cap * timbuktu_pool_fraction))
+        timeout_cap   = max(1, mcts_cap - nearwin_cap - raregoods_cap
+                            - (timbuktu_cap if timbuktu_pool_fraction > 0 else 0))
 
         self.bootstrap_buffer      = collections.deque(maxlen=bootstrap_cap)
-        self.mcts_natural_buffer   = collections.deque(maxlen=natural_cap)
+        self.mcts_timeout_buffer   = collections.deque(maxlen=timeout_cap)
         self.mcts_nearwin_buffer   = collections.deque(maxlen=nearwin_cap)
         self.mcts_raregoods_buffer = collections.deque(maxlen=raregoods_cap)
+        self.mcts_timbuktu_buffer  = collections.deque(maxlen=timbuktu_cap)
 
         self.mcts_fraction               = mcts_buffer_fraction
         self.near_win_pool_fraction      = near_win_pool_fraction
         self.raregoods_pool_fraction     = raregoods_pool_fraction
-        # Batch shares actually used by the most recent sample() (natural, nearwin,
-        # raregoods), after scaling by pool fill -- see sample().
-        self.effective_pool_shares       = (0.0, 0.0, 0.0)
+        self.timbuktu_pool_fraction      = timbuktu_pool_fraction
+        # Batch shares actually used by the most recent sample() (timeout, nearwin,
+        # raregoods, timbuktu), after scaling by pool fill -- see sample().
+        self.effective_pool_shares       = (0.0, 0.0, 0.0, 0.0)
         self.replace_bootstrap_with_mcts = replace_bootstrap_with_mcts
 
     def add(self, experience, is_bootstrap: bool = False, is_near_win: bool = False,
-            is_rare_goods: bool = False):
+            is_rare_goods: bool = False, is_timbuktu: bool = False):
         if is_bootstrap:
             self.bootstrap_buffer.append(experience)
         elif is_near_win:
             self.mcts_nearwin_buffer.append(experience)
         elif is_rare_goods:
             self.mcts_raregoods_buffer.append(experience)
+        elif is_timbuktu and self.timbuktu_pool_fraction > 0:
+            self.mcts_timbuktu_buffer.append(experience)
         else:
             if (self.replace_bootstrap_with_mcts
-                    and len(self.mcts_natural_buffer) == self.mcts_natural_buffer.maxlen):
-                # Natural pool is full. Promote the oldest natural win into the bootstrap
-                # pool before the deque evicts it — seeds bootstrap from scratch if empty.
-                self.bootstrap_buffer.append(self.mcts_natural_buffer[0])
-            self.mcts_natural_buffer.append(experience)
+                    and len(self.mcts_timeout_buffer) == self.mcts_timeout_buffer.maxlen):
+                # Pool is full. Promote the oldest entry into the bootstrap pool
+                # before the deque evicts it -- seeds bootstrap from scratch if empty.
+                self.bootstrap_buffer.append(self.mcts_timeout_buffer[0])
+            self.mcts_timeout_buffer.append(experience)
+
+    def _mcts_pools(self):
+        """(deque, configured fraction) for each MCTS pool, in shortfall-priority order."""
+        rest = max(0.0, 1.0 - self.near_win_pool_fraction - self.raregoods_pool_fraction
+                   - (self.timbuktu_pool_fraction if self.timbuktu_pool_fraction > 0 else 0.0))
+        return [(self.mcts_timeout_buffer,   rest),
+                (self.mcts_nearwin_buffer,   self.near_win_pool_fraction),
+                (self.mcts_raregoods_buffer, self.raregoods_pool_fraction),
+                (self.mcts_timbuktu_buffer,  max(0.0, self.timbuktu_pool_fraction))]
 
     def sample(self, batch_size):
-        have_bootstrap  = len(self.bootstrap_buffer) > 0
-        have_natural    = len(self.mcts_natural_buffer) > 0
-        have_nearwin    = len(self.mcts_nearwin_buffer) > 0
-        have_raregoods  = len(self.mcts_raregoods_buffer) > 0
-        have_mcts       = have_natural or have_nearwin or have_raregoods
+        pools = self._mcts_pools()
+        have_bootstrap = len(self.bootstrap_buffer) > 0
+        have_mcts = any(len(p) > 0 for p, _ in pools)
 
         # Target counts: configured fractions, each scaled by how full its pool is.
         #
@@ -145,67 +165,51 @@ class ReplayBuffer:
         # memorising nine games rather than learning rare-goods wins. Scaling by
         # fill (len / capacity) and renormalising leaves full pools exactly at
         # their configured fractions, and lets a sparse pool's share grow as real
-        # examples accumulate.
+        # examples accumulate. The timeout pool takes whatever remains.
         n_mcts_target = max(1, round(batch_size * self.mcts_fraction))
-        _pools = (self.mcts_natural_buffer, self.mcts_nearwin_buffer, self.mcts_raregoods_buffer)
-        _fracs = (max(0.0, 1.0 - self.near_win_pool_fraction - self.raregoods_pool_fraction),
-                  self.near_win_pool_fraction, self.raregoods_pool_fraction)
-        _w = [f * (len(p) / p.maxlen if p.maxlen else 1.0) for p, f in zip(_pools, _fracs)]
-        _wsum = sum(_w)
-        if _wsum > 0:
-            n_nearwin_target   = max(0, round(n_mcts_target * _w[1] / _wsum))
-            n_raregoods_target = max(0, round(n_mcts_target * _w[2] / _wsum))
-        else:
-            n_nearwin_target = n_raregoods_target = 0
-        n_natural_target = max(0, n_mcts_target - n_nearwin_target - n_raregoods_target)
-        self.effective_pool_shares = (
-            (n_natural_target / n_mcts_target, n_nearwin_target / n_mcts_target,
-             n_raregoods_target / n_mcts_target) if n_mcts_target else (0.0, 0.0, 0.0))
+        w = [f * (len(p) / p.maxlen if p.maxlen else 1.0) for p, f in pools]
+        wsum = sum(w)
+        targets = [0] * len(pools)
+        if wsum > 0:
+            for i in range(1, len(pools)):
+                targets[i] = max(0, round(n_mcts_target * w[i] / wsum))
+        targets[0] = max(0, n_mcts_target - sum(targets[1:]))
+        self.effective_pool_shares = tuple(t / n_mcts_target for t in targets)
 
         samples = []
-
-        if have_mcts and have_bootstrap:
-            # Draw from each MCTS sub-pool; let bootstrap fill any shortfall.
-            n_natural   = min(n_natural_target,   len(self.mcts_natural_buffer))   if have_natural   else 0
-            n_nearwin   = min(n_nearwin_target,   len(self.mcts_nearwin_buffer))   if have_nearwin   else 0
-            n_raregoods = min(n_raregoods_target, len(self.mcts_raregoods_buffer)) if have_raregoods else 0
-            n_mcts      = n_natural + n_nearwin + n_raregoods
-            n_bootstrap = min(batch_size - n_mcts, len(self.bootstrap_buffer))
-            if n_natural   > 0: samples += random.sample(list(self.mcts_natural_buffer),   n_natural)
-            if n_nearwin   > 0: samples += random.sample(list(self.mcts_nearwin_buffer),   n_nearwin)
-            if n_raregoods > 0: samples += random.sample(list(self.mcts_raregoods_buffer), n_raregoods)
-            if n_bootstrap > 0: samples += random.sample(list(self.bootstrap_buffer),      n_bootstrap)
-        elif have_mcts:
-            # Bootstrap is empty; MCTS pools must fill the full batch_size.
-            n_natural   = min(n_natural_target,   len(self.mcts_natural_buffer))   if have_natural   else 0
-            n_nearwin   = min(n_nearwin_target,   len(self.mcts_nearwin_buffer))   if have_nearwin   else 0
-            n_raregoods = min(n_raregoods_target, len(self.mcts_raregoods_buffer)) if have_raregoods else 0
-            shortfall   = batch_size - n_natural - n_nearwin - n_raregoods
-            # Distribute shortfall to pools with remaining capacity, priority: natural → nearwin → raregoods.
-            if shortfall > 0 and have_natural:
-                extra = min(shortfall, len(self.mcts_natural_buffer) - n_natural)
-                n_natural += extra; shortfall -= extra
-            if shortfall > 0 and have_nearwin:
-                extra = min(shortfall, len(self.mcts_nearwin_buffer) - n_nearwin)
-                n_nearwin += extra; shortfall -= extra
-            if shortfall > 0 and have_raregoods:
-                extra = min(shortfall, len(self.mcts_raregoods_buffer) - n_raregoods)
-                n_raregoods += extra; shortfall -= extra
-            if n_natural   > 0: samples += random.sample(list(self.mcts_natural_buffer),   n_natural)
-            if n_nearwin   > 0: samples += random.sample(list(self.mcts_nearwin_buffer),   n_nearwin)
-            if n_raregoods > 0: samples += random.sample(list(self.mcts_raregoods_buffer), n_raregoods)
+        if have_mcts:
+            n = [min(t, len(p)) for t, (p, _) in zip(targets, pools)]
+            if have_bootstrap:
+                # Bootstrap fills any shortfall.
+                n_bootstrap = min(batch_size - sum(n), len(self.bootstrap_buffer))
+            else:
+                # No bootstrap: MCTS pools fill the batch, in priority order.
+                n_bootstrap = 0
+                shortfall = batch_size - sum(n)
+                for i, (p, _) in enumerate(pools):
+                    if shortfall <= 0:
+                        break
+                    extra = min(shortfall, len(p) - n[i])
+                    n[i] += extra
+                    shortfall -= extra
+            for k, (p, _) in zip(n, pools):
+                if k > 0:
+                    samples += random.sample(list(p), k)
+            if n_bootstrap > 0:
+                samples += random.sample(list(self.bootstrap_buffer), n_bootstrap)
         else:
-            n = min(batch_size, len(self.bootstrap_buffer))
-            samples = random.sample(list(self.bootstrap_buffer), n)
+            k = min(batch_size, len(self.bootstrap_buffer))
+            samples = random.sample(list(self.bootstrap_buffer), k)
 
         random.shuffle(samples)
         return np.array(samples, dtype=object)
 
     def __len__(self):
         return (len(self.bootstrap_buffer) +
-                len(self.mcts_natural_buffer) +
+                len(self.mcts_timeout_buffer) +
                 len(self.mcts_nearwin_buffer) +
-                len(self.mcts_raregoods_buffer))
+                len(self.mcts_raregoods_buffer) +
+                len(self.mcts_timbuktu_buffer))
 
 class SimpleAgent:
     # ** Accept num_players in constructor **

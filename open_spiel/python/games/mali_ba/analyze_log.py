@@ -40,9 +40,12 @@ RE_POLICY_ROWS = re.compile(
 )
 RE_BUFFER_STATE = re.compile(
     r'(\d{8}-\d{6}) \[INFO\] \[Python:0\] Trainer processed \d+ new experiences\. '
-    r'Bootstrap: (\d+)\s+MCTS-natural: (\d+)\s+MCTS-nearwin: (\d+)'
+    r'Bootstrap: (\d+)\s+MCTS-(?:natural|timeout): (\d+)\s+MCTS-nearwin: (\d+)'
     r'(?:\s+MCTS-raregoods: (\d+))?'
+    r'(?:\s+MCTS-timbuktu: (\d+))?'
 )
+# Logs before 2026-10-01 say "MCTS-natural" for what is now the timeout pool (which
+# then also held Timbuktu wins); later logs say "MCTS-timeout" and add "MCTS-timbuktu".
 RE_HEURISTIC_GUIDANCE = re.compile(
     r'(\d{8}-\d{6}) \[INFO\] \[Python:0\] Actor (\d+), Game (\d+): '
     r'heuristic_guidance_weight=([\d.]+)'
@@ -273,9 +276,11 @@ def parse_log(path):
                 last_buffer_state = {
                     'time': parse_time(m.group(1)),
                     'bootstrap': int(m.group(2)),
-                    'mcts_natural': int(m.group(3)),
+                    'mcts_timeout': int(m.group(3)),
                     'mcts_nearwin': int(m.group(4)),
                     'mcts_raregoods': int(m.group(5)) if m.group(5) else None,
+                    'mcts_timbuktu': int(m.group(6)) if m.group(6) else None,
+                    'old_labels': 'MCTS-natural' in line,
                 }
                 continue
 
@@ -894,11 +899,14 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
     if last_buffer_state:
         bs = last_buffer_state
         rg = bs.get('mcts_raregoods')
-        total = bs['bootstrap'] + bs['mcts_natural'] + bs['mcts_nearwin'] + (rg or 0)
+        tb = bs.get('mcts_timbuktu')
+        total = bs['bootstrap'] + bs['mcts_timeout'] + bs['mcts_nearwin'] + (rg or 0) + (tb or 0)
         rg_str = f', MCTS-raregoods: {rg:,}' if rg is not None else ''
+        tb_str = f', MCTS-timbuktu: {tb:,}' if tb is not None else ''
+        to_label = 'MCTS-natural' if bs.get('old_labels') else 'MCTS-timeout'
         print(f'  Replay buffer (latest)    : {total:,} experiences  '
-              f'(bootstrap: {bs["bootstrap"]:,}, MCTS-natural: {bs["mcts_natural"]:,}, '
-              f'MCTS-nearwin: {bs["mcts_nearwin"]:,}{rg_str})  '
+              f'(bootstrap: {bs["bootstrap"]:,}, {to_label}: {bs["mcts_timeout"]:,}, '
+              f'MCTS-nearwin: {bs["mcts_nearwin"]:,}{rg_str}{tb_str})  '
               f'@ {bs["time"].strftime("%Y%m%d-%H%M%S")}')
         if last_adaptive_fraction is not None:
             print(f'  Adaptive mcts_fraction    : {last_adaptive_fraction:.2f}')
