@@ -142,8 +142,14 @@ def parse_log(path):
     search_costs = []             # per-game search cost from SEARCH COST lines
                                   # (absent in logs predating playout cap randomization)
 
+    max_play_moves = None         # from the game's startup log; sets the time-penalty tiers
+
     with open(path) as f:
         for line in f:
+            if max_play_moves is None and 'max_play_moves:' in line:
+                _mm = re.search(r'max_play_moves:\s*(\d+)', line)
+                if _mm:
+                    max_play_moves = int(_mm.group(1))
             t_match = re.match(r'(\d{8}-\d{6})', line)
             if t_match:
                 t = parse_time(t_match.group(1))
@@ -369,6 +375,7 @@ def parse_log(path):
         'top_action_counter': top_action_counter,
         'first_time': first_time,
         'last_time': last_time,
+        'max_play_moves': max_play_moves or 420,
         'last_buffer_state': last_buffer_state,
         'last_adaptive_fraction': last_adaptive_fraction,
         'recent_heuristic_guidance': recent_heuristic_guidance,
@@ -1661,6 +1668,51 @@ def fetch_remote_value_checks(log_path, ssh_password):
         return []
 
 
+def _penalty_multiplier(move, max_moves):
+    """Time-penalty multiplier for a move, as in Mali_BaState (mali_ba_state_core.cc):
+    1x up to a third of max_moves, 2x to 1.7/3, 4x to 2.4/3, 7x beyond."""
+    import math
+    if move <= 0:
+        return 0
+    if move <= math.trunc(max_moves / 3):
+        return 1
+    if move <= math.trunc(1.7 / 3 * max_moves):
+        return 2
+    if move <= math.trunc(2.4 / 3 * max_moves):
+        return 4
+    return 7
+
+
+def _remaining_penalty_fraction(move, length, max_moves):
+    """Share of a game's total time penalty that falls AFTER `move`."""
+    total = sum(_penalty_multiplier(t, max_moves) for t in range(1, length + 1))
+    if total <= 0:
+        return 0.0
+    after = sum(_penalty_multiplier(t, max_moves) for t in range(move + 1, length + 1))
+    return after / total
+
+
+def training_targets_at(info, move, max_moves):
+    """Each player's value-head TRAINING TARGET at `move` in a finished game.
+
+    With gamma = 1 the target is the final return plus every per-move reward still
+    to come, i.e. the time penalties after this move -- not the final return
+    itself. Penalties grow with the move count, so mid-game targets sit well below
+    the final return: measured on the C003 buffer, a timeout leader's target is
+    -0.05 at 200 moves before the end and +0.10 only at the end; a winner's is
+    +0.88 at 200 before. Each player's logged penalty total is spread over the
+    game by the penalty tiers; this reproduces the buffer's exact targets (0.001
+    vs 0.000 at 100 moves before the end, -0.054 vs -0.054 at 200).
+    Falls back to the final return if the log has no intermediate rewards.
+    """
+    ret = info['returns']
+    inter = info.get('inter_rewards')
+    if not inter or len(inter) != len(ret):
+        return list(ret)
+    f = _remaining_penalty_fraction(move, info['game_length'], max_moves)
+    return [r + i * f for r, i in zip(ret, inter)]
+
+
 def _game_outcomes(data):
     """(actor, game_n) -> outcome info. Shared by the value-check CSV and the
     calibration report so both join value checks to games identically.
@@ -1691,6 +1743,7 @@ def _game_outcomes(data):
             'winner_idx':        winner_idx,
             'game_length':       g['moves'],
             'returns':           list(returns) if returns else [],
+            'inter_rewards':     g.get('inter_rewards'),
         }
     return game_info
 
@@ -1706,6 +1759,13 @@ def print_value_calibration(data):
     -0.08, actual -0.63). B008 rebalanced the training mix toward timeouts; if that
     works, the average prediction should drift down toward the actual.
 
+    Since 2026-10-01 predictions are compared with each player's TRAINING TARGET at
+    that move -- final return plus the time penalties still to come, which is what
+    the value head is actually trained toward -- instead of the final return. Mid-game
+    targets are well below final returns (a timeout leader's is about -0.05 at move
+    200, +0.10 only at the cap), so the earlier final-return comparison understated
+    how optimistic the value head is early in the game.
+
     Uses local value checks only (laptop actors log to the laptop's own log).
     """
     import statistics as st
@@ -1719,7 +1779,9 @@ def print_value_calibration(data):
         pred = [vc['p0'], vc['p1'], vc['p2']]
         if any(v is None for v in pred):
             continue
-        ret = gi['returns'][:len(pred)]
+        # Compare with what the value head is trained toward at THIS move: the final
+        # return plus the time penalties still to come (training_targets_at).
+        ret = training_targets_at(gi, vc['move'], data.get('max_play_moves', 420))[:len(pred)]
         w = gi['winner_idx']
         kind = ('timeout' if gi['outcome'] == 'timeout'
                 else 'Timbuktu win' if gi['win_type'] == 'timbuktu' else 'rare-goods win')
@@ -1736,7 +1798,7 @@ def print_value_calibration(data):
 
     print()
     print('─' * 60)
-    print('  VALUE HEAD CALIBRATION  (mid-game value checks vs actual game returns)')
+    print('  VALUE HEAD CALIBRATION  (mid-game value checks vs training targets)')
     print('─' * 60)
     if not rows:
         print('  No value checks could be matched to finished games.')
@@ -1744,20 +1806,22 @@ def print_value_calibration(data):
     games = {r['order'] for r in rows}
     print(f'  {len(rows):,} value checks from {len(games):,} games '
           f'(local actors; moves {min(r["move"] for r in rows)}-{max(r["move"] for r in rows)})')
+    print('  "target" = what the value head is trained toward at that move: the final')
+    print('  return plus the time penalties still to come (below the final return mid-game).')
     print('  "leader" = player with the highest actual return (the winner, or the')
     print('  leader at timeout). Top-pick = value head rates that player highest;')
     print('  chance is 33% with three players.')
     print()
     print('  WHAT WE WANT TO SEE (judge by trend, not by any one number):')
-    print('   - "avg per player" pred moving toward its actual. This is the fairest')
+    print('   - "avg per player" pred moving toward its target. This is the fairest')
     print('     calibration check: it does not depend on knowing who won.')
     print('   - top-pick rising further above 33%, and mean |err| falling.')
     print('  Note: mid-game predictions SHOULD be less extreme than final results, because')
     print('  the outcome is still uncertain -- a winner predicted at +0.2 at move 200 is')
     print('  not by itself an error.')
     print()
-    hdr = (f'  {"":15} {"checks":>7}  {"leader pred / actual":>21}  '
-           f'{"others pred / actual":>21}  {"top-pick":>8}  {"mean |err|":>10}')
+    hdr = (f'  {"":15} {"checks":>7}  {"leader pred / target":>21}  '
+           f'{"others pred / target":>21}  {"top-pick":>8}  {"mean |err|":>10}')
     print(hdr)
 
     def line(label, rs):
@@ -1778,19 +1842,19 @@ def print_value_calibration(data):
           f'<- positive gap = too optimistic about everyone')
 
     # Does the value head use the move-count plane? Near the cap, a timeout
-    # leader's true value converges on its actual return (+0.1 at present).
+    # leader's true value converges on its target (the final return, +0.1, at the cap).
     to = [r for r in rows if r['kind'] == 'timeout']
     if to:
         print()
         print('  Timeout games by move -- the leader\'s prediction should approach its')
-        print('  actual return as the move cap nears, if the move-count plane is being used:')
-        print('  WANT: "leader pred" falling toward "actual" in the later move buckets.')
+        print('  target as the move cap nears, if the move-count plane is being used:')
+        print('  WANT: "leader pred" close to "target" in the later move buckets.')
         for lo, hi in ((0, 260), (260, 320), (320, 380), (380, 10 ** 6)):
             b = [r for r in to if lo <= r['move'] < hi]
             if b:
                 rng = f'{lo}-{hi - 1}' if hi < 10 ** 6 else f'{lo}+'
                 print(f'    moves {rng:>8}: leader pred {st.mean(r["lead_pred"] for r in b):+.2f} '
-                      f'(actual {st.mean(r["lead_act"] for r in b):+.2f}), '
+                      f'(target {st.mean(r["lead_act"] for r in b):+.2f}), '
                       f'top-pick {100 * sum(r["hit"] for r in b) / len(b):.0f}%  [{len(b)} checks]')
 
     # Trend over the run: is it improving?
@@ -1798,7 +1862,7 @@ def print_value_calibration(data):
     if len(order) >= 30:
         print()
         print('  Over the run (games in thirds, by arrival order):')
-        print('  WANT: "avg/player pred" moving toward its actual, top-pick rising, mean |err|')
+        print('  WANT: "avg/player pred" moving toward its target, top-pick rising, mean |err|')
         print('  falling. Flat across thirds = no change yet.')
         cut = [order[len(order) * k // 3] for k in (1, 2)]
         for label, lo, hi in (('first third', -1, cut[0]), ('middle third', cut[0], cut[1]),
@@ -1808,7 +1872,7 @@ def print_value_calibration(data):
             if b:
                 bp = st.mean((r['lead_pred'] + 2 * r['oth_pred']) / 3 for r in b)
                 ba = st.mean((r['lead_act'] + 2 * r['oth_act']) / 3 for r in b)
-                print(f'    {label:12}: avg/player pred {bp:+.2f} (actual {ba:+.2f})   '
+                print(f'    {label:12}: avg/player pred {bp:+.2f} (target {ba:+.2f})   '
                       f'top-pick {100 * sum(r["hit"] for r in b) / len(b):3.0f}%   '
                       f'mean |err| {st.mean(r["abs_err"] for r in b):.3f}')
 
@@ -1875,12 +1939,17 @@ def write_value_check_csv(data, log_path, ssh_password=None):
         widx = info['winner_idx']
         winner_val = p_vals[widx] if 0 <= widx < len(p_vals) else ''
         exempt_str = f"exempt={vc['exempt']}" if vc['exempt'] else 'exempt=none'
+        tgt = training_targets_at(info, vc['move'], data.get('max_play_moves', 420))
+        w_ret = info['returns'][widx] if 0 <= widx < len(info['returns']) else ''
+        w_tgt = tgt[widx] if 0 <= widx < len(tgt) else ''
         rows.append([
             info['outcome'], info['win_type'], vc['game_n'], vc['move'],
             f'{winner_val:.4f}' if isinstance(winner_val, float) else winner_val,
             f"{vc['p0']:.4f}", f"{vc['p1']:.4f}", f"{vc['p2']:.4f}",
             info['winner_player'], info['game_length'],
             exempt_str,
+            f'{w_ret:.4f}' if isinstance(w_ret, float) else w_ret,
+            f'{w_tgt:.4f}' if isinstance(w_tgt, float) else w_tgt,
         ])
 
     if not rows:
@@ -1890,7 +1959,8 @@ def write_value_check_csv(data, log_path, ssh_password=None):
     with open(csv_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['outcome', 'win_type', 'game', 'move', 'winner_value',
-                         'p0', 'p1', 'p2', 'winner_player', 'game_length', 'exempt'])
+                         'p0', 'p1', 'p2', 'winner_player', 'game_length', 'exempt',
+                         'winner_return', 'winner_target'])
         for row in rows:
             writer.writerow(row)
 
@@ -1913,6 +1983,8 @@ def plot_value_checks(csv_path):
                 'game':         int(row['game']),
                 'move':         int(row['move']),
                 'winner_value': float(row['winner_value']) if row['winner_value'] else None,
+                # absent in CSVs written before 2026-10-01
+                'winner_target': float(row['winner_target']) if row.get('winner_target') else None,
             })
     rows.sort(key=lambda r: (r['outcome'], r['game'], r['move']))
 
@@ -1921,10 +1993,12 @@ def plot_value_checks(csv_path):
     for r in rows:
         g = r['game']
         if g not in games:
-            games[g] = {'outcome': r['outcome'], 'win_type': r['win_type'], 'moves': [], 'values': []}
+            games[g] = {'outcome': r['outcome'], 'win_type': r['win_type'], 'moves': [], 'values': [],
+                        'targets': []}
         if r['winner_value'] is not None:
             games[g]['moves'].append(r['move'])
             games[g]['values'].append(r['winner_value'])
+            games[g]['targets'].append(r['winner_target'])
 
     # One window, three panels -- timeouts, Timbuktu wins, rare-goods wins -- on
     # shared axes, so the same height means the same value in every panel.
@@ -1972,6 +2046,17 @@ def plot_value_checks(csv_path):
                 ax.plot(d['moves'], d['values'], color=colour, alpha=0.35, linewidth=0.8)
             subtitle = f'; bands + {SAMPLE_LINES} sample games'
         ax.plot(ms, [_np.median(by[m]) for m in ms], color='black', linewidth=2.5, label='median')
+        # Where the predictions SHOULD be: the training target for the eventual
+        # winner/leader at each move (final return + time penalties still to come).
+        tby = {}
+        for d in sel:
+            for m, t in zip(d['moves'], d['targets']):
+                if t is not None:
+                    tby.setdefault(m, []).append(t)
+        if tby:
+            tm = sorted(tby)
+            ax.plot(tm, [_np.median(tby[m]) for m in tm], color='darkorange', linewidth=2.5,
+                    linestyle='-.', label='training target')
         if len(sel) >= TREND_MIN:
             third = len(sel) // 3
             for part, style, lab in ((sel[:third], ':', 'earliest third'),
@@ -1985,7 +2070,8 @@ def plot_value_checks(csv_path):
         ax.set_ylabel('Value head (winner)')
         ax.grid(alpha=0.3)
     axes[-1].set_xlabel('Move')
-    fig.suptitle('Value checks — eventual winner\'s predicted value by move', fontsize=13)
+    fig.suptitle('Value checks — eventual winner\'s predicted value by move\n'
+                 '(orange: what the value head is trained toward at that move)', fontsize=12)
     plt.tight_layout()
     plt.show()
 
