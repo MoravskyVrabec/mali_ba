@@ -1899,10 +1899,9 @@ def write_value_check_csv(data, log_path, ssh_password=None):
 
 
 def plot_value_checks(csv_path):
-    """Line chart of winner_value vs move, one line per game, coloured by outcome."""
+    """Winner's predicted value vs move, one line per game, in three panels by outcome."""
     import csv
     import matplotlib.pyplot as plt
-    import matplotlib.lines as mlines
 
     # Load and sort
     rows = []
@@ -1927,31 +1926,66 @@ def plot_value_checks(csv_path):
             games[g]['moves'].append(r['move'])
             games[g]['values'].append(r['winner_value'])
 
-    # Timbuktu wins → blue, Rare goods wins → green, timeouts → red
-    def _line_colour(d):
-        if d['outcome'] == 'timeout':
-            return 'red'
-        return 'steelblue' if d['win_type'] == 'timbuktu' else 'green'
+    # One window, three panels -- timeouts, Timbuktu wins, rare-goods wins -- on
+    # shared axes, so the same height means the same value in every panel.
+    #
+    # A panel with many games turns into a solid block of colour, so above
+    # LINES_LIMIT games it shows the spread instead: shaded bands for the middle
+    # 50% and 80% of games at each move, ~25 randomly chosen games for texture,
+    # and the median. Whenever there are enough games it also shows the median of
+    # the earliest and latest thirds (by game number), which is the trend that
+    # matters: is the value head's view of these games changing with training?
+    import random as _rnd
+    import numpy as _np
+    LINES_LIMIT, SAMPLE_LINES, TREND_MIN = 60, 25, 30
+    panels = (
+        ('Timeouts',        'red',       lambda d: d['outcome'] == 'timeout'),
+        ('Timbuktu wins',   'steelblue', lambda d: d['outcome'] == 'win' and d['win_type'] == 'timbuktu'),
+        ('Rare-goods wins', 'green',     lambda d: d['outcome'] == 'win' and d['win_type'] != 'timbuktu'),
+    )
 
-    fig, ax = plt.subplots(figsize=(10, 5))
-    for g, d in sorted(games.items()):
-        colour = _line_colour(d)
-        lw = 3.6 if d['outcome'] == 'win' else 1.2
-        ax.plot(d['moves'], d['values'], color=colour, alpha=0.6, linewidth=lw,
-                label=f"G{g}")
+    def _median_by_move(sel):
+        by = {}
+        for d in sel:
+            for m, v in zip(d['moves'], d['values']):
+                by.setdefault(m, []).append(v)
+        ms = sorted(by)
+        return ms, by
 
-    ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
-    ax.set_xlabel('Move')
-    ax.set_ylabel('Value head (winner)')
-    ax.set_title('Value checks — winner value by move')
-
-    # Legend: outcome colours only, not individual game lines
-    legend_handles = [
-        mlines.Line2D([], [], color='steelblue', linewidth=2.5, label='Win — Timbuktu'),
-        mlines.Line2D([], [], color='green',     linewidth=2.5, label='Win — Rare goods'),
-        mlines.Line2D([], [], color='red',       linewidth=1.2, label='Timeout'),
-    ]
-    ax.legend(handles=legend_handles)
+    fig, axes = plt.subplots(3, 1, figsize=(10, 11), sharex=True, sharey=True)
+    for ax, (title, colour, keep) in zip(axes, panels):
+        sel = [d for _, d in sorted(games.items()) if keep(d) and d['moves']]
+        ms, by = _median_by_move(sel)
+        if not sel:
+            ax.set_title(f'{title} (no games)')
+            ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
+            continue
+        if len(sel) <= LINES_LIMIT:
+            for d in sel:
+                ax.plot(d['moves'], d['values'], color=colour, alpha=0.5, linewidth=1.0)
+            subtitle = ''
+        else:
+            pct = {q: [_np.percentile(by[m], q) for m in ms] for q in (10, 25, 75, 90)}
+            ax.fill_between(ms, pct[10], pct[90], color=colour, alpha=0.15, label='middle 80%')
+            ax.fill_between(ms, pct[25], pct[75], color=colour, alpha=0.30, label='middle 50%')
+            for d in _rnd.Random(0).sample(sel, SAMPLE_LINES):
+                ax.plot(d['moves'], d['values'], color=colour, alpha=0.35, linewidth=0.8)
+            subtitle = f'; bands + {SAMPLE_LINES} sample games'
+        ax.plot(ms, [_np.median(by[m]) for m in ms], color='black', linewidth=2.5, label='median')
+        if len(sel) >= TREND_MIN:
+            third = len(sel) // 3
+            for part, style, lab in ((sel[:third], ':', 'earliest third'),
+                                     (sel[-third:], '--', 'latest third')):
+                pm, pb = _median_by_move(part)
+                ax.plot(pm, [_np.median(pb[m]) for m in pm], color='black', linewidth=1.6,
+                        linestyle=style, label=f'median, {lab}')
+        ax.legend(loc='lower right', fontsize=8)
+        ax.axhline(0, color='black', linewidth=0.8, linestyle='--')
+        ax.set_title(f'{title} ({len(sel)} games{subtitle})')
+        ax.set_ylabel('Value head (winner)')
+        ax.grid(alpha=0.3)
+    axes[-1].set_xlabel('Move')
+    fig.suptitle('Value checks — eventual winner\'s predicted value by move', fontsize=13)
     plt.tight_layout()
     plt.show()
 
