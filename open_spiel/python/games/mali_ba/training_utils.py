@@ -108,6 +108,9 @@ class ReplayBuffer:
         self.mcts_fraction               = mcts_buffer_fraction
         self.near_win_pool_fraction      = near_win_pool_fraction
         self.raregoods_pool_fraction     = raregoods_pool_fraction
+        # Batch shares actually used by the most recent sample() (natural, nearwin,
+        # raregoods), after scaling by pool fill -- see sample().
+        self.effective_pool_shares       = (0.0, 0.0, 0.0)
         self.replace_bootstrap_with_mcts = replace_bootstrap_with_mcts
 
     def add(self, experience, is_bootstrap: bool = False, is_near_win: bool = False,
@@ -133,11 +136,31 @@ class ReplayBuffer:
         have_raregoods  = len(self.mcts_raregoods_buffer) > 0
         have_mcts       = have_natural or have_nearwin or have_raregoods
 
-        # Target counts based on configured fractions.
-        n_mcts_target      = max(1, round(batch_size * self.mcts_fraction))
-        n_nearwin_target   = max(0, round(n_mcts_target * self.near_win_pool_fraction))
-        n_raregoods_target = max(0, round(n_mcts_target * self.raregoods_pool_fraction))
-        n_natural_target   = n_mcts_target - n_nearwin_target - n_raregoods_target
+        # Target counts: configured fractions, each scaled by how full its pool is.
+        #
+        # Unscaled, a pool's share of every batch was fixed no matter how little
+        # it held. At the start of C002 the rare-goods pool held 4,838 positions
+        # from ~9 games yet supplied 20% of every batch, so each was trained on
+        # ~46 times in three hours while everything else got ~3 passes --
+        # memorising nine games rather than learning rare-goods wins. Scaling by
+        # fill (len / capacity) and renormalising leaves full pools exactly at
+        # their configured fractions, and lets a sparse pool's share grow as real
+        # examples accumulate.
+        n_mcts_target = max(1, round(batch_size * self.mcts_fraction))
+        _pools = (self.mcts_natural_buffer, self.mcts_nearwin_buffer, self.mcts_raregoods_buffer)
+        _fracs = (max(0.0, 1.0 - self.near_win_pool_fraction - self.raregoods_pool_fraction),
+                  self.near_win_pool_fraction, self.raregoods_pool_fraction)
+        _w = [f * (len(p) / p.maxlen if p.maxlen else 1.0) for p, f in zip(_pools, _fracs)]
+        _wsum = sum(_w)
+        if _wsum > 0:
+            n_nearwin_target   = max(0, round(n_mcts_target * _w[1] / _wsum))
+            n_raregoods_target = max(0, round(n_mcts_target * _w[2] / _wsum))
+        else:
+            n_nearwin_target = n_raregoods_target = 0
+        n_natural_target = max(0, n_mcts_target - n_nearwin_target - n_raregoods_target)
+        self.effective_pool_shares = (
+            (n_natural_target / n_mcts_target, n_nearwin_target / n_mcts_target,
+             n_raregoods_target / n_mcts_target) if n_mcts_target else (0.0, 0.0, 0.0))
 
         samples = []
 

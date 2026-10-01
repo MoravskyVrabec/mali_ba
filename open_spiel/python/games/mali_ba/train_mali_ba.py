@@ -305,7 +305,9 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                 f"Bootstrap: {len(local_replay_buffer.bootstrap_buffer)}  "
                 f"MCTS-natural: {len(local_replay_buffer.mcts_natural_buffer)}  "
                 f"MCTS-nearwin: {len(local_replay_buffer.mcts_nearwin_buffer)}  "
-                f"MCTS-raregoods: {len(local_replay_buffer.mcts_raregoods_buffer)}")
+                f"MCTS-raregoods: {len(local_replay_buffer.mcts_raregoods_buffer)}  "
+                f"| batch shares nat/nw/rg: "
+                + "/".join(f"{x:.2f}" for x in local_replay_buffer.effective_pool_shares))
 
         # Train in batches
         if len(local_replay_buffer) >= args.batch_size:
