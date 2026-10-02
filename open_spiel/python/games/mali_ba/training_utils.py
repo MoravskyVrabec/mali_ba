@@ -272,8 +272,20 @@ class SimpleAgent:
         for name, file_path, model in (("policy", policy_path, self.policy_model),
                                        ("value", value_path, self.value_model)):
             if os.path.exists(file_path):
-                model.load_weights(file_path)
-                loaded.append(name)
+                # A file saved by a different architecture (e.g. after a change to
+                # the network or the observation planes) is treated like a missing
+                # one. Keras can load the matching layers before raising,
+                # so restore the initial weights rather than keep a half-loaded head.
+                initial = model.get_weights()
+                try:
+                    model.load_weights(file_path)
+                    loaded.append(name)
+                except ValueError as e:
+                    model.set_weights(initial)
+                    log(LogLevel.WARN,
+                        f"Agent: {name} weights at {file_path} do not fit the current "
+                        f"{name} network ({str(e)[:200]}); leaving the {name} head at its "
+                        f"initial random values.")
             else:
                 log(LogLevel.WARN,
                     f"Agent: no {name} weights at {file_path}; leaving the {name} head "
@@ -349,6 +361,11 @@ class SimpleAgent:
             with tf.GradientTape() as tape:
                 predicted_value = self.value_model(observations_reshaped, training=True)
                 value_loss = tf.keras.losses.MeanSquaredError()(full_value_targets, predicted_value)
+                # Include any regularization terms the value network declares (none at
+                # present); a Keras regularizer is otherwise ignored by this custom loop.
+                # value_loss itself stays plain MSE so logged losses remain comparable.
+                value_objective = (value_loss + tf.add_n(self.value_model.losses)
+                                   if self.value_model.losses else value_loss)
 
             # DEBUG =====================================================================
             log(LogLevel.INFO, f"Training: Observation range: min={np.min(observations_reshaped):.6f}, max={np.max(observations_reshaped):.6f}")
@@ -364,7 +381,7 @@ class SimpleAgent:
                 log(LogLevel.ERROR, f"Trainer: Invalid value loss detected: {value_loss}. Skipping batch.")
                 return None
 
-            value_grads = tape.gradient(value_loss, self.value_model.trainable_variables)
+            value_grads = tape.gradient(value_objective, self.value_model.trainable_variables)
             if any(g is None for g in value_grads):
                 log(LogLevel.ERROR, "Trainer: None gradients detected for value model. Skipping batch.")
                 return None

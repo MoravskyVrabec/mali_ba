@@ -14,3 +14,7 @@ build/
 
 # Local Hetzner deployment config (per-user API token)
 **/hetzner/env.sh
+
+# Heuristic pretraining data (pretrain_heuristic.py) and its reports
+pretrain_data/
+*.pretrain.json
