@@ -7,7 +7,12 @@ Usage:
 If --out is not given, writes to <original_stem>_no_bootstrap.pkl.gz in the
 same directory as the input file.
 
-Required packages: numpy  (standard library only otherwise)
+Reads any buffer format the trainer can read (see buffer_format.py) and always
+writes the current one, keeping the file's keep-every marker so the trainer does
+not thin it again. A pre-2026-10-01 file's "natural" pool is split into the
+timbuktu and timeout pools on the way through, exactly as the trainer does on load.
+
+Required packages: standard library only.
 """
 
 import argparse
@@ -15,6 +20,18 @@ import gzip
 import os
 import pickle
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from buffer_format import KEEP_EVERY_KEY, POOL_KEYS, normalize_saved_buffer, saved_keep_every  # noqa: E402
+
+LABELS = {
+    'bootstrap_buffer':      'bootstrap',
+    'mcts_timeout_buffer':   'timeout',
+    'mcts_nearwin_buffer':   'nearwin',
+    'mcts_raregoods_buffer': 'raregoods',
+    'mcts_timbuktu_buffer':  'timbuktu',
+}
+assert set(LABELS) == set(POOL_KEYS)
 
 
 def load_buffer(path):
@@ -27,6 +44,12 @@ def save_buffer(buf, path):
     # buffer for a file only ~2x smaller. See buffer_compresslevel in mali_ba.ini.
     with gzip.open(path, 'wb', compresslevel=1) as f:
         pickle.dump(buf, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def print_sizes(pools):
+    for key in POOL_KEYS:
+        print(f'  {LABELS[key]:10}: {len(pools[key]):>8,}')
+    print(f'  {"total":10}: {sum(len(pools[k]) for k in POOL_KEYS):>8,}')
 
 
 def main():
@@ -49,24 +72,23 @@ def main():
                                 f'{stem}_no_bootstrap.pkl.gz')
 
     print(f'Loading {args.buffer} ...')
-    buf = load_buffer(args.buffer)
+    saved = load_buffer(args.buffer)
+    pools, notes = normalize_saved_buffer(saved)
+    keep_every = saved_keep_every(saved)
+    del saved
+    for n in notes:
+        print(f'Converted: {n}')
+    print(f'Positions kept per game: 1 in {keep_every}')
+    print_sizes(pools)
 
-    before_bootstrap = len(buf['bootstrap_buffer'])
-    before_natural   = len(buf['mcts_natural_buffer'])
-    before_nearwin   = len(buf['mcts_nearwin_buffer'])
-    before_total     = before_bootstrap + before_natural + before_nearwin
+    removed = len(pools['bootstrap_buffer'])
+    pools['bootstrap_buffer'] = []
+    pools[KEEP_EVERY_KEY] = keep_every
 
-    print(f'  bootstrap   : {before_bootstrap:>8,}')
-    print(f'  mcts natural: {before_natural:>8,}')
-    print(f'  mcts near-win:{before_nearwin:>8,}')
-    print(f'  total       : {before_total:>8,}')
-
-    buf['bootstrap_buffer'].clear()
-
-    after_total = len(buf['mcts_natural_buffer']) + len(buf['mcts_nearwin_buffer'])
-    print(f'\nBootstrap experiences removed. Remaining: {after_total:,}')
+    print(f'\nBootstrap experiences removed: {removed:,}. Remaining:')
+    print_sizes(pools)
     print(f'Saving to {out_path} ...')
-    save_buffer(buf, out_path)
+    save_buffer(pools, out_path)
     print('Done.')
 
 
