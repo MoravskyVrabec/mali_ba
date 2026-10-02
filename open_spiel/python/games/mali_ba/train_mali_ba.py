@@ -172,11 +172,20 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
             # Timbuktu wins + ordinary timeouts) through the shared helper, then copy
             # each pool into a deque sized for THIS run, so its maxlen is respected
             # rather than the one baked into the save.
-            from mali_ba.buffer_format import normalize_saved_buffer
+            from mali_ba.buffer_format import (normalize_saved_buffer, saved_keep_every,
+                                               thin_pools)
             _pools_in, _notes = normalize_saved_buffer(saved)
+            _have_keep = saved_keep_every(saved)
             del saved
             for _n in _notes:
                 log(LogLevel.INFO, f"Trainer: Converting saved buffer -- {_n}.")
+            # A buffer saved with every position kept (or fewer thinned than now) is
+            # thinned to match buffer_keep_every. Otherwise its games would dominate
+            # training for hours: new games add only 1 in N positions, so it takes
+            # ~N times longer for them to push the old ones out.
+            _, _notes = thin_pools(_pools_in, _have_keep, max(1, getattr(args, 'buffer_keep_every', 1)))
+            for _n in _notes:
+                log(LogLevel.INFO, f"Trainer: Saved buffer {_n}.")
             _targets = (('bootstrap_buffer',      'bootstrap'),
                         ('mcts_timeout_buffer',   'MCTS-timeout'),
                         ('mcts_nearwin_buffer',   'MCTS-nearwin'),
@@ -240,6 +249,7 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                                     'mcts_nearwin_buffer':   local_replay_buffer.mcts_nearwin_buffer,
                                     'mcts_raregoods_buffer': local_replay_buffer.mcts_raregoods_buffer,
                                     'mcts_timbuktu_buffer':  local_replay_buffer.mcts_timbuktu_buffer,
+                                    'keep_every':            max(1, getattr(args, 'buffer_keep_every', 1)),
                                 }, f)
                             os.replace(tmp_path, args.save_buffer_path)
                             log(LogLevel.INFO, f"Trainer: Buffer saved on shutdown to {args.save_buffer_path}.")
@@ -369,6 +379,7 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                             'mcts_nearwin_buffer':   local_replay_buffer.mcts_nearwin_buffer,
                             'mcts_raregoods_buffer': local_replay_buffer.mcts_raregoods_buffer,
                             'mcts_timbuktu_buffer':  local_replay_buffer.mcts_timbuktu_buffer,
+                            'keep_every':            max(1, getattr(args, 'buffer_keep_every', 1)),
                         }, f)
                     os.replace(tmp_path, args.save_buffer_path)
                     _save_el = time.time() - _save_t0
@@ -2001,11 +2012,23 @@ def main(args):
                 log(LogLevel.INFO, f"  [DBG] Skipping non-win bootstrap game (draw/tie). returns={returns}")
                 continue
 
-            log(LogLevel.INFO, f"  [DBG] Game passed filters — queuing {len(trajectory_with_values)} experiences "
-                f"(oversample x{oversample_factor}). bootstrap={is_bootstrap_game} near_win={near_win_flag}")
+            # Keep only 1 position in buffer_keep_every per game (2026-10-01). Keeping every
+            # move filled the 100k buffer with only ~240 games, and the value head learned
+            # to recognise which game a position came from instead of judging it: 100%
+            # winner top-pick on games it had trained on, ~50% on new games. Thinning lets
+            # the same buffer span N times as many games. The offset is random per game
+            # so every move number is represented across games.
+            keep_every = max(1, getattr(args, 'buffer_keep_every', 1))
+            if keep_every > 1:
+                kept_steps = trajectory_with_values[random.randrange(keep_every)::keep_every]
+            else:
+                kept_steps = trajectory_with_values
+            log(LogLevel.INFO, f"  [DBG] Game passed filters — queuing {len(kept_steps)} of "
+                f"{len(trajectory_with_values)} experiences (1 in {keep_every}, oversample "
+                f"x{oversample_factor}). bootstrap={is_bootstrap_game} near_win={near_win_flag}")
             queued_count = 0
             for _ in range(oversample_factor):
-                for observation, player, policy_target, value_target_vector in trajectory_with_values:
+                for observation, player, policy_target, value_target_vector in kept_steps:
                     player_value = value_target_vector[player]
                     value_data = (player, player_value, value_target_vector)
 
@@ -2258,6 +2281,10 @@ if __name__ == "__main__":
     parser.add_argument('--raregoods_pool_fraction', type=float, default=None,
                          help="Fraction of the MCTS buffer capacity reserved for Rare goods natural wins. "
                               "Overrides ini value if set. Default: from ini or 0.15.")
+    parser.add_argument('--buffer_keep_every', type=int, default=None,
+                         help="Keep 1 position in N from each finished game in the replay "
+                              "buffer, so it spans N times as many games. Default: from ini or 1 "
+                              "(keep every position).")
     parser.add_argument('--timbuktu_pool_fraction', type=float, default=None,
                          help="Fraction of the MCTS buffer capacity (and of every batch) for "
                               "Timbuktu wins. 0 keeps them in the timeout pool (old behaviour). "
@@ -2350,6 +2377,8 @@ if __name__ == "__main__":
         parsed_args.near_win_pool_fraction = _ini_float('near_win_pool_fraction', 0.30)
     if parsed_args.raregoods_pool_fraction is None:
         parsed_args.raregoods_pool_fraction = _ini_float('raregoods_pool_fraction', 0.15)
+    if parsed_args.buffer_keep_every is None:
+        parsed_args.buffer_keep_every = _ini_int('buffer_keep_every', 1)
     if parsed_args.timbuktu_pool_fraction is None:
         parsed_args.timbuktu_pool_fraction = _ini_float('timbuktu_pool_fraction', 0.0)
     if parsed_args.heuristic_guidance_weight is None:
@@ -2468,6 +2497,7 @@ if __name__ == "__main__":
     print(f'  near_win_pool_fraction      : {parsed_args.near_win_pool_fraction}')
     print(f'  raregoods_pool_fraction     : {parsed_args.raregoods_pool_fraction}')
     print(f'  timbuktu_pool_fraction      : {parsed_args.timbuktu_pool_fraction}')
+    print(f'  buffer_keep_every           : {parsed_args.buffer_keep_every}')
     if parsed_args.rare_goods_actor_fraction > 0.0:
         _rg_t1_str = (f', tier1_sims={parsed_args.sim_tier1_sims}+{parsed_args.rare_goods_added_tier1_sims}'
                       if parsed_args.rare_goods_added_tier1_sims > 0 else '')

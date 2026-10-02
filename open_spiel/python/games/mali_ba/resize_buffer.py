@@ -37,7 +37,7 @@ import sys
 from collections import deque
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from buffer_format import POOL_KEYS, normalize_saved_buffer  # noqa: E402
+from buffer_format import KEEP_EVERY_KEY, POOL_KEYS, normalize_saved_buffer, saved_keep_every  # noqa: E402
 
 # (pool key, command-line option, label)
 POOLS = (
@@ -95,6 +95,7 @@ def main():
     with gzip.open(src_path, "rb") as f:
         saved = pickle.load(f)
     pools, notes = normalize_saved_buffer(saved)
+    keep_every = saved_keep_every(saved)
     del saved
     for n in notes:
         print(f"Converted: {n}")
@@ -113,6 +114,9 @@ def main():
     for label, act in actions:
         print(f"  {label:9} : {act}")
     print()
+    # Carry the keep-every marker through so the trainer doesn't thin this file again.
+    new_buf[KEEP_EVERY_KEY] = keep_every
+    print(f"Positions kept per game: 1 in {keep_every}")
     print("Output pool sizes:")
     for key, _, label in POOLS:
         print(f"  {label:9} : {len(new_buf[key]):,}")

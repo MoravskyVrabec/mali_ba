@@ -31,6 +31,39 @@ POOL_KEYS = (
 # A win's target for the winner is ~0.8 or more; a timeout leader's is ~0.1.
 WIN_TARGET_THRESHOLD = 0.5
 
+# Saved buffers record how many positions per game were kept (buffer_keep_every in
+# mali_ba.ini): 1 = every position. Files saved before 2026-10-01 have no marker and
+# kept every position.
+KEEP_EVERY_KEY = 'keep_every'
+
+
+def saved_keep_every(saved):
+    """The keep-every setting a saved buffer was written with (1 if unrecorded)."""
+    try:
+        return max(1, int(saved.get(KEEP_EVERY_KEY, 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def thin_pools(pools, have_keep_every, want_keep_every):
+    """Thin each pool from 1-in-`have` to 1-in-`want` positions per game, in place.
+
+    Entries are stored game by game, first move first, so taking every k-th entry
+    keeps about 1 in k positions of each game. Returns (effective keep_every, notes).
+    A buffer that is already thinner than wanted is left alone.
+    """
+    factor = round(want_keep_every / have_keep_every) if have_keep_every else 1
+    if factor <= 1:
+        return have_keep_every, []
+    notes = []
+    for key in POOL_KEYS:
+        before = len(pools[key])
+        if before:
+            pools[key] = pools[key][::factor]
+            notes.append(f"{key}: {before:,} -> {len(pools[key]):,}")
+    return have_keep_every * factor, [f"thinned 1 in {factor} (saved at 1 in {have_keep_every}, "
+                                      f"now 1 in {have_keep_every * factor}): " + ", ".join(notes)]
+
 
 def _is_win_entry(entry):
     """True if this experience comes from a game that someone won."""
