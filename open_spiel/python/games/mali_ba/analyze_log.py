@@ -143,9 +143,14 @@ def parse_log(path):
                                   # (absent in logs predating playout cap randomization)
 
     max_play_moves = None         # from the game's startup log; sets the time-penalty tiers
+    buffer_keep_every = None      # positions kept per game (1 in N); absent before 2026-10-01
 
     with open(path) as f:
         for line in f:
+            if buffer_keep_every is None and 'buffer_keep_every' in line:
+                _mk = re.search(r'buffer_keep_every\s*:\s*(\d+)', line)
+                if _mk:
+                    buffer_keep_every = max(1, int(_mk.group(1)))
             if max_play_moves is None and 'max_play_moves:' in line:
                 _mm = re.search(r'max_play_moves:\s*(\d+)', line)
                 if _mm:
@@ -376,6 +381,7 @@ def parse_log(path):
         'first_time': first_time,
         'last_time': last_time,
         'max_play_moves': max_play_moves or 420,
+        'buffer_keep_every': buffer_keep_every or 1,
         'last_buffer_state': last_buffer_state,
         'last_adaptive_fraction': last_adaptive_fraction,
         'recent_heuristic_guidance': recent_heuristic_guidance,
@@ -1339,13 +1345,16 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
         ot = data.get('oversample_threshold')
         ot_note = '' if ot is not None else ' (threshold unknown, assumed 350)'
         ot = ot if ot is not None else 350
-        win_exp = sum(
-            g['moves'] * (3 if ot > 0 and g['moves'] < ot else 1)
+        # Only 1 position in buffer_keep_every is kept per game (2026-10-01).
+        ke = data.get('buffer_keep_every', 1)
+        win_exp = round(sum(
+            g['moves'] / ke * (3 if ot > 0 and g['moves'] < ot else 1)
             for g in mcts_games if g['is_win']
-        )
-        to_exp = sum(g['moves'] for g in mcts_games if not g['is_win'])
+        ))
+        to_exp = round(sum(g['moves'] / ke for g in mcts_games if not g['is_win']))
+        ke_note = f', 1 in {ke} positions kept' if ke > 1 else ''
         print(f'  Experiences added to buffer: {win_exp:,} for natural wins, '
-              f'{to_exp:,} for timeouts{ot_note}')
+              f'{to_exp:,} for timeouts{ot_note}{ke_note}')
         if mcts_games and show_early_terminations:
             print()
             print(f'  {"Game":>5}  {"":1}{"Actor":>6}  {"Moves":>5}  Outcome')
