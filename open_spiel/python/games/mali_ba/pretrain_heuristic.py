@@ -24,7 +24,9 @@ Steps
      heuristic's normalised action weights, as the trainer's bootstrap actors do.
   4. Every --eval_every steps, score both heads on the held-out games (and, with
      --eval_buffer, on MCTS games from a saved replay buffer). Keep each head's best
-     weights; stop after --patience evaluations without improvement.
+     weights -- the value head's by its error on the MCTS games when --eval_buffer is
+     given (--value_select), otherwise on the held-out games; stop after --patience
+     evaluations without improvement.
   5. Save the best weights with SimpleAgent.save_model(): <out> becomes
      <stem>._policy.weights.h5 and <stem>._value.weights.h5, plus <stem>.pretrain.json.
 
@@ -32,6 +34,9 @@ Usage (run from this directory, with the same environment as train_mali_ba.py):
   python pretrain_heuristic.py --out mali_ba_agent_vP001.weights.h5
   python pretrain_heuristic.py --out mali_ba_agent_vP001.weights.h5 \\
          --eval_buffer ../../../../../open_spiel/mali_ba_buffer.pkl.gz
+  # Retrain only the value head, keeping an existing checkpoint's policy:
+  python pretrain_heuristic.py --out mali_ba_agent_vP002.weights.h5 --heads value \\
+         --init_from mali_ba_agent_vP001.weights.h5 --fresh_value --eval_buffer ...
 
 Memory: each kept position is ~87 KB (192x15x15 float16 + policy). The defaults
 (10,000 games, 1 in 16 kept, ~27 positions per game) need ~25 GB of RAM.
@@ -267,6 +272,14 @@ def main():
     ap.add_argument('--learning_rate', type=float, default=None, help="Default: ini, else 0.0002")
     ap.add_argument('--holdout', type=float, default=0.05, help="Fraction of games held out")
     ap.add_argument('--eval_buffer', default=None, help="Saved replay buffer of MCTS games to also score on")
+    ap.add_argument('--value_select', choices=('auto', 'heldout', 'mcts'), default='auto',
+                    help="Which error picks the value head's best step: held-out heuristic games, "
+                         "or the --eval_buffer MCTS games. auto = mcts when --eval_buffer is given. "
+                         "Selecting on the MCTS games makes their reported winner rate a few points "
+                         "optimistic, since they are then also the selection set.")
+    ap.add_argument('--fresh_value', action='store_true',
+                    help="With --init_from: load only the policy and start the value head from "
+                         "random weights")
     args = ap.parse_args()
     if args.data_dir is None:
         args.data_dir = os.path.join('pretrain_data', f"heur_{args.games}_k{args.keep_every}")
@@ -309,9 +322,21 @@ def main():
     agent = SimpleAgent(obs_shape, game.num_distinct_actions(), game.num_players(), lr)
     loaded_from_init = []
     if args.init_from:
+        initial_value = agent.value_model.get_weights()
         loaded_from_init = agent.load_model(args.init_from)
+        if args.fresh_value and 'value' in loaded_from_init:
+            agent.value_model.set_weights(initial_value)
+            loaded_from_init.remove('value')
+            say("--fresh_value: value head reset to random weights.")
         say(f"Starting from {args.init_from}: loaded {loaded_from_init}")
     pm, vm = agent.policy_model, agent.value_model
+    value_select = args.value_select
+    if value_select == 'auto':
+        value_select = 'mcts' if mcts is not None else 'heldout'
+    if value_select == 'mcts' and mcts is None:
+        sys.exit("--value_select mcts needs --eval_buffer")
+    value_key = 'mcts_value_mse' if value_select == 'mcts' else 'value_mse'
+    say(f"Value head's best step chosen by {'MCTS-game' if value_select == 'mcts' else 'held-out heuristic'} error.")
     train_policy = args.heads in ('both', 'policy')
     train_value = args.heads in ('both', 'value')
     p_opt = tf.keras.optimizers.Adam(lr)
@@ -389,8 +414,8 @@ def main():
         r.update(step=step, train_policy_loss=p_loss, train_value_loss=v_loss)
         history.append(r)
         improved = []
-        if train_value and r['value_mse'] < best['value'][0]:
-            best['value'] = (r['value_mse'], vm.get_weights(), step); improved.append('value')
+        if train_value and r[value_key] < best['value'][0]:
+            best['value'] = (r[value_key], vm.get_weights(), step); improved.append('value')
         if train_policy and r['policy_ce'] < best['policy'][0]:
             best['policy'] = (r['policy_ce'], pm.get_weights(), step); improved.append('policy')
         since_improved = 0 if improved else since_improved + 1
@@ -424,6 +449,7 @@ def main():
             say(f"Not saving the {name} head: it was neither trained nor loaded (random weights).")
     stem = args.out[:-len("weights.h5")] if args.out.endswith("weights.h5") else args.out + "."
     report = dict(out=args.out, data_dir=args.data_dir, heads=args.heads, init_from=args.init_from,
+                  fresh_value=args.fresh_value, value_select=value_select,
                   gamma=gamma, batch_size=batch_size, learning_rate=lr,
                   train_positions=int(len(train_idx)), held_out_games=int(len(held_games)),
                   best_value_step=best['value'][2], best_policy_step=best['policy'][2],
