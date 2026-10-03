@@ -1,0 +1,412 @@
+<title>Mali-Ba Training Handoff</title>
+<meta name="description" content="Progress from run 113 through the A, B, C and D series, current state of run D005, and the recommended next steps.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #f5f4ef;
+  --surface: #ffffff;
+  --ink: #1c2130;
+  --muted: #586073;
+  --rule: #dad8cf;
+  --accent: #2c3c8c;
+  --accent-soft: #e5e8f5;
+  --ochre: #9a5a0e;
+  --ochre-soft: #f6ead8;
+  --good: #2a7349;
+  --good-soft: #e1f0e6;
+  --bad: #a23626;
+  --code-bg: #eeede6;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11131a;
+    --surface: #191c26;
+    --ink: #e5e6eb;
+    --muted: #9aa0b1;
+    --rule: #2c3041;
+    --accent: #a5b4ff;
+    --accent-soft: #222949;
+    --ochre: #e3a54e;
+    --ochre-soft: #33281a;
+    --good: #72c695;
+    --good-soft: #1b3326;
+    --bad: #e7846f;
+    --code-bg: #20232f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11131a;
+  --surface: #191c26;
+  --ink: #e5e6eb;
+  --muted: #9aa0b1;
+  --rule: #2c3041;
+  --accent: #a5b4ff;
+  --accent-soft: #222949;
+  --ochre: #e3a54e;
+  --ochre-soft: #33281a;
+  --good: #72c695;
+  --good-soft: #1b3326;
+  --bad: #e7846f;
+  --code-bg: #20232f;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.6 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding-inline: 16px;
+}
+main { max-width: 880px; margin: 0 auto; padding-block: 40px 80px; }
+h1, h2, h3 { line-height: 1.25; text-wrap: balance; font-weight: 600; }
+h1 { font-size: 2rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+h2 { font-size: 1.4rem; margin: 56px 0 14px; padding-top: 18px; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.08rem; margin: 30px 0 8px; }
+p, li { max-width: 68ch; }
+p { margin: 0 0 14px; }
+ul, ol { padding-left: 22px; margin: 0 0 14px; }
+li { margin-bottom: 6px; }
+a { color: var(--accent); }
+code, .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre {
+  background: var(--code-bg); padding: 12px 14px; border-radius: 6px; overflow-x: auto;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.82rem; line-height: 1.5; margin: 0 0 16px;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+.eyebrow { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.sub { color: var(--muted); margin: 0 0 24px; }
+.status {
+  background: var(--surface); border: 1px solid var(--rule); border-left: 4px solid var(--good);
+  border-radius: 6px; padding: 16px 18px; margin: 24px 0;
+}
+.status h3 { margin: 0 0 8px; }
+.status p:last-child, .status ul:last-child { margin-bottom: 0; }
+.note {
+  background: var(--ochre-soft); border-left: 4px solid var(--ochre); border-radius: 6px;
+  padding: 12px 16px; margin: 18px 0;
+}
+.note p:last-child { margin-bottom: 0; }
+nav.toc { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 18px; }
+nav.toc ol { margin: 0; columns: 2; column-gap: 32px; }
+nav.toc li { margin-bottom: 4px; break-inside: avoid; }
+.table-wrap { overflow-x: auto; margin: 0 0 18px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; background: var(--surface); }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 0.8rem; letter-spacing: 0.03em; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.hl td { background: var(--accent-soft); }
+.timeline { list-style: none; padding: 0; margin: 0; border-left: 2px solid var(--rule); }
+.timeline > li { position: relative; padding: 0 0 22px 22px; max-width: none; }
+.timeline > li::before {
+  content: ""; position: absolute; left: -7px; top: 6px; width: 12px; height: 12px;
+  border-radius: 50%; background: var(--surface); border: 2px solid var(--accent);
+}
+.timeline .when { font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; color: var(--muted); }
+.timeline h3 { margin: 2px 0 6px; }
+.tag { display: inline-block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 10px; margin-left: 6px; vertical-align: 2px; }
+.tag.good { background: var(--good-soft); color: var(--good); }
+.tag.bad { background: var(--ochre-soft); color: var(--ochre); }
+.steps { counter-reset: step; list-style: none; padding: 0; }
+.steps > li { counter-increment: step; position: relative; padding: 14px 16px 6px 54px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; max-width: none; }
+.steps > li::before {
+  content: counter(step); position: absolute; left: 16px; top: 14px; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent); color: var(--surface); font-weight: 600; font-size: 0.85rem; display: grid; place-items: center;
+}
+.steps h3 { margin: 0 0 6px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 0.92rem; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
+@media (max-width: 560px) {
+  nav.toc ol { columns: 1; }
+  h1 { font-size: 1.6rem; }
+  .kv { grid-template-columns: 1fr; }
+  .kv dt { margin-top: 6px; }
+}
+</style>
+
+<main>
+  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 2 October 2026</div>
+  <h1>Where we are, how we got here, what's next</h1>
+  <p class="sub">From run 113 through the A, B, C and D series. Written so either of us can pick this up cold. The source of truth is the <code>mali_ba</code> repo (branch <code>main</code>); <code>open_spiel</code> only holds symlinks.</p>
+
+  <div class="status">
+    <h3>Status when you left</h3>
+    <ul>
+      <li><strong>Run D005 is running</strong> on the desktop and the laptop: about 4,360 games as of the evening of 2 Oct, with checkpoints every 2 hours (<code>mali_ba_agent_vD005_ckpt_*</code>).</li>
+      <li>It's healthy and needs nothing while you're away. If it stops, nothing is lost: restart from the latest checkpoint with <code>--load_model_path</code>, and the saved buffer reloads automatically.</li>
+      <li><strong>Best result so far:</strong> with heuristic guidance held at 0.30, D005's win rate rose from 11% to about 18–20%. Its value head now picks the eventual winner about 69% of the time mid-game; the C-series managed 52–53%.</li>
+      <li><strong>Main open problem:</strong> the policy head isn't learning. MCTS's visit counts are nearly uniform, so the policy is trained on almost-flat targets. The plan below tests the likely cause, <code>uct_c</code> = 2.0.</li>
+    </ul>
+  </div>
+
+  <nav class="toc" aria-label="Contents">
+    <ol>
+      <li><a href="#summary">The short version</a></li>
+      <li><a href="#timeline">Timeline: 113 → A → B → C → D</a></li>
+      <li><a href="#memorize">The key discovery: memorization</a></li>
+      <li><a href="#dseries">The D series in detail</a></li>
+      <li><a href="#policy">Why the policy isn't learning</a></li>
+      <li><a href="#plan">The plan</a></li>
+      <li><a href="#settings">Settings in effect</a></li>
+      <li><a href="#reference">Tools, files and commands</a></li>
+      <li><a href="#traps">Things that misled us</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="summary">1. The short version</h2>
+  <ol>
+    <li><strong>For months the network learned nothing measurable.</strong> Checkpoints from July to late September were no better than v101, both in the policy probe and head to head.</li>
+    <li><strong>We found and fixed a series of real bugs along the way.</strong> The value target was unlearnable (gamma 0.997 with no progress plane). The convolution axes were transposed. Every actor replayed the same meeple layout. The analysis tool mismatched games and results. Self-play was 7× slower than it needed to be.</li>
+    <li><strong>The underlying problem was memorization.</strong> The 100k-position buffer held only about 240 games, and the value head learned to recognise which game a position came from: 100% on games it trained on, about 50% (a coin flip) on new games.</li>
+    <li><strong>More games fixed it, not a different architecture.</strong> Pretraining on about 9,000 heuristic games, and keeping only 1 position in 16 per game in the buffer, took the value head to about 70–76% on MCTS games it had never seen.</li>
+    <li><strong>Holding heuristic guidance at 0.30</strong> stopped the win rate collapsing. D005 is the first run in which the agent measurably improves during training: more wins, and earlier recognition of them.</li>
+    <li><strong>Next:</strong> make the search decisive enough for the policy to learn. The first step is a head-to-head test of a lower <code>uct_c</code>.</li>
+  </ol>
+
+  <h2 id="timeline">2. Timeline: run 113 → A → B → C → D</h2>
+  <ol class="timeline">
+    <li>
+      <div class="when">to 25 Sep</div>
+      <h3>Run 113 and earlier <span class="tag bad">no measurable learning</span></h3>
+      <p>The value target used gamma = 0.997 over games of about 420 moves, and the observation had no move-count plane. So a certain win's target ranged from +0.22 to +1.12 depending on how far away the end was, which the network couldn't see. Twenty moves from the end it rated soon-to-be Timbuktu winners (+0.26) <em>below</em> timeout leaders (+0.43). Self-play cost about 37 ms per network call, because actors run TensorFlow single-threaded on the CPU.</p>
+    </li>
+    <li>
+      <div class="when">25–27 Sep</div>
+      <h3>Infrastructure, then the A series (A001–A005)</h3>
+      <ul>
+        <li><strong>gamma became configurable and was set to 1.0</strong>, with rewards rescaled to fit the value head's range. The timeout leader's reward became configurable too.</li>
+        <li><strong>Self-play got 7× faster</strong> with a batched GPU inference server (<code>inference_server.py</code>), on top of a 4.2× gain from caching and compiling MCTS inference. Remote workers were added.</li>
+        <li><strong>The first policy probe</strong> (8 checkpoints, July to September) found none better than v101. Head to head, vA004 against v113 scored 0.336 against a null of 0.333.</li>
+        <li><strong>Lesson:</strong> a rising loss curve means the buffer is filling, and a flat loss can't show strength in either direction.</li>
+      </ul>
+    </li>
+    <li>
+      <div class="when">27–30 Sep</div>
+      <h3>The B series (B001–B008) <span class="tag good">axis fix</span></h3>
+      <ul>
+        <li><strong>Conv axis order fixed.</strong> Keras read the board <em>width</em> as the channel axis. A <code>Permute</code> now feeds (height, width, planes). All weights were invalidated; buffers weren't.</li>
+        <li><strong>Move-count plane added</strong> (96 planes), so the network can see how far the game has gone.</li>
+        <li><strong><code>analyze_log</code> join bug fixed:</strong> 26% of games had been paired with another game's result, so earlier value plots were wrong.</li>
+        <li><strong>B008 rebalanced the buffer pools.</strong> <code>skip_timeout_games</code> had made training batches 88% wins while real games were 88% timeouts.</li>
+      </ul>
+    </li>
+    <li>
+      <div class="when">30 Sep</div>
+      <h3>Reproducibility fixes</h3>
+      <ul>
+        <li><strong>Every game from one game object used the same meeple layout,</strong> so a run had only about 100 distinct boards. The layout is now a recorded chance outcome with 65,536 possibilities.</li>
+        <li><strong>Probe v2:</strong> a frozen set of 600 positions scored against a search with no network in it, exactly repeatable. Untrained 192-plane floor: 24.8% ± 7.8 top-1, best untrained init 32.2%.</li>
+      </ul>
+    </li>
+    <li>
+      <div class="when">30 Sep – 1 Oct</div>
+      <h3>The C series (C001–C004)</h3>
+      <ul>
+        <li><strong>192-plane observations:</strong> each seat's score, the seat to move, and every seat's common and rare goods.</li>
+        <li><strong>Buffer work:</strong> pool shares scale with how full each pool is; a separate Timbuktu-win pool (10%); "natural" renamed to "timeout"; <code>resize_buffer.py</code> and <code>strip_bootstrap.py</code> updated.</li>
+        <li><strong>Culling recalibrated.</strong> C003 had thrown away 91% of its games using thresholds set for an older value head.</li>
+        <li><strong>Inference server:</strong> XLA plus semaphore wake-ups cut the laptop's per-simulation time from 6–9 ms to 3.7 ms.</li>
+        <li><strong>Results:</strong> probe 33–34% (not significant); value head picked the winner 52–53% of the time in-game. Then the diagnosis below.</li>
+      </ul>
+    </li>
+    <li>
+      <div class="when">1–2 Oct</div>
+      <h3>The D series <span class="tag good">first measurable learning</span></h3>
+      <p>Heuristic pretraining, a thinned buffer (1 position in 16 per game), a slower training rate, and guidance held at 0.30. D003 and D005 are runs; vD001, vD002 and vD004 are pretraining checkpoints. Details in <a href="#dseries">section 4</a>.</p>
+    </li>
+  </ol>
+
+  <h2 id="memorize">3. The key discovery: memorization</h2>
+  <p>On C004 we tested the value head on fresh games it had never seen. The result was clear-cut:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Who is picked as the eventual winner (last 20 moves)</th><th class="n">games it trained on</th><th class="n">held-out games</th><th class="n">fresh games</th></tr></thead>
+    <tbody>
+      <tr><td>C004 value head</td><td class="n">~100%</td><td class="n">~66–71%</td><td class="n">48–55%</td></tr>
+      <tr><td>Simply reading the score planes (no network)</td><td class="n">89%</td><td class="n">88%</td><td class="n">90%</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Why:</strong> the buffer kept every move of every game, so 100k positions covered only <strong>240 games</strong>. All of a game's roughly 400 positions look alike and share one outcome. Recognising "this is game #57, seat 2 wins" is easier than learning "whoever leads on points usually wins". Every value network we tried did the same thing: the old architecture, a direct path for global features, and L2 weight decay.</p>
+  <p><strong>What fixed it was data volume.</strong> Trained on about 9,200 heuristic games, the same networks picked the winner of the 240 MCTS games they'd never seen <strong>71–78%</strong> of the time. Architecture made little difference there. Even 9,200 games get memorized after enough passes, so pretraining keeps the best held-out step instead of the last.</p>
+
+  <h2 id="dseries">4. The D series in detail</h2>
+  <h3>What was built (all committed)</h3>
+  <ul>
+    <li><strong><code>pretrain_heuristic.py</code>:</strong> generates heuristic games in parallel (15% random moves, 1 position in 16 kept), trains policy and/or value with whole games held out, keeps each head's best step, and writes a normal checkpoint.
+      <ul>
+        <li><code>--eval_buffer</code> scores each step on a saved MCTS buffer, and by default the value head is chosen by its error there.</li>
+        <li><code>--heads value --init_from … --fresh_value</code> retrains only the value head.</li>
+        <li><code>--min_wins</code> / <code>--win_keep_every</code> enrich the data with wins, weighted back to their natural rate.</li>
+      </ul>
+    </li>
+    <li><strong><code>buffer_keep_every</code></strong> (trainer, ini): keeps 1 position in N from each game. Saved buffers record N; a buffer saved with less thinning is thinned to match on load, and never thinned twice.</li>
+    <li><strong><code>load_model</code></strong> treats a weights file that doesn't fit the network like a missing one, instead of half-loading it.</li>
+    <li><strong><code>analyze_log</code></strong> calibration compares predictions with <em>training targets</em>; its "experiences added" count accounts for thinning.</li>
+  </ul>
+
+  <h3>Pretraining checkpoints</h3>
+  <p>Each value head scored on the same 3,089 MCTS games from D003, none of which it trained on:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Checkpoint</th><th>What it is</th><th class="n">error</th><th class="n">picks winner, last 20 moves</th><th class="n">winner's value in win games</th></tr></thead>
+    <tbody>
+      <tr><td>score planes</td><td>no network</td><td class="n">—</td><td class="n">90%</td><td class="n">—</td></tr>
+      <tr><td>vD001</td><td>both heads, 10k heuristic games</td><td class="n">0.200</td><td class="n">70%</td><td class="n">−0.44</td></tr>
+      <tr><td>vD002</td><td>vD001 policy + value chosen by MCTS error</td><td class="n">0.199</td><td class="n">72%</td><td class="n">−0.45</td></tr>
+      <tr class="hl"><td>vD004</td><td>vD001 policy + win-enriched value (1,483 wins)</td><td class="n">0.196</td><td class="n">76%</td><td class="n">−0.42</td></tr>
+    </tbody>
+  </table></div>
+  <p>Win enrichment gave the best value head but didn't teach it to see wins coming: the targets for those positions average +0.91. Heuristic wins evidently don't look like MCTS wins.</p>
+
+  <h3>Run D003: started from vD002, guidance decaying 0.30 → 0.05 over games 2000–5000</h3>
+  <ul>
+    <li>In-game value checks picked the winner <strong>64–65%</strong> of the time (C003/C004: 52–53%), steady over 4,000 games. So no sliding back into memorization, but no further gain either.</li>
+    <li><strong>The win rate collapsed with the guidance decay:</strong> 10–12% up to game 2000, then 9%, 6.6%, 4–5%, 2%. The wins had been coming from the heuristic, not the network.</li>
+  </ul>
+
+  <h3>Run D005: started from vD004, guidance held at 0.30 <span class="tag good">current</span></h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Games</th><th class="n">win rate</th><th class="n">D003 at the same point</th></tr></thead>
+    <tbody>
+      <tr><td>1–500</td><td class="n">11.2%</td><td class="n">11.2%</td></tr>
+      <tr><td>501–1000</td><td class="n">12.8%</td><td class="n">12.2%</td></tr>
+      <tr><td>1001–1500</td><td class="n">17.6%</td><td class="n">10.0%</td></tr>
+      <tr><td>1501–2000</td><td class="n">18.8%</td><td class="n">11.2%</td></tr>
+      <tr><td>2001–2500</td><td class="n">16.6%</td><td class="n">9.0%</td></tr>
+      <tr><td>2501–3000</td><td class="n">20.6%</td><td class="n">6.6%</td></tr>
+      <tr><td>3001–3500</td><td class="n">20.2%</td><td class="n">4.2%</td></tr>
+      <tr><td>3501–4000</td><td class="n">17.2%</td><td class="n">5.2%</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>The value head is starting to see wins coming.</strong> The eventual winner's predicted value in win games went from −0.17 to about −0.07 by mid-run (D003: −0.25 to −0.28 throughout). Picking the winner overall holds at about 69%.</li>
+    <li><strong>It has plateaued since about game 1,500.</strong> The win rate sits at 17–21% and the value metrics are flat within noise. A 500-game win rate has a standard error of about 1.7 points.</li>
+    <li><strong>Reading <code>analyze_log</code>'s thirds:</strong> the "mean |err|" rising across thirds is a <em>mix effect</em>, not a decline. Win games have errors about twice as large as timeouts, and their share has grown.</li>
+  </ul>
+
+  <h2 id="policy">5. Why the policy isn't learning</h2>
+  <p>Probe v2 on 590 positions: every checkpoint scores 32–36% top-1, and none differ significantly (McNemar p 0.08–1.0). That's still inside the untrained range. Every policy also sits at about <strong>92% of uniform entropy</strong>: it barely prefers one move over another.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Checkpoint</th><th class="n">top-1</th><th class="n">entropy (share of uniform)</th></tr></thead>
+    <tbody>
+      <tr><td>vC004</td><td class="n">35.9%</td><td class="n">91%</td></tr>
+      <tr><td>vD004 (D005's start)</td><td class="n">31.9%</td><td class="n">92%</td></tr>
+      <tr><td>D005 checkpoints, 12:56 to latest</td><td class="n">33.1–35.9%</td><td class="n">92%</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>The network is faithfully learning flat targets.</strong> The heuristic's move weights (the pretraining target) are 91% of uniform (98% median). MCTS visit targets in D005's buffer are 90–91% (96% median), with only about 7 legal moves per position.</p>
+  <p><strong>Why the search is flat.</strong> At each position, the children's Q values typically differ by about <strong>0.04</strong>; the value head's predictions are compressed. With <code>uct_c</code> = 2.0 the exploration term is far larger than that, so visits follow the prior, which is itself flat. Measured with <code>search_sharpness.py</code> (D005 18:56 checkpoint, 120 positions, 300 sims):</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th class="n">uct_c</th><th class="n">visit entropy</th><th class="n">prior entropy</th><th class="n">top move's share</th><th class="n">children's Q spread</th><th class="n">same best move as 2.0</th></tr></thead>
+    <tbody>
+      <tr class="hl"><td class="n">2.0 (current)</td><td class="n">89%</td><td class="n">93%</td><td class="n">41%</td><td class="n">0.077</td><td class="n">100%</td></tr>
+      <tr><td class="n">1.0</td><td class="n">82%</td><td class="n">93%</td><td class="n">47%</td><td class="n">0.087</td><td class="n">83%</td></tr>
+      <tr><td class="n">0.5</td><td class="n">70%</td><td class="n">93%</td><td class="n">59%</td><td class="n">0.111</td><td class="n">73%</td></tr>
+      <tr><td class="n">0.25</td><td class="n">59%</td><td class="n">93%</td><td class="n">67%</td><td class="n">0.125</td><td class="n">69%</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><p><strong>Sharper isn't automatically better.</strong> A lower <code>uct_c</code> makes the search trust a value head that is about 70% accurate. Whether the moves it then chooses are <em>stronger</em> has to be settled by head-to-head play before it goes into a run.</p></div>
+
+  <h2 id="plan">6. The plan</h2>
+  <ol class="steps">
+    <li>
+      <h3>On return: read D005</h3>
+      <p>Run <code>analyze_log.py train_runD005.log</code> and look at:</p>
+      <ul>
+        <li>the win rate trend: still 17–21%, or rising again?</li>
+        <li>the leader's predicted value in Timbuktu and rare-goods wins: still climbing from about −0.07?</li>
+        <li>top-pick: around 69%?</li>
+      </ul>
+      <p>Probe the newest checkpoints against vD004 for completeness. If it's plateaued, stop D005 when convenient; its latest checkpoint is the starting point for what follows.</p>
+    </li>
+    <li>
+      <h3>Head-to-head test of <code>uct_c</code></h3>
+      <ul>
+        <li><strong>Small change first:</strong> <code>ab_eval.py</code> currently uses one <code>uct_c</code> for both sides; add <code>--uct_c_a</code> / <code>--uct_c_b</code>.</li>
+        <li><strong>The test:</strong> play the <em>same</em> D005 checkpoint at 2.0 against 0.5, and possibly 2.0 against 1.0, with the run's simulation counts and guidance 0.30.</li>
+        <li><strong>Cost:</strong> about 300–700 games to show a moderate difference. Run it with D005 stopped, so it has the machine.</li>
+      </ul>
+    </li>
+    <li>
+      <h3>If the lower <code>uct_c</code> wins: run D006 with it</h3>
+      <ul>
+        <li>Add <code>uct_c</code> to the ini. It's command-line only today (<code>--uct_c</code>, default 2.0, passed on to remote actors).</li>
+        <li>Start from D005's latest checkpoint.</li>
+        <li><strong>What success looks like:</strong> the policy's entropy in the probe falling below 92%, top-1 rising past the untrained range (above about 36%), and the win rate holding or rising.</li>
+      </ul>
+    </li>
+    <li>
+      <h3>If lowering <code>uct_c</code> doesn't help, or makes play worse: normalize Q per node</h3>
+      <p>The MuZero approach: rescale the children's Q values to 0–1 within each node before applying the exploration term. Small value differences then count however compressed the value head is. It needs a custom child-selection function for OpenSpiel's MCTS. Sharpening the policy targets (visits raised to a power) is a cheaper fallback, but it only makes flat preferences look confident.</p>
+    </li>
+    <li>
+      <h3>Later: train harder</h3>
+      <p><code>train_interval_seconds</code> = 8 was chosen to stop the network memorizing a 240-game buffer. The thinned buffer now spans about 3,900 games, so once the policy has a real signal, try 4 seconds and watch in-game top-pick for any drop.</p>
+    </li>
+    <li>
+      <h3>Housekeeping</h3>
+      <ul>
+        <li>Commit <code>mali_ba.ini</code> once you're happy with the D-series settings (they're uncommitted; see below).</li>
+        <li>Rsync Python changes to the laptop before each run, and rebuild there after any C++ change.</li>
+        <li><code>pretrain_data/</code> holds 56 GB of generated games (22 GB for the first 10k-game set, 34 GB for the win-enriched set) and is gitignored. Delete the folders you no longer need.</li>
+      </ul>
+    </li>
+  </ol>
+
+  <h2 id="settings">7. Settings in effect (D005)</h2>
+  <p>Uncommitted changes to <code>mali_ba.ini</code>, relative to the last commit:</p>
+  <pre><code>train_interval_seconds = 8            (was 1)
+buffer_keep_every = 16                (new)
+heuristic_guidance_weight_final = 0.30 (was 0.05; decay window 2000-5000 now changes nothing)
+hopeless_thresh2 = -0.3               (was -0.21)
+hopeless_thresh3 = -0.3               (was -0.20)</code></pre>
+  <dl class="kv">
+    <dt>Observation</dt><dd>192 planes × 15×15 (base 77, region planes, move count, scores, seat to move, all goods)</dd>
+    <dt>Value target</dt><dd>gamma 1.0: final return plus remaining time penalties</dd>
+    <dt>Buffer</dt><dd>100k positions; pools timeout / near-win 0.35 / rare-goods 0.20 / Timbuktu 0.10; 1 in 16 positions kept</dd>
+    <dt>Search</dt><dd><code>uct_c</code> 2.0 (command-line default); simulations 100 / 300 / 600 by move tier; Dirichlet (0.2, 0.25)</dd>
+    <dt>Guidance</dt><dd>0.30 constant; rare-goods-focused games 0.35</dd>
+    <dt>Started from</dt><dd><code>mali_ba_agent_vD004.weights.h5</code> (vD001 policy + win-enriched value)</dd>
+  </dl>
+
+  <h2 id="reference">8. Tools, files and commands</h2>
+  <p>Run these from <code>mali_ba/open_spiel/python/games/mali_ba</code> with the trainer's environment. Scripts that load pyspiel need <code>PYTHONPATH=…/mali_ba/open_spiel/python/games:…/open_spiel/build/python</code>.</p>
+  <h3>Pretraining</h3>
+  <pre><code>python pretrain_heuristic.py --out mali_ba_agent_vP001.weights.h5 \
+    --eval_buffer /media/robp/UD/Projects/open_spiel/mali_ba_buffer.pkl.gz
+# value head only, win-enriched, keep an existing policy:
+python pretrain_heuristic.py --out mali_ba_agent_vD004.weights.h5 --heads value \
+    --init_from mali_ba_agent_vD001.weights.h5 --fresh_value \
+    --min_wins 1500 --win_keep_every 4 --eval_every 500 --eval_buffer …</code></pre>
+  <h3>Policy probe (v2, repeatable)</h3>
+  <pre><code>python policy_probe.py --positions probe_data/probe_positions_v2_600.json \
+    --reference probe_data/probe_reference_v2_600.json --workers 6 \
+    --agents mali_ba_agent_vD004.weights.h5 mali_ba_agent_vD005.weights.h5</code></pre>
+  <h3>Search sharpness (new)</h3>
+  <pre><code>python search_sharpness.py --agent mali_ba_agent_vD005.weights.h5 --uct_c 2.0 1.0 0.5</code></pre>
+  <h3>Log analysis (from the open_spiel directory)</h3>
+  <pre><code>python /media/robp/UD/Projects/mali_ba/open_spiel/python/games/mali_ba/analyze_log.py train_runD005.log</code></pre>
+  <dl class="kv">
+    <dt>Logs</dt><dd><code>/media/robp/UD/Projects/open_spiel/train_run*.log</code></dd>
+    <dt>Buffer</dt><dd><code>/media/robp/UD/Projects/open_spiel/mali_ba_buffer.pkl.gz</code> (D005's, saved at 1 in 16)</dd>
+    <dt>Checkpoints</dt><dd><code>mali_ba_agent_v*.weights.h5</code> → <code>…_policy</code> / <code>…_value</code> files in the mali_ba directory</dd>
+    <dt>Probe data</dt><dd><code>probe_data/</code>; use only the v2 files (see its README)</dd>
+  </dl>
+
+  <h2 id="traps">9. Things that misled us (don't repeat)</h2>
+  <ul>
+    <li><strong>Loss curves and self-play win rate don't measure strength.</strong> Use the probe or head-to-head play.</li>
+    <li><strong>A value head can look excellent on its own buffer and be useless on new games.</strong> Always test on held-out or fresh games.</li>
+    <li><strong>Benchmarks without the actors' single-thread settings</strong> (<code>OMP_NUM_THREADS=1</code>) read about 20× too fast.</li>
+    <li><strong>Old probe sets and old value-check CSVs are unreliable:</strong> different boards per process, and games joined to the wrong results.</li>
+    <li><strong>Never take <code>legal_actions()[0]</code> at the opening chance node;</strong> sample the layout.</li>
+    <li><strong>Python's configparser crashes on inline ini comments</strong> (<code>key = value  # note</code>). Comments go on their own line.</li>
+    <li><strong>"Mean |err|" rising across thirds can be a change in the win/timeout mix,</strong> not a decline. Split by outcome type before concluding anything.</li>
+  </ul>
+
+  <footer>Prepared 2 October 2026. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest <code>61787ce</code>.</footer>
+</main>
