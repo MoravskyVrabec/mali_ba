@@ -35,6 +35,10 @@ Examples
 
     # give A two seats instead of one (expected win rate 2/3 if equal)
     python ab_eval.py --agent_a A.weights.h5 --agent_b B.weights.h5 --a_seats 2
+
+    # same network, different search: does a lower uct_c pick stronger moves?
+    python ab_eval.py --agent_a D.weights.h5 --agent_b D.weights.h5 \
+                      --uct_c_a 0.5 --uct_c_b 2.0 --heuristic_weight 0.30
 """
 
 import argparse
@@ -169,9 +173,9 @@ def _worker(jobs, cfg, out_q):
         tf.config.set_visible_devices([], "GPU")
     game = pyspiel.load_game("mali_ba", {"config_file": cfg["config_file"]})
     shape = game.observation_tensor_shape()
-    act_a, _ = _build_agent(cfg["agent_a"], game, shape, cfg["sims"], cfg["uct_c"],
+    act_a, _ = _build_agent(cfg["agent_a"], game, shape, cfg["sims"], cfg["uct_c_a"],
                             cfg["cache_size"], cfg["heur_w"])
-    act_b, _ = _build_agent(cfg["agent_b"], game, shape, cfg["sims"], cfg["uct_c"],
+    act_b, _ = _build_agent(cfg["agent_b"], game, shape, cfg["sims"], cfg["uct_c_b"],
                             cfg["cache_size"], cfg["heur_w"])
     nseats = game.num_players()
     for rot, seed in jobs:
@@ -197,7 +201,13 @@ def main():
                     help="MCTS simulations per move, same for both agents (default 100). "
                          "Lower than training on purpose: more games matters more than "
                          "deeper search for a strength estimate.")
-    ap.add_argument("--uct_c", type=float, default=1.4)
+    ap.add_argument("--uct_c", type=float, default=2.0,
+                    help="PUCT exploration constant for both agents (default 2.0, the "
+                         "training default; results before 2026-10-05 used 1.4)")
+    ap.add_argument("--uct_c_a", type=float, default=None,
+                    help="uct_c for agent A only (overrides --uct_c)")
+    ap.add_argument("--uct_c_b", type=float, default=None,
+                    help="uct_c for agent B only (overrides --uct_c)")
     ap.add_argument("--a_seats", type=int, default=1, choices=(1, 2),
                     help="how many of the three seats agent A takes (default 1, so an "
                          "equal-strength A wins 1/3)")
@@ -260,6 +270,8 @@ def main():
                     print(f"ERROR: missing weights file: {f}")
                     sys.exit(1)
     name_a, name_b = _name(args.agent_a), _name(args.agent_b)
+    uct_a = args.uct_c if args.uct_c_a is None else args.uct_c_a
+    uct_b = args.uct_c if args.uct_c_b is None else args.uct_c_b
 
     # Every distinct assignment of A to `a_seats` of the seats, so each agent plays
     # every position equally often.
@@ -268,9 +280,10 @@ def main():
     total = per_rot * len(rotations)
     expected = args.a_seats / nseats
 
-    print(f"A = {name_a}")
-    print(f"B = {name_b}")
-    print(f"{args.sims} sims/move, uct_c={args.uct_c}, "
+    # uct_c means nothing to the heuristic player, so don't print one for it.
+    print(f"A = {name_a}" + ("" if args.agent_a == HEURISTIC else f"  (uct_c={uct_a})"))
+    print(f"B = {name_b}" + ("" if args.agent_b == HEURISTIC else f"  (uct_c={uct_b})"))
+    print(f"{args.sims} sims/move, "
           f"heuristic_weight={args.heuristic_weight}, "
           f"A in {args.a_seats} of {nseats} seats")
     print(f"{total} games ({per_rot} per seat rotation), expected A win rate if equal: "
@@ -297,7 +310,7 @@ def main():
     nw = max(1, min(args.workers, len(jobs)))
     buckets = [jobs[i::nw] for i in range(nw)]
     cfg = dict(agent_a=args.agent_a, agent_b=args.agent_b, sims=args.sims,
-               uct_c=args.uct_c, cache_size=args.cache_size,
+               uct_c_a=uct_a, uct_c_b=uct_b, cache_size=args.cache_size,
                heur_w=args.heuristic_weight, config_file=args.config_file,
                gpu=args.gpu)
     print(f"running {nw} worker process(es)")
