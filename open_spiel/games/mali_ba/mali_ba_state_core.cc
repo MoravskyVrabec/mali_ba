@@ -941,6 +941,19 @@ namespace open_spiel
                         current_phase_ = Phase::kPlay;
                         current_player_id_ = 0;
                         current_player_color_ = GetPlayerColor(current_player_id_);
+                    } else if (GetGame()->GetRules().serpentine_token_placement) {
+                        // Serpentine: rounds alternate direction, 0,1,2 then 2,1,0 ...
+                        // The next placement's index is the number of tokens down so far.
+                        int placed = 0;
+                        for (const auto& [h, colors] : player_token_locations_) {
+                            for (PlayerColor pc : colors) {
+                                if (pc != PlayerColor::kEmpty) placed++;
+                            }
+                        }
+                        const int n = game_->NumPlayers();
+                        const int pos = placed % n;
+                        current_player_id_ = ((placed / n) % 2 == 0) ? pos : n - 1 - pos;
+                        current_player_color_ = GetPlayerColor(current_player_id_);
                     } else {
                         // Advance to next player
                         current_player_color_ = GetNextPlayerColor(current_player_color_);

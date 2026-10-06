@@ -65,7 +65,22 @@ void Mali_BaState::ApplyChanceSetup(int setup_index) {
         // }
 
     }
-    
+
+    // Starting common goods by seat: seat p gets p * per_seat randomly chosen common
+    // goods, each drawn independently (duplicates allowed, as in the physical game).
+    // Drawn from setup_rng AFTER the meeples, so each setup_index keeps exactly the
+    // meeple layout it had before this rule, and the goods are reproducible too.
+    const int per_seat = GetGame()->GetRules().starting_common_goods_per_seat;
+    if (per_seat > 0) {
+        const auto& goods_list = GoodsManager::GetInstance().GetCommonGoodsList();
+        std::uniform_int_distribution<int> good_dist(0, static_cast<int>(goods_list.size()) - 1);
+        for (int p = 0; p < static_cast<int>(common_goods_.size()); ++p) {
+            for (int k = 0; k < p * per_seat; ++k) {
+                common_goods_[p][goods_list[good_dist(setup_rng)]] += 1;
+            }
+        }
+    }
+
     // LOG_INFO("ApplyChanceSetup: END");
 }
 

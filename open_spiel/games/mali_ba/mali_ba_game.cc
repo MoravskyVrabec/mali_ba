@@ -442,6 +442,8 @@ namespace open_spiel
             rules_.end_game_cond_timbuktu_to_coast = get_effective_param("end_game_cond_timbuktu_to_coast", true);
             rules_.end_game_cond_rare_good_each_region = get_effective_param("end_game_cond_rare_good_each_region", false);
             rules_.end_game_cond_rare_good_num_regions = get_effective_param("end_game_cond_rare_good_num_regions", 5);
+            rules_.starting_common_goods_per_seat = get_effective_param("starting_common_goods_per_seat", 0);
+            rules_.serpentine_token_placement = get_effective_param("serpentine_token_placement", false);
             // But if we found no coastal cities, switch to false
             if (coastal_hexes_.empty()) { rules_.end_game_cond_timbuktu_to_coast = false; }
             // rules_.timbuktu_city_id = get_effective_param("timbuktu_city_id", 15);
@@ -465,6 +467,8 @@ namespace open_spiel
             LOG_DEBUG("  - Remove Meeple on Trade Route: ", rules_.remove_meeple_on_trade_route);
             LOG_DEBUG("  - City Free Upgrade on Route: ", rules_.city_free_upgrade);
             LOG_DEBUG("  - Posts Per Player: ", rules_.posts_per_player);
+            LOG_INFO("  starting_common_goods_per_seat: ", rules_.starting_common_goods_per_seat);
+            LOG_INFO("  serpentine_token_placement: ", rules_.serpentine_token_placement ? "true" : "false");
             LOG_DEBUG("  - Non-City Center Limit Divisor: ", rules_.non_city_center_limit_divisor);
             LOG_DEBUG("  - Min Hexes for Trade Route: ", rules_.min_hexes_for_trade_route);
             LOG_DEBUG("  - Max Shared Centers Between Routes: ", rules_.max_shared_centers_between_routes);

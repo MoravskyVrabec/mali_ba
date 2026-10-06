@@ -19,7 +19,8 @@
 
 * Place meeples on the map, three chosen at random in each hex, including hexes with cities in them   
 * Each player starts with a certain number of trading posts and trading centers  
-* Each player starts with three player tokens  
+* Each player starts with three player tokens
+* Distribute randomly chosen common goods to each player like so: The first player gets zero, the second gets one, the third gets two, and so on. Duplicates are allowed if they are randomly chosen.
 * Each player, starting with the first player, places one of their player tokens in a hex on the board, followed by the next player, in a serpentine fashion, until each player has placed their three tokens
 
 ### **Core Mechanics**

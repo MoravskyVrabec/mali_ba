@@ -391,6 +391,14 @@ namespace open_spiel
       bool end_game_cond_rare_good_each_region = false;
       int end_game_cond_rare_good_num_regions = 5;
 
+      // Setup: seat p starts with p * starting_common_goods_per_seat randomly
+      // chosen common goods, duplicates allowed (0 = off). Offsets the first-mover advantage:
+      // seat 0 won 37-39% of self-play games and 54% of decided head-to-head games.
+      int starting_common_goods_per_seat = 0;
+      // Setup: tokens are placed in serpentine order (0,1,2,2,1,0,0,1,2) instead of
+      // round-robin (0,1,2,0,1,2,...), so seat 0 does not get first pick every round.
+      bool serpentine_token_placement = false;
+
       // Scoring Rules
       int score_trading_post   = 4;  // pts per trading post on board
       int score_trading_center = 8;  // pts per trading center on board
