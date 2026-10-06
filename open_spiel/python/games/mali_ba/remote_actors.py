@@ -222,6 +222,14 @@ def main():
         random_no_kill_thresh=config.get('random_no_kill_thresh', 0.0),
         debug=config.get('debug', False),
     )
+    # Copy every other key the server sends. The list above predates the sim tiers,
+    # route-decision budget, playout cap, rare-goods extras and near-win extension;
+    # the server sent them but they were dropped here, so remote actors silently ran
+    # actor_process's getattr defaults (e.g. tier3 500 sims instead of the ini's 600,
+    # and playout cap always off).
+    for _k, _v in config.items():
+        if not hasattr(actor_args, _k):
+            setattr(actor_args, _k, _v)
     initial_game_params = config['initial_game_params']
 
     # --- Optional batched inference server on this machine's GPU ---------------
