@@ -224,6 +224,11 @@ def server_loop(arena, shape, game_params, weights_queue, stop_event,
         log(LogLevel.INFO,
             f"InferenceServer: COMPUTE DEVICE = GPU x{len(gpus)}, max_batch={max_batch}, "
             f"vram_cap={gpu_memory_limit_mb or 'growth'}MB")
+        # analyze_log reads this to print the taskset command that pins the server
+        # to the large-L3 cores (2026-10-05: ~5,100 -> ~8,000 evals/s on a 7950X3D).
+        import socket
+        log(LogLevel.INFO,
+            f"InferenceServer: pid {os.getpid()} on host {socket.gethostname()}")
         arena.gpu_ok.set()
     else:
         # REFUSE to serve. A CPU-only batched server is not merely no better than

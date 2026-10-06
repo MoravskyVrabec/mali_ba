@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Analyze a mali_ba training log and print statistics and trends."""
 
+import os
 import re
 import sys
 import argparse
@@ -2076,6 +2077,96 @@ def plot_value_checks(csv_path):
     plt.show()
 
 
+def _largest_l3_cpus():
+    """CPU list sharing the largest L3 (the V-cache CCD on a 7950X3D), e.g. '0-7,16-23'.
+
+    Returns None when every core shares one L3, so there is nothing to pin to.
+    """
+    import glob
+    groups = {}
+    for path in glob.glob('/sys/devices/system/cpu/cpu[0-9]*/cache/index3'):
+        try:
+            size = open(os.path.join(path, 'size')).read().strip()
+            cpus = open(os.path.join(path, 'shared_cpu_list')).read().strip()
+        except OSError:
+            continue
+        kb = int(size.rstrip('K')) if size.endswith('K') else 0
+        groups[cpus] = kb
+    if len(groups) < 2:
+        return None
+    return max(groups, key=groups.get)
+
+
+def _inference_server_pid(log_path):
+    """(pid, how_found) of this machine's live inference server, or (None, reason).
+
+    Exact when the server logged its pid (runs started after 2026-10-06). For older
+    runs, falls back to nvidia-smi: of the GPU processes, the trainer holds the replay
+    buffer (tens of GB resident) and the server only a few GB, so take the smaller.
+    """
+    import socket
+    import subprocess
+    host = socket.gethostname()
+    pid = None
+    pat = re.compile(r'InferenceServer: pid (\d+) on host (\S+)')
+    try:
+        with open(log_path, errors='ignore') as f:
+            for line in f:
+                if 'InferenceServer: pid' in line:
+                    m = pat.search(line)
+                    if m and m.group(2) == host:
+                        pid = int(m.group(1))
+    except OSError:
+        pass
+    if pid is not None:
+        if os.path.exists(f'/proc/{pid}'):
+            return pid, 'from the log'
+        return None, 'the inference server logged by this run is no longer running'
+    try:
+        out = subprocess.run(['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader'],
+                             capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None, 'nvidia-smi is not available'
+    cands = []
+    for tok in out.split():
+        try:
+            p = int(tok.strip(','))
+            with open(f'/proc/{p}/cmdline', 'rb') as f:
+                cmd = f.read()
+            if b'multiprocessing' not in cmd:
+                continue
+            with open(f'/proc/{p}/status') as f:
+                rss = next((int(l.split()[1]) for l in f if l.startswith('VmRSS:')), 0)
+            cands.append((rss, p))
+        except (ValueError, OSError):
+            continue
+    if len(cands) < 2:
+        return None, 'no running training run found on this machine'
+    return min(cands)[1], 'guessed from nvidia-smi as the GPU process using the least memory, so check it'
+
+
+def print_pin_command(log_path):
+    """Print the taskset command that pins the inference server to the large-L3 cores."""
+    import subprocess
+    cpus = _largest_l3_cpus()
+    if cpus is None:
+        return
+    pid, how = _inference_server_pid(log_path)
+    if pid is None:
+        print(f'Inference server pinning: skipped ({how}).')
+        return
+    try:
+        cur = subprocess.run(['taskset', '-cp', str(pid)], capture_output=True,
+                             text=True, timeout=5).stdout.split(':')[-1].strip()
+    except (OSError, subprocess.SubprocessError):
+        cur = ''
+    if cur == cpus:
+        print(f'Inference server (pid {pid}) is already pinned to CPUs {cpus}.')
+        return
+    print(f'Run this command to pin inference server process ({how}):')
+    print(f'  taskset -cp {cpus} {pid}')
+
+
 def main():
     parser = argparse.ArgumentParser(description='Analyze a mali_ba training log.')
     parser.add_argument('log_file', help='Path to the training log file')
@@ -2102,6 +2193,10 @@ def main():
     print_value_calibration(data)
     print()
     csv_path = write_value_check_csv(data, args.log_file, ssh_password=args.ssh_password)
+
+    print()
+    print_pin_command(args.log_file)
+    print()
 
     if args.no_plot:
         show_charts = False
