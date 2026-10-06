@@ -1441,8 +1441,11 @@ def plot_win_rate(mcts_games, window=50, trainer_losses=None, run_start=None):
         print('matplotlib not available. Install with: pip install matplotlib')
         return
 
-    if len(mcts_games) < window:
-        print(f'  Not enough MCTS games for a {window}-game moving average (have {len(mcts_games)}).')
+    # Only the 60-game average is drawn. A short (--window, default 15) line used to be
+    # drawn too, but at ~850 games/hr it is a solid band of noise across the chart.
+    _long_window = 60
+    if len(mcts_games) < _long_window:
+        print(f'  Not enough MCTS games for a {_long_window}-game moving average (have {len(mcts_games)}).')
         return
 
     # Use wall-clock time as the common x-axis, anchored to run start
@@ -1452,13 +1455,7 @@ def plot_win_rate(mcts_games, window=50, trainer_losses=None, run_start=None):
     def to_hours(t):
         return (t - run_start).total_seconds() / 3600
 
-    # Win rate moving average (x = hours since run start)
-    win_xs = []
-    win_ys = []
     is_win = [1 if g['is_win'] else 0 for g in mcts_games]
-    for i in range(window - 1, len(mcts_games)):
-        win_xs.append(to_hours(mcts_games[i]['time']))
-        win_ys.append(sum(is_win[i - window + 1:i + 1]) / window * 100)
 
     try:
         import tkinter as _tk
@@ -1488,25 +1485,19 @@ def plot_win_rate(mcts_games, window=50, trainer_losses=None, run_start=None):
                 pass
     except Exception:
         pass
-    ax1.plot(win_xs, win_ys, linewidth=1.5, color='steelblue',
-             label=f'Win rate ({window}-game avg)')
+    long_xs = []
+    long_ys = []
+    for i in range(_long_window - 1, len(mcts_games)):
+        long_xs.append(to_hours(mcts_games[i]['time']))
+        long_ys.append(sum(is_win[i - _long_window + 1:i + 1]) / _long_window * 100)
+    ax1.plot(long_xs, long_ys, linewidth=1.5, color='purple',
+             label=f'Win rate ({_long_window}-game avg)')
 
-    # Secondary, longer moving average for a steadier long-run trend line.
-    _long_window = 60
-    if len(mcts_games) >= _long_window:
-        long_xs = []
-        long_ys = []
-        for i in range(_long_window - 1, len(mcts_games)):
-            long_xs.append(to_hours(mcts_games[i]['time']))
-            long_ys.append(sum(is_win[i - _long_window + 1:i + 1]) / _long_window * 100)
-        ax1.plot(long_xs, long_ys, linewidth=1.5, color='purple',
-                 label=f'Win rate ({_long_window}-game avg)')
-
-    ax1.axhline(y=sum(is_win) / len(is_win) * 100, color='steelblue',
+    ax1.axhline(y=sum(is_win) / len(is_win) * 100, color='purple',
                 linestyle='--', linewidth=1, alpha=0.5,
                 label=f'Overall avg ({sum(is_win)/len(is_win)*100:.1f}%)')
-    ax1.set_ylabel('Win Rate (%)', color='steelblue')
-    ax1.tick_params(axis='y', labelcolor='steelblue')
+    ax1.set_ylabel('Win Rate (%)', color='purple')
+    ax1.tick_params(axis='y', labelcolor='purple')
     ax1.set_ylim(0, 100)
     ax1.set_xlabel('Hours since run start')
     ax1.grid(True, alpha=0.3)
@@ -1554,7 +1545,7 @@ def plot_win_rate(mcts_games, window=50, trainer_losses=None, run_start=None):
     else:
         ax1.legend(loc='upper right')
 
-    ax1.set_title(f'Win Rate ({window}-game avg) and Training Loss')
+    ax1.set_title(f'Win Rate ({_long_window}-game avg) and Training Loss')
     plt.tight_layout(rect=[0, 0.06, 1, 1])
     plt.show()
 
