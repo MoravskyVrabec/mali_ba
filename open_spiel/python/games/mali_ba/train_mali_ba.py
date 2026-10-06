@@ -1235,6 +1235,18 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                 pass
             replay_temp_path = None
 
+        # Thin before sending (buffer_keep_every). A full game is ~71 MB (400 moves x
+        # 173 KB observation), and the learner keeps only 1 position in N anyway.
+        # Remote actors upload over the network at ~2 MB/s, so they spent most of
+        # their time blocked here: results reached the learner a median 670 s (D005)
+        # to 844 s (D006) after the game ended. Dropped steps keep their player and
+        # reward vector, which the learner's backward value pass needs, but lose the
+        # observation and policy; the learner keeps exactly the steps that have one.
+        _keep = max(1, getattr(args, 'buffer_keep_every', 1))
+        if _keep > 1:
+            _off = random.randrange(_keep)
+            episode_trajectory = [step if i % _keep == _off else (None, step[1], None, step[3])
+                                  for i, step in enumerate(episode_trajectory)]
         result_queue.put((episode_trajectory, returns, finished_msg, near_win_flag))
 
     log(LogLevel.INFO, f"Actor {actor_id} completed its quota of {games_per_actor} games and is terminating.")
@@ -1723,6 +1735,7 @@ def main(args):
             'sim_tier2_sims':                      getattr(args, 'sim_tier2_sims', 300),
             'sim_tier3_start':                     getattr(args, 'sim_tier3_start', 300),
             'sim_tier3_sims':                      getattr(args, 'sim_tier3_sims', 500),
+            'buffer_keep_every':                   getattr(args, 'buffer_keep_every', 1),
             'playout_cap_enabled':                 getattr(args, 'playout_cap_enabled', False),
             'playout_cap_full_prob':               getattr(args, 'playout_cap_full_prob', 0.25),
             'playout_cap_fast_sims':               getattr(args, 'playout_cap_fast_sims', 40),
@@ -2019,7 +2032,11 @@ def main(args):
             # the same buffer span N times as many games. The offset is random per game
             # so every move number is represented across games.
             keep_every = max(1, getattr(args, 'buffer_keep_every', 1))
-            if keep_every > 1:
+            if any(step[0] is None for step in trajectory_with_values):
+                # Already thinned by the actor before sending: keep the steps it kept.
+                kept_steps = [step for step in trajectory_with_values if step[0] is not None]
+            elif keep_every > 1:
+                # Full trajectory (heuristic actors, or a remote worker running older code).
                 kept_steps = trajectory_with_values[random.randrange(keep_every)::keep_every]
             else:
                 kept_steps = trajectory_with_values
