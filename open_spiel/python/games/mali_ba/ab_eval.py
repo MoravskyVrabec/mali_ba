@@ -65,8 +65,12 @@ def _wilson(k, n, z=1.96):
     return (p, max(0.0, centre - half), min(1.0, centre + half))
 
 
-def _build_agent(spec, game, shape, sims, uct_c, cache_size, heur_w):
-    """Returns a callable state -> action, or None for the heuristic player."""
+def _build_agent(spec, game, shape, sims, uct_c, cache_size, heur_w, client=None):
+    """Returns a callable state -> action, or None for the heuristic player.
+
+    With an InferenceClient, forward passes go to the batched GPU server and the
+    evaluator never touches local models, so none are built here.
+    """
     import numpy as np
     import pyspiel
     from open_spiel.python.algorithms import mcts
@@ -79,21 +83,16 @@ def _build_agent(spec, game, shape, sims, uct_c, cache_size, heur_w):
             return pyspiel.mali_ba.downcast_state(state).select_heuristic_random_action()
         return act, "heuristic"
 
-    pol = spec.replace("weights.h5", "_policy.weights.h5")
-    val = spec.replace("weights.h5", "_value.weights.h5")
-    for p in (pol, val):
-        if not os.path.exists(p):
-            raise FileNotFoundError(f"missing weights file: {p}")
-    pm = create_mali_ba_policy_network(shape, game.num_distinct_actions())
-    vm = create_mali_ba_value_network(shape, game.num_players())
-    pm.load_weights(pol)
-    vm.load_weights(val)
+    if client is not None:
+        pm = vm = None
+    else:
+        pm, vm = _load_models(spec, game, shape)
     # heur_w=0 measures the NETWORKS alone; the training value (~0.35) measures the
     # agent as actually deployed. Both are defensible, but they must match across the
     # two agents, and at 0 the agents are weak enough that most games hit the move cap
     # and the comparison yields no decided games.
     ev = AlphaZeroEvaluator(game, pm, vm, heuristic_guidance_weight=heur_w,
-                            cache_size=cache_size)
+                            cache_size=cache_size, client=client)
     bot = mcts.MCTSBot(game=game, uct_c=uct_c, max_simulations=sims, evaluator=ev,
                        solve=False, dirichlet_noise=None,
                        child_selection_fn=mcts.SearchNode.puct_value, verbose=False)
@@ -105,6 +104,52 @@ def _build_agent(spec, game, shape, sims, uct_c, cache_size, heur_w):
         return best.action
 
     return act, os.path.basename(spec).replace(".weights.h5", "")
+
+
+def _load_models(spec, game, shape):
+    from mali_ba.training_utils import (create_mali_ba_policy_network,
+                                        create_mali_ba_value_network)
+    pol = spec.replace("weights.h5", "_policy.weights.h5")
+    val = spec.replace("weights.h5", "_value.weights.h5")
+    for p in (pol, val):
+        if not os.path.exists(p):
+            raise FileNotFoundError(f"missing weights file: {p}")
+    pm = create_mali_ba_policy_network(shape, game.num_distinct_actions())
+    vm = create_mali_ba_value_network(shape, game.num_players())
+    pm.load_weights(pol)
+    vm.load_weights(val)
+    return pm, vm
+
+
+def _start_server(spec, game, shape, n_slots, config_file):
+    """Start a batched GPU inference server holding one agent's weights.
+
+    Returns (arena, proc, weights_queue, stop_event), or None if the server finds no
+    GPU -- it refuses to serve on CPU, which would be far slower than the workers
+    each inferring locally.
+    """
+    from mali_ba.inference_server import InferenceArena, server_loop
+    obs_size = 1
+    for d in shape:
+        obs_size *= d
+    arena = InferenceArena(n_slots, obs_size, game.num_distinct_actions(),
+                           game.num_players())
+    wq = mp.Queue()
+    stop = mp.Event()
+    # max_batch = n_slots: every worker waiting on this agent fits in one batch.
+    proc = mp.Process(target=server_loop,
+                      args=(arena, shape, {"config_file": config_file}, wq, stop),
+                      kwargs=dict(max_batch=n_slots), daemon=True)
+    proc.start()
+    if not arena.gpu_ok.wait(180):
+        stop.set()
+        proc.join(timeout=15)
+        return None
+    pm, vm = _load_models(spec, game, shape)
+    wq.put((pm.get_weights(), vm.get_weights()))
+    if not arena.ready.wait(600):
+        raise RuntimeError("inference server did not become ready within 600s")
+    return arena, proc, wq, stop
 
 
 def play_game(game, actors, seed):
@@ -151,7 +196,7 @@ def play_game(game, actors, seed):
     return winner, moves, reason
 
 
-def _worker(jobs, cfg, out_q):
+def _worker(jobs, cfg, out_q, slot=None, arenas=None):
     """Play a list of (rotation, seed) jobs in one process.
 
     Agents are built once per worker, not once per game: loading two models costs
@@ -173,10 +218,22 @@ def _worker(jobs, cfg, out_q):
         tf.config.set_visible_devices([], "GPU")
     game = pyspiel.load_game("mali_ba", {"config_file": cfg["config_file"]})
     shape = game.observation_tensor_shape()
+    # One client per arena: when both agents share a network they share a server,
+    # and two clients on one slot would keep separate request sequence numbers.
+    clients = {}
+    arenas = arenas or {}
+    for side in ("a", "b"):
+        ar = arenas.get(side)
+        if ar is not None and id(ar) not in clients:
+            from mali_ba.inference_server import InferenceClient
+            clients[id(ar)] = InferenceClient(ar, shape, slot=slot)
+    def _client(side):
+        ar = arenas.get(side)
+        return clients[id(ar)] if ar is not None else None
     act_a, _ = _build_agent(cfg["agent_a"], game, shape, cfg["sims"], cfg["uct_c_a"],
-                            cfg["cache_size"], cfg["heur_w"])
+                            cfg["cache_size"], cfg["heur_w"], _client("a"))
     act_b, _ = _build_agent(cfg["agent_b"], game, shape, cfg["sims"], cfg["uct_c_b"],
-                            cfg["cache_size"], cfg["heur_w"])
+                            cfg["cache_size"], cfg["heur_w"], _client("b"))
     nseats = game.num_players()
     for rot, seed in jobs:
         actors = [act_a if s in rot else act_b for s in range(nseats)]
@@ -219,6 +276,13 @@ def main():
                          "identically to both agents (default 0.35, matching training). "
                          "Use 0.0 to measure the networks in isolation, but expect far "
                          "more games to hit the move cap and decide nothing.")
+    ap.add_argument("--inference_server", action=argparse.BooleanOptionalAction,
+                    default=True,
+                    help="serve every worker's forward passes from a batched GPU "
+                         "inference server, one per distinct network (default on). "
+                         "Single-threaded CPU inference costs ~37ms a call and is "
+                         "nearly all of the search cost; training saw ~7x from the "
+                         "server. Falls back to CPU inference if no GPU is found.")
     ap.add_argument("--gpu", action="store_true",
                     help="allow the GPU (default CPU-only, to leave a training run alone)")
     ap.add_argument("--gpu_memory_mb", type=int, default=2048)
@@ -232,7 +296,10 @@ def main():
                          "0.7 GB. Lower it if a training run is using the machine.")
     args = ap.parse_args()
 
-    if not args.gpu:
+    # Hiding the GPU through the environment would also hide it from the inference
+    # servers, which inherit it. With a server, the parent hides it from its own TF
+    # below instead, and workers hide it from themselves.
+    if not args.gpu and not args.inference_server:
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
@@ -313,13 +380,37 @@ def main():
                uct_c_a=uct_a, uct_c_b=uct_b, cache_size=args.cache_size,
                heur_w=args.heuristic_weight, config_file=args.config_file,
                gpu=args.gpu)
-    print(f"running {nw} worker process(es)")
+    arenas = {}
+    servers = []
+    if args.inference_server:
+        by_spec = {}
+        for side, spec in (("a", args.agent_a), ("b", args.agent_b)):
+            if spec == HEURISTIC:
+                continue
+            if spec not in by_spec:
+                print(f"starting inference server for {_name(spec)} ...", flush=True)
+                srv = _start_server(spec, game, shape, nw, args.config_file)
+                if srv is None:
+                    print("  no usable GPU: the server refused to serve, so workers "
+                          "will infer on the CPU")
+                    by_spec = None
+                    break
+                by_spec[spec] = srv
+                servers.append((_name(spec), srv))
+            arenas[side] = by_spec[spec][0]
+        if by_spec is None:
+            for _, (_, proc, _, stop) in servers:
+                stop.set()
+                proc.join(timeout=15)
+            arenas, servers = {}, []
+    print(f"running {nw} worker process(es), inference: "
+          f"{'GPU server' if servers else 'CPU in each worker'}")
     print()
 
     t0 = time.time()
     out_q = mp.Queue()
-    procs = [mp.Process(target=_worker, args=(b, cfg, out_q), daemon=True)
-             for b in buckets if b]
+    procs = [mp.Process(target=_worker, args=(b, cfg, out_q, i, arenas), daemon=True)
+             for i, b in enumerate(buckets) if b]
     for pr in procs:
         pr.start()
     n = 0
@@ -358,6 +449,15 @@ def main():
         pr.join(timeout=30)
         if pr.is_alive():
             pr.terminate()
+    server_stats = []
+    for name, (arena, proc, wq, stop) in servers:
+        server_stats.append((name, arena.stats()))
+        stop.set()
+        from mali_ba.inference_server import STOP
+        wq.put(STOP)
+        proc.join(timeout=30)
+        if proc.is_alive():
+            proc.terminate()
 
     decided = a_wins + b_wins
     print()
@@ -383,6 +483,9 @@ def main():
         lengths.sort()
         print(f"  game length: median {lengths[len(lengths)//2]}  "
               f"min {lengths[0]}  max {lengths[-1]}")
+    for name, st in server_stats:
+        print(f"  inference server ({name}): {st['requests']:,} evals, "
+              f"avg batch {st['avg_batch']:.1f}, {st['ms_per_request']:.3f} ms/eval")
     if errors:
         print(f"  worker errors: {errors}")
     print(f"  wall time: {(time.time()-t0)/60:.1f} min "
