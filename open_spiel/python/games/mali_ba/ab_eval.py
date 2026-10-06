@@ -365,15 +365,16 @@ def main():
     a_by_rot = {r: [0, 0] for r in rotations}
     lengths = []
 
-    # Build the full job list, then deal it round-robin so every worker gets a mix of
-    # rotations -- otherwise a worker that finishes early would bias which seats are
-    # represented if the run is cut short.
+    # Build the job list with rotations INTERLEAVED (A@0, A@1, A@2, A@0, ...), then deal
+    # it round-robin to workers, so the games finished at any point are balanced across
+    # seats. Queuing rotation by rotation made every worker play its A@0 games first:
+    # on 2026-10-06 a uct_c test read 0.51 at the halfway point (seat 0 is the strong
+    # seat) and finished at 0.346. Each game keeps the seed it had before (indexed by
+    # rotation, then game), so boards are unchanged from earlier runs.
     jobs = []
-    k = 0
-    for rot in rotations:
-        for _ in range(per_rot):
-            jobs.append((rot, args.seed + k * 7919))
-            k += 1
+    for i in range(per_rot):
+        for j, rot in enumerate(rotations):
+            jobs.append((rot, args.seed + (j * per_rot + i) * 7919))
     nw = max(1, min(args.workers, len(jobs)))
     buckets = [jobs[i::nw] for i in range(nw)]
     cfg = dict(agent_a=args.agent_a, agent_b=args.agent_b, sims=args.sims,
