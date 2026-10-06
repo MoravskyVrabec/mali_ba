@@ -570,6 +570,7 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
         # Playout-cap accounting, logged at game end so the speedup is visible.
         _n_fast_moves = 0
         _n_full_moves = 0
+        _n_route_exempt = 0
         _total_sims = 0
         # Wall-clock buckets. External sampling profilers disagreed with production
         # by more than an order of magnitude, so the actor now measures itself.
@@ -880,11 +881,18 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
             # get AT LEAST sim_route_decision_sims, but never less than whatever
             # the move-tier above already provides (e.g. tier3's late-game budget,
             # which can legitimately be higher than this floor).
+            _route_exempt = False
             if pyspiel.mali_ba.downcast_state(state).current_phase() == pyspiel.mali_ba.Phase.OPTIONAL_ROUTE:
                 _n_route_candidates = len(state.legal_actions())
                 if _n_route_candidates >= getattr(args, 'sim_route_decision_min_candidates', 20):
                     bot.max_simulations = max(bot.max_simulations,
                                                getattr(args, 'sim_route_decision_sims', 500))
+                    # Large route decisions are exempt from the playout cap below:
+                    # they always get this floor and are always recorded. With the
+                    # cap on 75% of them were searched at 40 sims, and D006's first
+                    # ~2,500 games swapped Timbuktu wins (12.4% -> 8.1%) for
+                    # rare-goods wins (2.9% -> 7.1%).
+                    _route_exempt = getattr(args, 'playout_cap_exempt_route_decisions', True)
 
             # --- Playout cap randomization (KataGo, Wu 2019) ---
             # Deliberately the LAST word on the simulation budget: it overrides
@@ -900,7 +908,10 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
             # unit of compute.
             record_policy = True
             _fast_search = (getattr(args, 'playout_cap_enabled', False)
+                            and not _route_exempt
                             and random.random() >= getattr(args, 'playout_cap_full_prob', 0.25))
+            if _route_exempt and getattr(args, 'playout_cap_enabled', False):
+                _n_route_exempt += 1
             if _fast_search:
                 bot.max_simulations = max(1, getattr(args, 'playout_cap_fast_sims', 40))
                 record_policy = False
@@ -1124,7 +1135,7 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
             f"moves={move_count} (full={_n_full_moves}, fast={_n_fast_moves}) "
             f"sims={_total_sims} "
             f"nn_evals={_cache_misses} cache_hits={_cache_hits} "
-            f"hit_rate={_cache_rate:.3f}")
+            f"hit_rate={_cache_rate:.3f} route_exempt={_n_route_exempt}")
 
         # Close replay file before classification (must be closed before rename on some OSes)
         if replay_file:
@@ -1739,6 +1750,7 @@ def main(args):
             'playout_cap_enabled':                 getattr(args, 'playout_cap_enabled', False),
             'playout_cap_full_prob':               getattr(args, 'playout_cap_full_prob', 0.25),
             'playout_cap_fast_sims':               getattr(args, 'playout_cap_fast_sims', 40),
+            'playout_cap_exempt_route_decisions':  getattr(args, 'playout_cap_exempt_route_decisions', True),
             'sim_route_decision_sims':              getattr(args, 'sim_route_decision_sims', 500),
             'sim_route_decision_min_candidates':    getattr(args, 'sim_route_decision_min_candidates', 20),
             'base_max_play_moves':                 getattr(args, 'base_max_play_moves', 430),
@@ -2268,6 +2280,10 @@ if __name__ == "__main__":
     parser.add_argument('--no_playout_cap', dest='playout_cap_enabled', action='store_false',
                         help="Disable playout cap randomization even if the ini enables it.")
     parser.set_defaults(playout_cap_enabled=None)
+    parser.add_argument('--playout_cap_exempt_route_decisions', type=int, default=None,
+                        help="1 = OPTIONAL_ROUTE decisions with >= sim_route_decision_min_candidates "
+                             "candidates always get the full search and are recorded, even with "
+                             "the playout cap on; 0 = cap them like any move. Overrides ini.")
     parser.add_argument('--playout_cap_fast_sims', type=int, default=None,
                         help="Simulation budget for fast (non-recorded) moves. Overrides ini.")
     parser.add_argument('--sim_route_decision_sims', type=int, default=None,
@@ -2462,6 +2478,10 @@ if __name__ == "__main__":
         parsed_args.playout_cap_full_prob = _ini_float('playout_cap_full_prob', 0.25)
     if parsed_args.playout_cap_fast_sims is None:
         parsed_args.playout_cap_fast_sims = _ini_int('playout_cap_fast_sims', 40)
+    if parsed_args.playout_cap_exempt_route_decisions is None:
+        parsed_args.playout_cap_exempt_route_decisions = _ini_bool('playout_cap_exempt_route_decisions', True)
+    else:
+        parsed_args.playout_cap_exempt_route_decisions = bool(parsed_args.playout_cap_exempt_route_decisions)
     if parsed_args.sim_route_decision_sims is None:
         parsed_args.sim_route_decision_sims = _ini_int('sim_route_decision_sims', 500)
     if parsed_args.sim_route_decision_min_candidates is None:
@@ -2536,6 +2556,12 @@ if __name__ == "__main__":
     print(f'  sim route-decision override : OPTIONAL_ROUTE with '
           f'≥{parsed_args.sim_route_decision_min_candidates} candidates → '
           f'{parsed_args.sim_route_decision_sims} sims (overrides move-tier budget above)')
+    if parsed_args.playout_cap_enabled:
+        print(f'  playout cap                 : ON  full search on {parsed_args.playout_cap_full_prob:.0%} '
+              f'of moves, else {parsed_args.playout_cap_fast_sims} sims (value-only); large route '
+              f'decisions {"exempt" if parsed_args.playout_cap_exempt_route_decisions else "capped"}')
+    else:
+        print(f'  playout cap                 : off')
     print(f'  job_timeout_hours           : {parsed_args.job_timeout_hours}')
     print()
 
