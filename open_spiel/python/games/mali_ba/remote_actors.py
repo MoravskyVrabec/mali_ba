@@ -50,6 +50,13 @@ _LOG_FILTER_SUBSTRINGS = [
 ]
 
 
+# Watchdog (see --watchdog_minutes). The env var counts restarts across os.execv.
+_WATCHDOG_ENV = 'MALIBA_REMOTE_WATCHDOG_RESTARTS'
+_WATCHDOG_POLL_S = 120          # how often to ask the trainer
+_WATCHDOG_MAX_FAILURES = 5      # consecutive unanswered checks (~10 min) before restarting
+_RECONNECT_WINDOW_S = 30 * 60   # after a restart, keep retrying the connection this long
+
+
 def _should_relay(line):
     for frag in _LOG_FILTER_SUBSTRINGS:
         if frag in line:
@@ -141,6 +148,10 @@ def main():
                         help='VRAM cap for the inference server (default 4096 MB).')
     parser.add_argument('--cpu_only', action='store_true',
                         help='Force CPU-only TF even if a GPU is present')
+    parser.add_argument('--watchdog_minutes', type=float, default=20.0,
+                        help='Restart this worker (stop its actors, reconnect, respawn) when '
+                             'the trainer has received none of its games for this long. '
+                             'Needs a trainer with RemoteStatus; 0 disables (default 20).')
     args = parser.parse_args()
 
     if args.cpu_only and args.inference_server:
@@ -159,15 +170,26 @@ def main():
     from queue_server import connect_client
 
     print(f"[Remote] Connecting to queue server at {args.server_host}:{args.server_port}...")
-    try:
-        manager = connect_client(
-            host=args.server_host,
-            port=args.server_port,
-            authkey=args.authkey.encode()
-        )
-    except ConnectionRefusedError:
-        print(f"[Remote] ERROR: Could not connect. Is train_mali_ba.py running with --distributed?")
-        sys.exit(1)
+    # After a watchdog restart the network may still be recovering, so keep trying
+    # for a while; a first manual start fails fast as before.
+    restarted = os.environ.get(_WATCHDOG_ENV) is not None
+    deadline = time.time() + (_RECONNECT_WINDOW_S if restarted else 0)
+    while True:
+        try:
+            manager = connect_client(
+                host=args.server_host,
+                port=args.server_port,
+                authkey=args.authkey.encode()
+            )
+            break
+        except OSError as e:
+            if time.time() < deadline:
+                print(f"[Remote] Connect failed ({e}); retrying in 30 s...", flush=True)
+                time.sleep(30)
+                continue
+            print(f"[Remote] ERROR: Could not connect ({e}). "
+                  f"Is train_mali_ba.py running with --distributed?")
+            sys.exit(1)
 
     job_queue    = manager.get_job_queue()
     result_queue = manager.get_result_queue()
@@ -189,6 +211,22 @@ def main():
     except Exception:
         log_queue = None
         print(f"[Remote] Log relay not available (server may be running older code).")
+
+    # Watchdog: ask the trainer when it last received a game from each of our actors.
+    status_proxy = None
+    wd_t0 = None
+    if args.watchdog_minutes > 0:
+        try:
+            status_proxy = manager.get_remote_status()
+            wd_t0 = status_proxy.snapshot()['now']   # trainer clock; ignore older arrivals
+            print(f"[Remote] Watchdog on: restarts this worker if the trainer receives none "
+                  f"of its games for {args.watchdog_minutes:g} min"
+                  + (f" (restart #{os.environ.get(_WATCHDOG_ENV)})" if restarted else "")
+                  + ".", flush=True)
+        except Exception as e:
+            status_proxy = None
+            print(f"[Remote] Watchdog off: trainer does not report arrivals "
+                  f"(older train_mali_ba.py / queue_server.py?): {e}", flush=True)
 
     # Reconstruct an args-like namespace for actor_process.
     # Only the fields actor_process actually reads are needed.
@@ -327,29 +365,7 @@ def main():
     for _ in range(args.num_actors):
         spawn()
 
-    # Keep the pool full: respawn actors that finish their quota
-    last_stat = time.time()
-    try:
-        while True:
-            dead = [p for p in list(actor_pool) if not p.is_alive()]
-            for p in dead:
-                aid = actor_pool.pop(p)
-                p.join()
-                freed = inference_slot_by_proc.pop(p, None)
-                if freed is not None:
-                    inference_free_slots.append(freed)
-                print(f"[Remote] Actor {aid} finished, respawning...", flush=True)
-                spawn()
-            if inference_arena is not None and time.time() - last_stat >= 300:
-                st = inference_arena.stats()
-                print(f"[Remote] InferenceServer: {st['requests']:,} evals in "
-                      f"{st['batches']:,} batches (avg batch {st['avg_batch']:.1f}, "
-                      f"{st['avg_infer_ms']:.2f} ms/batch, "
-                      f"{st['ms_per_request']:.3f} ms/eval)", flush=True)
-                last_stat = time.time()
-            time.sleep(2.0)
-    except KeyboardInterrupt:
-        print("\n[Remote] Shutting down...")
+    def shutdown():
         for p in list(actor_pool):
             p.terminate()
         for p in list(actor_pool):
@@ -370,6 +386,75 @@ def main():
                     inference_server_proc.terminate()
             except Exception as e:
                 print(f"[Remote] Inference server shutdown issue: {e}")
+
+    def watchdog_stale_seconds():
+        """Seconds since the trainer last received a game from one of our actors (by
+        the trainer's clock, counting only arrivals since this process started), or
+        None if the trainer could not be asked. The call runs in a thread with a
+        timeout, since a broken connection can make it hang rather than fail."""
+        import threading
+        out = {}
+
+        def ask():
+            try:
+                out['snap'] = status_proxy.snapshot()
+            except Exception as e:
+                out['err'] = e
+        t = threading.Thread(target=ask, daemon=True)
+        t.start()
+        t.join(timeout=60)
+        snap = out.get('snap')
+        if snap is None:
+            print(f"[Remote] Watchdog: could not reach the trainer "
+                  f"({out.get('err', 'no reply within 60 s')})", flush=True)
+            return None
+        mine = [t for aid, t in snap['last'].items()
+                if args.actor_id_start <= aid < next_actor_id and t >= wd_t0]
+        return snap['now'] - (max(mine) if mine else wd_t0)
+
+    # Keep the pool full: respawn actors that finish their quota
+    last_stat = time.time()
+    last_wd = time.time()
+    wd_failures = 0
+    try:
+        while True:
+            dead = [p for p in list(actor_pool) if not p.is_alive()]
+            for p in dead:
+                aid = actor_pool.pop(p)
+                p.join()
+                freed = inference_slot_by_proc.pop(p, None)
+                if freed is not None:
+                    inference_free_slots.append(freed)
+                print(f"[Remote] Actor {aid} finished, respawning...", flush=True)
+                spawn()
+            if inference_arena is not None and time.time() - last_stat >= 300:
+                st = inference_arena.stats()
+                print(f"[Remote] InferenceServer: {st['requests']:,} evals in "
+                      f"{st['batches']:,} batches (avg batch {st['avg_batch']:.1f}, "
+                      f"{st['avg_infer_ms']:.2f} ms/batch, "
+                      f"{st['ms_per_request']:.3f} ms/eval)", flush=True)
+                last_stat = time.time()
+            if status_proxy is not None and time.time() - last_wd >= _WATCHDOG_POLL_S:
+                last_wd = time.time()
+                stale = watchdog_stale_seconds()
+                wd_failures = wd_failures + 1 if stale is None else 0
+                limit = args.watchdog_minutes * 60
+                if (stale is not None and stale > limit) or wd_failures >= _WATCHDOG_MAX_FAILURES:
+                    why = (f"the trainer has received none of this worker's games for "
+                           f"{stale / 60:.1f} min" if stale is not None else
+                           f"the trainer has not answered {wd_failures} checks in a row")
+                    n = int(os.environ.get(_WATCHDOG_ENV, '0')) + 1
+                    print(f"[Remote] WATCHDOG: {why}. Restarting this worker "
+                          f"(restart #{n}): stopping actors and reconnecting.", flush=True)
+                    shutdown()
+                    os.environ[_WATCHDOG_ENV] = str(n)
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+            time.sleep(2.0)
+    except KeyboardInterrupt:
+        print("\n[Remote] Shutting down...")
+        shutdown()
         print("[Remote] All actors stopped.")
 
 

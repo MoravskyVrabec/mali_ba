@@ -13,6 +13,8 @@ On a remote actor machine:
     python remote_actors.py --server_host <IP> [--server_port 50000] [--num_actors 8]
 """
 
+import threading
+import time
 from multiprocessing.managers import BaseManager
 
 DEFAULT_PORT = 50000
@@ -23,8 +25,33 @@ class MaliBaQueueManager(BaseManager):
     pass
 
 
+class RemoteStatus:
+    """When the learner last received a game from each actor, for remote watchdogs.
+
+    A remote worker cannot tell on its own whether its results are arriving: on
+    2026-10-06 the laptop's uploads kept returning normally for 75 minutes while the
+    learner received none of them (411 games lost, no error on either machine). The
+    learner records every arrival here; remote workers poll snapshot() and restart
+    themselves when none of their actors' games has arrived for a while.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._last = {}
+
+    def record(self, actor_id):
+        with self._lock:
+            self._last[actor_id] = time.time()
+
+    def snapshot(self):
+        """{'now': learner clock, 'last': {actor_id: learner time of last game}}."""
+        with self._lock:
+            return {'now': time.time(), 'last': dict(self._last)}
+
+
 def start_server(job_queue, result_queue, shared_config, log_queue=None,
-                 host='192.168.0.102', port=DEFAULT_PORT, authkey=DEFAULT_AUTHKEY):
+                 host='192.168.0.102', port=DEFAULT_PORT, authkey=DEFAULT_AUTHKEY,
+                 remote_status=None):
     """
     Start a blocking queue server. Intended to be called in a daemon thread.
 
@@ -44,6 +71,7 @@ def start_server(job_queue, result_queue, shared_config, log_queue=None,
     MaliBaQueueManager.register('get_result_queue', callable=lambda: result_queue)
     MaliBaQueueManager.register('get_config',       callable=lambda: shared_config)
     MaliBaQueueManager.register('get_log_queue',    callable=lambda: log_queue)
+    MaliBaQueueManager.register('get_remote_status', callable=lambda: remote_status)
 
     manager = MaliBaQueueManager(address=(host, port), authkey=authkey)
     server = manager.get_server()
@@ -62,6 +90,7 @@ def connect_client(host, port=DEFAULT_PORT, authkey=DEFAULT_AUTHKEY):
     MaliBaQueueManager.register('get_result_queue')
     MaliBaQueueManager.register('get_config')
     MaliBaQueueManager.register('get_log_queue')
+    MaliBaQueueManager.register('get_remote_status')
 
     manager = MaliBaQueueManager(address=(host, port), authkey=authkey)
     manager.connect()

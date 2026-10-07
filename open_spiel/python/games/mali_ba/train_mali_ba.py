@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import argparse
 import configparser
@@ -1708,6 +1709,7 @@ def main(args):
         log(LogLevel.INFO, "Launched trainer process.")
 
     # --- Distributed queue server (optional) ---
+    remote_status = None  # set below when distributed; read by the result loop
     if args.distributed:
         import threading
         from queue_server import start_server
@@ -1758,10 +1760,13 @@ def main(args):
             'near_win_extension_value_thresh':     getattr(args, 'near_win_extension_value_thresh', 0.2),
             'debug':                               getattr(args, 'debug', False),
         }
+        from queue_server import RemoteStatus
+        remote_status = RemoteStatus()
         server_thread = threading.Thread(
             target=start_server,
             args=(job_queue, result_queue, shared_config, log_queue),
-            kwargs={'host': args.bind_host, 'port': args.queue_port, 'authkey': args.authkey.encode()},
+            kwargs={'host': args.bind_host, 'port': args.queue_port, 'authkey': args.authkey.encode(),
+                    'remote_status': remote_status},
             daemon=True  # Dies automatically when main process exits
         )
         server_thread.start()
@@ -1794,6 +1799,8 @@ def main(args):
     start_time = time.time()
     last_weights_update_time = time.time()
     last_result_time = time.time()  # last time a game result was received
+    last_remote_result_time = None  # last game from a remote actor (id >= 100000)
+    last_remote_warn_time = 0.0
     
     if args.random_seed is None:
         master_seed = int(time.time() * 1000) % (2**32 - 1)
@@ -1896,6 +1903,20 @@ def main(args):
             spawn_actor(next_actor_id, initial_game_params, args, job_queue, result_queue, actor_pool, current_actor_function, arena=inference_arena, slot=_slot, slot_map=inference_slot_by_proc)
             next_actor_id += 1
             
+        # --- Remote-results watchdog (warning only; remote workers restart themselves) ---
+        # Remote games arrived earlier in the run but none for 15+ minutes: either the
+        # remote machine was stopped, or its results are being silently lost (2026-10-06:
+        # 411 laptop games over 75 minutes, no error on either machine).
+        if (last_remote_result_time is not None
+                and time.time() - last_remote_result_time > 900
+                and time.time() - last_remote_warn_time > 900):
+            last_remote_warn_time = time.time()
+            log(LogLevel.WARN,
+                f"REMOTE WATCHDOG: no game received from any remote actor for "
+                f"{(time.time() - last_remote_result_time) / 60:.0f} min. If the remote "
+                f"machine is still playing, its results are being lost; remote_actors.py "
+                f"with its watchdog on will restart itself.")
+
         # --- Maintain a healthy job queue size ---
         # This logic remains the same and is correct.
         target_job_queue_size = total_actors * 2
@@ -1932,6 +1953,14 @@ def main(args):
             # Log the FINISHED message here so it appears in the desktop log for all actors,
             # including remote actors whose subprocess stdout goes to the laptop.
             log(LogLevel.INFO, finished_msg)
+            # Record the arrival for remote watchdogs (see queue_server.RemoteStatus).
+            _m_aid = re.search(r'Actor (\d+),', finished_msg)
+            if _m_aid:
+                _aid = int(_m_aid.group(1))
+                if remote_status is not None:
+                    remote_status.record(_aid)
+                if _aid >= 100000:
+                    last_remote_result_time = time.time()
 
             # Process the game result
             total_games_processed += 1
