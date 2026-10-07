@@ -89,7 +89,10 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
         temp_game.observation_tensor_shape(),
         temp_game.num_distinct_actions(),
         temp_game.num_players(),
-        args.learning_rate
+        args.learning_rate,
+        aux_targets=getattr(args, 'aux_targets', False),
+        aux_win_type_weight=getattr(args, 'aux_win_type_weight', 0.5),
+        aux_moves_left_weight=getattr(args, 'aux_moves_left_weight', 1.0),
     )
     del temp_game
 
@@ -2073,22 +2076,36 @@ def main(args):
             # the same buffer span N times as many games. The offset is random per game
             # so every move number is represented across games.
             keep_every = max(1, getattr(args, 'buffer_keep_every', 1))
+            # Steps keep their move index, which the aux moves-left target needs.
+            indexed_steps = list(enumerate(trajectory_with_values))
             if any(step[0] is None for step in trajectory_with_values):
                 # Already thinned by the actor before sending: keep the steps it kept.
-                kept_steps = [step for step in trajectory_with_values if step[0] is not None]
+                kept_steps = [(i, step) for i, step in indexed_steps if step[0] is not None]
             elif keep_every > 1:
                 # Full trajectory (heuristic actors, or a remote worker running older code).
-                kept_steps = trajectory_with_values[random.randrange(keep_every)::keep_every]
+                kept_steps = indexed_steps[random.randrange(keep_every)::keep_every]
             else:
-                kept_steps = trajectory_with_values
+                kept_steps = indexed_steps
+            # Aux "how does the game end" targets (training_utils.AUX_WIN_TYPES order).
+            if getattr(args, 'aux_targets', False):
+                _aux_type = (1 if is_timbuktu_game else 2 if is_rare_goods_game
+                             else 0 if is_timeout_game else None)
+            else:
+                _aux_type = None
+            _aux_max_moves = max(1, getattr(args, 'base_max_play_moves', 420))
             log(LogLevel.INFO, f"  [DBG] Game passed filters — queuing {len(kept_steps)} of "
                 f"{len(trajectory_with_values)} experiences (1 in {keep_every}, oversample "
                 f"x{oversample_factor}). bootstrap={is_bootstrap_game} near_win={near_win_flag}")
             queued_count = 0
             for _ in range(oversample_factor):
-                for observation, player, policy_target, value_target_vector in kept_steps:
+                for step_idx, (observation, player, policy_target, value_target_vector) in kept_steps:
                     player_value = value_target_vector[player]
-                    value_data = (player, player_value, value_target_vector)
+                    if _aux_type is None:
+                        value_data = (player, player_value, value_target_vector)
+                    else:
+                        _moves_left = min(1.0, (game_length - step_idx) / _aux_max_moves)
+                        value_data = (player, player_value, value_target_vector,
+                                      (_aux_type, _moves_left))
 
                     # Always send to trainer — bootstrap games are tagged so the
                     # trainer can route them to the correct buffer pool.
@@ -2309,6 +2326,9 @@ if __name__ == "__main__":
     parser.add_argument('--no_playout_cap', dest='playout_cap_enabled', action='store_false',
                         help="Disable playout cap randomization even if the ini enables it.")
     parser.set_defaults(playout_cap_enabled=None)
+    parser.add_argument('--aux_targets', type=int, default=None,
+                        help="1 = train extra value-network heads on how the game ends "
+                             "(win type, moves left); 0 = off. Overrides ini.")
     parser.add_argument('--playout_cap_exempt_route_decisions', type=int, default=None,
                         help="1 = OPTIONAL_ROUTE decisions with >= sim_route_decision_min_candidates "
                              "candidates always get the full search and are recorded, even with "
@@ -2511,6 +2531,12 @@ if __name__ == "__main__":
         parsed_args.playout_cap_exempt_route_decisions = _ini_bool('playout_cap_exempt_route_decisions', True)
     else:
         parsed_args.playout_cap_exempt_route_decisions = bool(parsed_args.playout_cap_exempt_route_decisions)
+    if parsed_args.aux_targets is None:
+        parsed_args.aux_targets = _ini_bool('aux_targets', False)
+    else:
+        parsed_args.aux_targets = bool(parsed_args.aux_targets)
+    parsed_args.aux_win_type_weight = _ini_float('aux_win_type_weight', 0.5)
+    parsed_args.aux_moves_left_weight = _ini_float('aux_moves_left_weight', 1.0)
     if parsed_args.sim_route_decision_sims is None:
         parsed_args.sim_route_decision_sims = _ini_int('sim_route_decision_sims', 500)
     if parsed_args.sim_route_decision_min_candidates is None:
@@ -2591,6 +2617,11 @@ if __name__ == "__main__":
               f'decisions {"exempt" if parsed_args.playout_cap_exempt_route_decisions else "capped"}')
     else:
         print(f'  playout cap                 : off')
+    if parsed_args.aux_targets:
+        print(f'  aux targets                 : ON  win type (weight {parsed_args.aux_win_type_weight:g}), '
+              f'moves left (weight {parsed_args.aux_moves_left_weight:g})')
+    else:
+        print(f'  aux targets                 : off')
     print(f'  job_timeout_hours           : {parsed_args.job_timeout_hours}')
     print()
 

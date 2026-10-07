@@ -27,6 +27,10 @@ RE_LOSS = re.compile(
     r'(\d{8}-\d{6}) \[INFO\] \[Python:0\] Training: Total Loss=([\d.]+) '
     r'\(Policy=([\d.]+), Value=([\d.]+)\)'
 )
+RE_AUX_LOSS = re.compile(
+    r'(\d{8}-\d{6}) \[INFO\] \[Python:0\] Training: Aux losses: win_type CE=([\d.]+) '
+    r'\(acc ([\d.]+), always-majority ([\d.]+)\), moves_left MSE=([\d.]+), rows (\d+)/(\d+)'
+)
 RE_PASS_ONLY = re.compile(
     r"MCTS top visits: \['Pass: \d+ visits'\]"
 )
@@ -113,6 +117,7 @@ def parse_log(path):
     received = []       # list of dicts from RECEIVED GAME lines
     losses = []         # (game_num, total, policy, value)
     trainer_losses = [] # (timestamp, loss) from "Training successful" lines
+    aux_losses = []     # (ce, acc, majority_acc, moves_mse, rows, batch) per training step
     pass_only_count = 0
     near_win_retained_count = 0
     near_win_bootstrap_count = 0
@@ -253,6 +258,14 @@ def parse_log(path):
                 trainer_losses.append((parse_time(ts), float(loss)))
                 continue
 
+            if 'Aux losses' in line:
+                m = RE_AUX_LOSS.search(line)
+                if m:
+                    _, ce, acc, maj, mse, rows, bs = m.groups()
+                    aux_losses.append((float(ce), float(acc), float(maj), float(mse),
+                                       int(rows), int(bs)))
+                    continue
+
             if RE_PASS_ONLY.search(line):
                 pass_only_count += 1
                 continue
@@ -388,6 +401,7 @@ def parse_log(path):
         'recent_heuristic_guidance': recent_heuristic_guidance,
         'early_terminations': early_terminations,
         'trainer_losses': trainer_losses,
+        'aux_losses': aux_losses,
         'value_checks': value_checks,
         'no_kill_games': no_kill_games,
         'oversample_threshold': oversample_threshold,
@@ -1220,6 +1234,34 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
         pct_drop = (first_loss - last_loss) / first_loss * 100 if first_loss > 0 else 0
         print(f'\n  First loss: {first_loss:.4f}  →  Latest loss: {last_loss:.4f}  '
               f'({pct_drop:+.1f}%)')
+
+    # ── Aux value heads ──────────────────────────────────────────────────────
+    aux = data.get('aux_losses', [])
+    if aux:
+        section('AUX VALUE HEADS (how does the game end?)')
+        print('  Extra value-network heads trained on each position\'s ending: its type')
+        print('  (timeout / Timbuktu / rare goods) and moves remaining. WANT: accuracy')
+        print('  rising clearly above "always-majority" (always guessing the most common')
+        print('  ending), and moves-left error falling. Rows = share of each batch that')
+        print('  has these targets; it climbs as games from before aux targets age out.')
+        print()
+        n = len(aux)
+        nb = min(10, n)
+        size = n // nb or 1
+        print(f'  {"Steps":>14}  {"win-type acc":>12}  {"majority":>8}  {"gain":>6}  '
+              f'{"type CE":>7}  {"moves MSE":>9}  {"rows":>5}')
+        for b in range(nb):
+            lo = b * size
+            hi = lo + size if b < nb - 1 else n
+            ch = aux[lo:hi]
+            k = len(ch)
+            acc = sum(c[1] for c in ch) / k
+            maj = sum(c[2] for c in ch) / k
+            ce = sum(c[0] for c in ch) / k
+            mse = sum(c[3] for c in ch) / k
+            rows = sum(c[4] / c[5] for c in ch) / k
+            print(f'  steps {lo:4d}-{hi-1:4d}  {acc:12.2f}  {maj:8.2f}  {acc-maj:+6.2f}  '
+                  f'{ce:7.3f}  {mse:9.4f}  {rows:5.0%}')
 
     # ── MCTS action preferences ───────────────────────────────────────────────
     if top_actions:

@@ -213,10 +213,23 @@ class ReplayBuffer:
 
 class SimpleAgent:
     # ** Accept num_players in constructor **
-    def __init__(self, observation_shape, num_actions, num_players, learning_rate=0.001):
+    def __init__(self, observation_shape, num_actions, num_players, learning_rate=0.001,
+                 aux_targets=False, aux_win_type_weight=0.5, aux_moves_left_weight=1.0):
         # Create two separate models
         self.policy_model = create_mali_ba_policy_network(observation_shape, num_actions)
-        self.value_model = create_mali_ba_value_network(observation_shape, num_players)
+        # With aux_targets the value network also predicts how the game ends (see
+        # AUX_WIN_TYPES). value_model is then a view of its value output only, so
+        # everything that saves, loads or distributes value weights sees the plain
+        # network; only train() and the _value_aux file use the extra heads.
+        if aux_targets:
+            self.value_full = create_mali_ba_value_network(observation_shape, num_players,
+                                                           aux_heads=True)
+            self.value_model = value_only_view(self.value_full)
+        else:
+            self.value_full = None
+            self.value_model = create_mali_ba_value_network(observation_shape, num_players)
+        self.aux_win_type_weight = aux_win_type_weight
+        self.aux_moves_left_weight = aux_moves_left_weight
         
         # Create two separate optimizers
         self.policy_optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
@@ -241,6 +254,10 @@ class SimpleAgent:
             
             log(LogLevel.INFO, f"Agent: Saving value model weights to {value_path}")
             self.value_model.save_weights(value_path)
+            if self.value_full is not None:
+                # Value path plus the aux heads, so a resumed run keeps them trained.
+                # The _value file above stays loadable by the plain network.
+                self.value_full.save_weights(path.replace("weights.h5", "_value_aux.weights.h5"))
             
             log(LogLevel.INFO, "Agent: Model weights saved successfully.")
             
@@ -268,9 +285,28 @@ class SimpleAgent:
         """
         policy_path = path.replace("weights.h5", "_policy.weights.h5")
         value_path = path.replace("weights.h5", "_value.weights.h5")
+        aux_path = path.replace("weights.h5", "_value_aux.weights.h5")
         loaded = []
-        for name, file_path, model in (("policy", policy_path, self.policy_model),
-                                       ("value", value_path, self.value_model)):
+        if self.value_full is not None and os.path.exists(aux_path):
+            # Value path and aux heads together. Falls back to the plain value file
+            # below (aux heads freshly initialised) if this one does not fit.
+            initial = self.value_full.get_weights()
+            try:
+                self.value_full.load_weights(aux_path)
+                log(LogLevel.INFO, f"Agent: loaded value network with aux heads from {aux_path}")
+                value_path = None
+            except ValueError as e:
+                self.value_full.set_weights(initial)
+                log(LogLevel.WARN, f"Agent: aux value weights at {aux_path} do not fit "
+                                   f"({str(e)[:200]}); loading the plain value file instead.")
+        heads = [("policy", policy_path, self.policy_model)]
+        if value_path is None:
+            loaded.append("value")
+        else:
+            heads.append(("value", value_path, self.value_model))
+            if self.value_full is not None:
+                log(LogLevel.INFO, "Agent: aux heads start from random initialisation.")
+        for name, file_path, model in heads:
             if os.path.exists(file_path):
                 # A file saved by a different architecture (e.g. after a change to
                 # the network or the observation planes) is treated like a missing
@@ -317,11 +353,22 @@ class SimpleAgent:
             n_policy_rows = int(np.count_nonzero(policy_mask))
 
             full_value_targets = np.zeros((batch_size, self.num_players))
-            for i, (player_id, player_value, all_discounted_returns) in enumerate(value_data_list):
+            # Aux targets ride as an optional 4th item: (win_type_index, moves_left_frac).
+            # Entries from before aux targets existed have none and are masked out.
+            aux_mask = np.zeros(batch_size, dtype=bool)
+            aux_win_type = np.zeros(batch_size, dtype=np.int32)
+            aux_moves_left = np.zeros((batch_size, 1), dtype=np.float32)
+            for i, vd in enumerate(value_data_list):
                 if i >= batch_size: break
+                all_discounted_returns = vd[2]
                 for p in range(self.num_players):
                     if p < len(all_discounted_returns):
                         full_value_targets[i, p] = all_discounted_returns[p]
+                if len(vd) > 3 and vd[3] is not None:
+                    aux_mask[i] = True
+                    aux_win_type[i] = int(vd[3][0])
+                    aux_moves_left[i, 0] = float(vd[3][1])
+            n_aux_rows = int(np.count_nonzero(aux_mask))
             
             # --- Input Sanity Checks ---
             if np.any(np.isnan(observations_reshaped)) or np.any(np.isinf(observations_reshaped)):
@@ -358,14 +405,28 @@ class SimpleAgent:
                 self.policy_optimizer.apply_gradients(zip(policy_grads, self.policy_model.trainable_variables))
             
             # --- Value Model Training Step ---
+            value_net = self.value_full if self.value_full is not None else self.value_model
+            aux_type_loss = aux_moves_loss = None
             with tf.GradientTape() as tape:
-                predicted_value = self.value_model(observations_reshaped, training=True)
+                if self.value_full is not None:
+                    predicted_value, pred_win_type, pred_moves_left = value_net(
+                        observations_reshaped, training=True)
+                else:
+                    predicted_value = value_net(observations_reshaped, training=True)
                 value_loss = tf.keras.losses.MeanSquaredError()(full_value_targets, predicted_value)
                 # Include any regularization terms the value network declares (none at
                 # present); a Keras regularizer is otherwise ignored by this custom loop.
                 # value_loss itself stays plain MSE so logged losses remain comparable.
-                value_objective = (value_loss + tf.add_n(self.value_model.losses)
-                                   if self.value_model.losses else value_loss)
+                value_objective = (value_loss + tf.add_n(value_net.losses)
+                                   if value_net.losses else value_loss)
+                if self.value_full is not None and n_aux_rows > 0:
+                    aux_type_loss = tf.keras.losses.SparseCategoricalCrossentropy()(
+                        aux_win_type[aux_mask], tf.boolean_mask(pred_win_type, aux_mask))
+                    aux_moves_loss = tf.keras.losses.MeanSquaredError()(
+                        aux_moves_left[aux_mask], tf.boolean_mask(pred_moves_left, aux_mask))
+                    value_objective = (value_objective
+                                       + self.aux_win_type_weight * aux_type_loss
+                                       + self.aux_moves_left_weight * aux_moves_loss)
 
             # DEBUG =====================================================================
             log(LogLevel.INFO, f"Training: Observation range: min={np.min(observations_reshaped):.6f}, max={np.max(observations_reshaped):.6f}")
@@ -381,11 +442,22 @@ class SimpleAgent:
                 log(LogLevel.ERROR, f"Trainer: Invalid value loss detected: {value_loss}. Skipping batch.")
                 return None
 
-            value_grads = tape.gradient(value_objective, self.value_model.trainable_variables)
+            value_grads = tape.gradient(value_objective, value_net.trainable_variables)
             if any(g is None for g in value_grads):
                 log(LogLevel.ERROR, "Trainer: None gradients detected for value model. Skipping batch.")
                 return None
-            self.value_optimizer.apply_gradients(zip(value_grads, self.value_model.trainable_variables))
+            self.value_optimizer.apply_gradients(zip(value_grads, value_net.trainable_variables))
+            if aux_type_loss is not None:
+                _types = aux_win_type[aux_mask]
+                _acc = float(np.mean(np.argmax(tf.boolean_mask(pred_win_type, aux_mask).numpy(), axis=1)
+                                     == _types))
+                # Accuracy of always guessing this batch's most common ending: most rows
+                # are timeouts, so raw accuracy alone flatters the head.
+                _base = float(np.bincount(_types, minlength=3).max() / len(_types))
+                log(LogLevel.INFO,
+                    f"Training: Aux losses: win_type CE={aux_type_loss.numpy():.4f} "
+                    f"(acc {_acc:.2f}, always-majority {_base:.2f}), "
+                    f"moves_left MSE={aux_moves_loss.numpy():.4f}, rows {n_aux_rows}/{batch_size}")
 
             # --- Logging and Return ---
             total_loss = policy_loss + value_loss
@@ -633,8 +705,23 @@ def create_mali_ba_policy_network(observation_shape, num_actions):
     return models.Model(inputs=inputs, outputs=policy_head)
 
 
-def create_mali_ba_value_network(observation_shape, num_players):
-    """Creates the value network."""
+# Auxiliary "how does the game end" targets (2026-10-06). A game yields one result for
+# ~400 positions, so the value head learns slowly. These extra heads, trained only by
+# the learner, describe the ending: its type (timeout / Timbuktu / rare goods) and how
+# many moves remain. Predicting them pushes the shared trunk to recognise positions
+# heading for an early finish. Search, actors and evaluation never see them.
+AUX_WIN_TYPES = ('timeout', 'timbuktu', 'rare_goods')
+
+
+def create_mali_ba_value_network(observation_shape, num_players, aux_heads=False):
+    """Creates the value network.
+
+    With aux_heads=True the model has three outputs: [value, aux_win_type (softmax
+    over AUX_WIN_TYPES), aux_moves_left (sigmoid, fraction of max_play_moves)]. The
+    value path is built first and is layer-for-layer the aux_heads=False network, so
+    value_only_view() of it saves, loads and get_weights()-s exactly like the plain
+    network everything else uses.
+    """
     inputs = layers.Input(shape=observation_shape)
     # --- Axis order fix (2026-09-27) ---
     # observation_tensor_shape() is (planes, height, width), but Keras defaults to
@@ -668,5 +755,24 @@ def create_mali_ba_value_network(observation_shape, num_players):
     value_head = layers.Flatten()(value_head)
     value_head = layers.Dense(64, activation='relu')(value_head)
     value_head = layers.Dense(num_players, activation='tanh', name='value')(value_head)
-    
-    return models.Model(inputs=inputs, outputs=value_head)
+
+    if not aux_heads:
+        return models.Model(inputs=inputs, outputs=value_head)
+
+    # Separate small head off the shared trunk (created after the value path, so
+    # the value path's variables keep their order).
+    aux = layers.Conv2D(2, 1, padding='same', name='aux_conv')(x)
+    aux = layers.BatchNormalization(name='aux_bn')(aux)
+    aux = layers.Activation('relu', name='aux_relu')(aux)
+    aux = layers.Flatten(name='aux_flatten')(aux)
+    aux = layers.Dense(64, activation='relu', name='aux_dense')(aux)
+    win_type = layers.Dense(len(AUX_WIN_TYPES), activation='softmax',
+                            name='aux_win_type')(aux)
+    moves_left = layers.Dense(1, activation='sigmoid', name='aux_moves_left')(aux)
+    return models.Model(inputs=inputs, outputs=[value_head, win_type, moves_left])
+
+
+def value_only_view(full_value_model):
+    """The value output of an aux_heads=True model, sharing its layers and weights."""
+    return models.Model(inputs=full_value_model.inputs,
+                        outputs=full_value_model.get_layer('value').output)
