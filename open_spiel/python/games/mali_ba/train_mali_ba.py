@@ -259,6 +259,13 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                             log(LogLevel.INFO, f"Trainer: Buffer saved on shutdown to {args.save_buffer_path}.")
                         except Exception as e:
                             log(LogLevel.ERROR, f"Trainer: Buffer save on shutdown failed: {e}")
+                    # The main process has stopped reading these; don't let exit wait
+                    # on their feeder threads (it then sat until the 180 s join timeout).
+                    for _q in (weights_queue, stats_queue):
+                        try:
+                            _q.cancel_join_thread()
+                        except Exception:
+                            pass
                     return
                 # Per-game summary sent after all experiences for a game.
                 if _trainer_dbg_count < 20:
@@ -2207,11 +2214,26 @@ def main(args):
     if not args.heuristic_only:
         replay_buffer_queue.put(None)
 
-    while not job_queue.empty():
-        try: job_queue.get_nowait()
-        except: break
+    # Drain leftover jobs. empty() only sees what has reached the pipe; each job
+    # carries the full weights, so more can still be in the queue's feeder buffer.
+    # The old `while not empty(): get_nowait()` stopped early, leaving jobs AHEAD of
+    # the stop sentinels: actors started new games instead of stopping, and the
+    # unsent jobs then made the process hang at exit. Drain until it stays empty.
+    import queue as _queue_mod
+    _drained = 0
+    while True:
+        try:
+            job_queue.get(timeout=2.0)
+            _drained += 1
+        except _queue_mod.Empty:
+            break
+        except Exception:
+            break
+    log(LogLevel.INFO, f"Shutdown: drained {_drained} unstarted job(s).")
 
-    for _ in range(len(actor_pool)):
+    # One sentinel per actor, remote ones included: they read the same queue and
+    # can take sentinels meant for local actors, leaving those blocked.
+    for _ in range(len(actor_pool) + (args.remote_actors if args.distributed else 0)):
         job_queue.put(None)
 
     if trainer is not None:
@@ -2221,10 +2243,17 @@ def main(args):
             log(LogLevel.WARN, "Trainer did not terminate gracefully. Forcing.")
             trainer.terminate()
 
+    # One shared deadline: per-actor 60 s timeouts ran one after another, so a few
+    # stuck actors could add many minutes.
     log(LogLevel.INFO, "Waiting for actors to terminate...")
+    _deadline = time.time() + 90
     for p in actor_pool:
-        p.join(timeout=60)
-        if p.is_alive(): p.terminate()
+        p.join(timeout=max(0.0, _deadline - time.time()))
+    _stuck = [p for p in actor_pool if p.is_alive()]
+    for p in _stuck:
+        p.terminate()
+    if _stuck:
+        log(LogLevel.WARN, f"Shutdown: terminated {len(_stuck)} actor(s) that did not stop.")
 
     # Stop the inference server last: actors may still be blocked on it above, and
     # a client waiting on a dead server would only unblock on its timeout.
@@ -2248,6 +2277,15 @@ def main(args):
                 inference_server_proc.terminate()
         except Exception as _e:
             log(LogLevel.WARN, f"Inference server shutdown issue: {_e}")
+
+    # Whatever is still buffered in queues this process wrote to has no reader now.
+    # Without this, interpreter exit waits on their feeder threads forever.
+    for _q in (job_queue, replay_buffer_queue, inference_weights_queue):
+        if _q is not None:
+            try:
+                _q.cancel_join_thread()
+            except Exception:
+                pass
 
     log(LogLevel.INFO, "All processes terminated.")
     end_time = time.time()
