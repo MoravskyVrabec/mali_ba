@@ -186,18 +186,97 @@ class InferenceClient:
         return self._pol_view.copy(), self._val_view.copy()
 
 
+def _parse_cpu_list(text):
+    """'0-7,16-23' -> {0..7, 16..23}."""
+    cpus = set()
+    for part in text.replace(' ', '').split(','):
+        if not part:
+            continue
+        if '-' in part:
+            a, b = part.split('-')
+            cpus.update(range(int(a), int(b) + 1))
+        else:
+            cpus.add(int(part))
+    return cpus
+
+
+def _format_cpu_list(cpus):
+    """{0..7, 16..23} -> '0-7,16-23'."""
+    out, run = [], []
+    for c in sorted(cpus):
+        if run and c == run[-1] + 1:
+            run.append(c)
+        else:
+            if run:
+                out.append(f"{run[0]}-{run[-1]}" if len(run) > 1 else str(run[0]))
+            run = [c]
+    if run:
+        out.append(f"{run[0]}-{run[-1]}" if len(run) > 1 else str(run[0]))
+    return ','.join(out)
+
+
+def resolve_inference_cpus(spec):
+    """CPU set to pin the inference server to, or None for no pinning.
+
+    spec: 'auto', 'none' (or empty/None), or an explicit list like '0-15'. 'auto':
+      * Intel hybrid (e.g. i9-13980HX): the performance cores the kernel lists in
+        /sys/devices/cpu_core/cpus, so the server's spin loop never lands on an
+        efficiency core.
+      * Split L3 (e.g. Ryzen 9 7950X3D): the cores sharing the largest L3 (the
+        V-cache CCD). Measured 2026-10-05: ~5,100 -> ~8,000 evals/s.
+      * Otherwise None.
+    """
+    if not spec or str(spec).strip().lower() == 'none':
+        return None
+    spec = str(spec).strip().lower()
+    if spec != 'auto':
+        return _parse_cpu_list(spec)
+    try:
+        with open('/sys/devices/cpu_core/cpus') as f:
+            return _parse_cpu_list(f.read().strip())
+    except (OSError, ValueError):
+        pass
+    import glob
+    groups = {}
+    for path in glob.glob('/sys/devices/system/cpu/cpu[0-9]*/cache/index3'):
+        try:
+            size = open(os.path.join(path, 'size')).read().strip()
+            shared = open(os.path.join(path, 'shared_cpu_list')).read().strip()
+        except OSError:
+            continue
+        groups[shared] = int(size.rstrip('K')) if size.endswith('K') else 0
+    if len(groups) >= 2:
+        return _parse_cpu_list(max(groups, key=groups.get))
+    return None
+
+
 def server_loop(arena, shape, game_params, weights_queue, stop_event,
                 max_batch=32, spin_before_sleep=200000, idle_sleep=0.001,
                 log_every=0, gpu_memory_limit_mb=4096, jit_compile=True,
-                bucket_step=8):
+                bucket_step=8, cpus='auto'):
     """Run in its own process. Owns the GPU and serves batched inference.
 
     weights_queue carries (policy_weights, value_weights) tuples, or STOP.
+    cpus: see resolve_inference_cpus. Applied here, before TensorFlow starts its
+    threads (they inherit it), so it also holds after a worker restarts itself.
     """
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+    _pin_note = None
+    try:
+        _pin = resolve_inference_cpus(cpus)
+        if _pin:
+            _pin &= os.sched_getaffinity(0)
+            if _pin:
+                os.sched_setaffinity(0, _pin)
+                _pin_note = f"pinned to CPUs {_format_cpu_list(_pin)} (setting '{cpus}')"
+        if _pin_note is None:
+            _pin_note = f"not pinned (setting '{cpus}')"
+    except Exception as e:
+        _pin_note = f"pinning failed ({e}); running unpinned"
     import tensorflow as tf
     import pyspiel
     from pyspiel.mali_ba import log, LogLevel
+    log(LogLevel.INFO, f"InferenceServer: {_pin_note}")
     from mali_ba.training_utils import (create_mali_ba_policy_network,
                                         create_mali_ba_value_network)
 

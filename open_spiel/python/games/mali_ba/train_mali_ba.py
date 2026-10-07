@@ -1647,7 +1647,8 @@ def main(args):
                 args=(inference_arena, _shape, initial_game_params,
                       inference_weights_queue, inference_stop),
                 kwargs=dict(max_batch=getattr(args, 'inference_max_batch', 32),
-                            log_every=300),
+                            log_every=300,
+                            cpus=getattr(args, 'inference_cpus', 'auto')),
                 # daemon=True so the server cannot outlive the parent. With
                 # daemon=False a killed run (SIGTERM, timeout, Ctrl-C) left the
                 # server orphaned and still holding several GB of VRAM -- observed
@@ -2317,6 +2318,10 @@ if __name__ == "__main__":
     parser.set_defaults(inference_server=None)
     parser.add_argument('--inference_max_batch', type=int, default=None,
                         help="Maximum batch the inference server assembles. Overrides ini.")
+    parser.add_argument('--inference_cpus', type=str, default=None,
+                        help="CPUs to pin the inference server to: 'auto' (performance cores "
+                             "or the large-L3 cores, if the CPU has them), 'none', or a list "
+                             "like '0-7,16-23'. Overrides ini.")
     parser.add_argument('--gamma', type=float, default=None,
                         help="Discount factor for value targets. 1.0 makes a position's target "
                              "independent of how many moves remain, which the observation tensor "
@@ -2523,6 +2528,8 @@ if __name__ == "__main__":
         parsed_args.inference_server = _ini_bool('inference_server', False)
     if parsed_args.inference_max_batch is None:
         parsed_args.inference_max_batch = _ini_int('inference_max_batch', 32)
+    if parsed_args.inference_cpus is None:
+        parsed_args.inference_cpus = _ini.get('MLTraining', 'inference_cpus', fallback='auto')
     if parsed_args.buffer_compresslevel is None:
         parsed_args.buffer_compresslevel = _ini_int('buffer_compresslevel', 1)
     if parsed_args.gamma is None:

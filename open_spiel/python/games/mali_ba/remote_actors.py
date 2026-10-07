@@ -144,6 +144,11 @@ def main():
                              'which is essentially all of self-play cost.')
     parser.add_argument('--inference_max_batch', type=int, default=32,
                         help='Largest batch the inference server assembles (default 32).')
+    parser.add_argument('--inference_cpus', type=str, default='auto',
+                        help="CPUs to pin the inference server to: 'auto' (default: "
+                             "performance cores on an Intel hybrid CPU, or the large-L3 cores "
+                             "on a split-cache Ryzen; otherwise unpinned), 'none', or a list "
+                             "like '0-15'.")
     parser.add_argument('--inference_vram_mb', type=int, default=4096,
                         help='VRAM cap for the inference server (default 4096 MB).')
     parser.add_argument('--cpu_only', action='store_true',
@@ -302,7 +307,8 @@ def main():
                       inference_weights_queue, inference_stop),
                 kwargs=dict(max_batch=args.inference_max_batch,
                             gpu_memory_limit_mb=args.inference_vram_mb,
-                            log_every=300),
+                            log_every=300,
+                            cpus=args.inference_cpus),
                 # daemon so a killed worker cannot leave the server orphaned and
                 # still holding VRAM.
                 daemon=True)

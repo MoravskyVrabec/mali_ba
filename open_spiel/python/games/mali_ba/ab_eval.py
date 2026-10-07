@@ -139,7 +139,7 @@ def _start_server(spec, game, shape, n_slots, config_file):
     # max_batch = n_slots: every worker waiting on this agent fits in one batch.
     proc = mp.Process(target=server_loop,
                       args=(arena, shape, {"config_file": config_file}, wq, stop),
-                      kwargs=dict(max_batch=n_slots), daemon=True)
+                      kwargs=dict(max_batch=n_slots, cpus='auto'), daemon=True)
     proc.start()
     if not arena.gpu_ok.wait(180):
         stop.set()
