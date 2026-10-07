@@ -443,6 +443,13 @@ class SimpleAgent:
                 return None
 
             value_grads = tape.gradient(value_objective, value_net.trainable_variables)
+            if self.value_full is not None and aux_type_loss is None:
+                # No aux rows in this batch, so the aux heads are not in the loss and
+                # their gradients are None. Without this, the check below skipped the
+                # whole value step (2026-10-06, D009's first batches came from a buffer
+                # with no aux targets). Zero gradients leave the heads as they are.
+                value_grads = [tf.zeros_like(v) if g is None else g
+                               for g, v in zip(value_grads, value_net.trainable_variables)]
             if any(g is None for g in value_grads):
                 log(LogLevel.ERROR, "Trainer: None gradients detected for value model. Skipping batch.")
                 return None
