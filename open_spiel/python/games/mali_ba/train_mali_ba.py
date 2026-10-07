@@ -622,11 +622,15 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
         
         # Chance node startup
         episode_trajectory = []
+        _setup_layout = None      # "Setup_k"; logged with the token placements below
+        _setup_tokens = {}        # player -> ["(x,y,z)", ...]
         if state.is_chance_node():
             # The opening chance node picks the meeple layout (one of 65,536).
             # Sample it: taking legal_actions()[0] would start every game from
             # the same board.
-            state.apply_action(random.choice(state.legal_actions()))
+            _layout_action = random.choice(state.legal_actions())
+            _setup_layout = state.action_to_string(state.current_player(), _layout_action)
+            state.apply_action(_layout_action)
 
         # Now do place tokens
         mali_ba_state = pyspiel.mali_ba.downcast_state(state)
@@ -649,9 +653,20 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                 # Optional: Log the placement move
                 action_str = mali_ba_state.action_to_string(mali_ba_state.current_player(), action)
                 log(LogLevel.DEBUG, f"Actor {actor_id}, Game {episode_num}: Placing token with action '{action_str}'")
+                _setup_tokens.setdefault(mali_ba_state.current_player(), []).append(
+                    action_str.replace('PlaceToken_', ''))
 
                 mali_ba_state.apply_action(action)
             # --- END OF OPTIMIZATION ---
+
+            # One line per game for analyze_placements.py: where each seat's tokens
+            # started. Placement is uniform random here, so win rate by placement is a
+            # clean (randomised) comparison. Must not contain " plays ": the remote
+            # log relay drops such lines.
+            log(LogLevel.INFO,
+                f"Actor {actor_id}, Game {episode_num}: SETUP layout={_setup_layout} tokens "
+                + " ".join(f"P{p}=" + ";".join(_setup_tokens.get(p, []))
+                           for p in range(game.num_players())))
 
         log(LogLevel.INFO, f"Actor {actor_id}, Game {episode_num}: Starting main play phase.")
         move_count = 0
