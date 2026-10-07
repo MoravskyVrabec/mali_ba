@@ -1921,9 +1921,13 @@ def main(args):
                 f"with its watchdog on will restart itself.")
 
         # --- Maintain a healthy job queue size ---
-        # This logic remains the same and is correct.
+        # Keep dispatching until num_episodes games have been RECEIVED. Capping at
+        # num_episodes jobs DISPATCHED (as before) ran out of work early: culled games
+        # (~15%) and games lost in transit are dispatched but never arrive, so the run
+        # sat idle until the job timeout fired. Jobs still queued at the end are
+        # drained at shutdown; the queue's target size bounds how many are outstanding.
         target_job_queue_size = total_actors * 2
-        while job_queue.qsize() < target_job_queue_size and jobs_dispatched < args.num_episodes + jobs_timed_out:
+        while job_queue.qsize() < target_job_queue_size and total_games_processed < args.num_episodes:
             unique_seed = seed_generator.randint(0, 2**31 - 1)
             # Held-out low-guidance test slice: a small fraction of games run at a
             # fixed, near-zero heuristic weight (absolute, not additive -- overrides
@@ -2180,7 +2184,9 @@ def main(args):
                         log(LogLevel.INFO, f"Trainer reported loss: {stats['loss']:.4f} at game #{total_games_processed}")
                 except: break
 
-            # --- Job timeout: re-queue jobs assumed lost to spot preemption ---
+            # --- No-results alarm ---
+            # Warning only: dispatch no longer depends on jobs_timed_out, it simply
+            # continues until num_episodes games are received.
             _job_timeout_secs = getattr(args, 'job_timeout_hours', 3.0) * 3600
             _time_since_result = time.time() - last_result_time
             if _time_since_result > _job_timeout_secs:
@@ -2190,8 +2196,8 @@ def main(args):
                     last_result_time = time.time()  # reset to avoid immediate re-fire
                     log(LogLevel.WARN,
                         f"Job timeout: no result received in {_time_since_result/3600:.1f}h. "
-                        f"Assuming {_inflight} orphaned job(s) lost (spot preemption?). "
-                        f"Cumulative lost: {jobs_timed_out}. Re-queuing.")
+                        f"About {_inflight} dispatched job(s) have not come back (culled, "
+                        f"lost, or actors stalled). Cumulative: {jobs_timed_out}.")
 
             last_weights_update_time = time.time()
 
