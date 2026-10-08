@@ -83,7 +83,7 @@ echo "  gcloud compute ssh $NAME --zone=$CREATED_ZONE --project=$GCP_PROJECT_ID 
 echo "    --command=\"cd ~/mali_ba/open_spiel/python/games/mali_ba && ./gcp/worker_vm_setup.sh '' '' $ACTOR_ID_BLOCK\""
 echo
 echo "Then start the actors (survives SSH disconnect + auto-restarts on crash --"
-echo "see DISTRIBUTED_TRAINING.md's tmux section if you're new to tmux):"
+echo "see docs/guides/DISTRIBUTED_TRAINING.md's tmux section if you're new to tmux):"
 echo "  gcloud compute ssh $NAME --zone=$CREATED_ZONE --project=$GCP_PROJECT_ID"
 echo "  tmux new -s actors"
 echo "  ~/run_actors.sh"

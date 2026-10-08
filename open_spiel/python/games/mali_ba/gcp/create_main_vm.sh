@@ -8,7 +8,7 @@
 # Tries nvidia-tesla-t4 (n1-standard-8) across a list of fallback zones first;
 # if that's exhausted everywhere, automatically falls back to nvidia-l4
 # (g2-standard-8, ~2x T4 hourly cost, quota already granted -- see
-# DISTRIBUTED_TRAINING.md's capacity-exhaustion section). T4 was exhausted in
+# docs/guides/DISTRIBUTED_TRAINING.md's capacity-exhaustion section). T4 was exhausted in
 # every zone tried on 2026-07-16, so don't be surprised if this falls back.
 set -euo pipefail
 cd "$(dirname "$0")"

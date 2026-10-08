@@ -1306,7 +1306,7 @@ namespace open_spiel
             // raises "Failed to obtain valid_hexes"). Fix: build [setup] as dynamic
             // state (via Serialize(), reused rather than duplicated) merged with the
             // static config fields below, so a single call produces everything the
-            // replay loader expects. See DISTRIBUTED_TRAINING.md and main.py's
+            // replay loader expects. See docs/guides/DISTRIBUTED_TRAINING.md and main.py's
             // MODE_GUI_REPLAY branch for the (now-removable) Python-side ini-file
             // fallback this was worked around with before this fix landed.
             json setup = json::parse(Serialize());

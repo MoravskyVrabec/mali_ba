@@ -31,7 +31,7 @@ restart_one() {
       echo "Tailscale is disconnected -- re-authenticating before restarting actors"
       echo "(a spot preemption/stop cycle can log a node out entirely, not just"
       echo " drop its connection -- especially if the auth key is ephemeral;"
-      echo " see DISTRIBUTED_TRAINING.md)."
+      echo " see docs/guides/DISTRIBUTED_TRAINING.md)."
       TS_AUTHKEY="$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/attributes/tailscale-authkey)"
       if [ -n "$TS_AUTHKEY" ]; then
         sudo tailscale up --authkey="$TS_AUTHKEY"

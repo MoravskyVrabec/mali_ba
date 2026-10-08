@@ -155,7 +155,7 @@ PYTHONPATH_VAL="$OPENSPIEL/build/python:$OPENSPIEL:$OPENSPIEL/open_spiel/python/
 
 # Wrapper script: activates the env and re-runs remote_actors.py in a loop if
 # it ever exits/crashes, appending to the same log each time. Run this INSIDE
-# a tmux session (see DISTRIBUTED_TRAINING.md's tmux section) so it survives
+# a tmux session (see docs/guides/DISTRIBUTED_TRAINING.md's tmux section) so it survives
 # an SSH disconnect too -- an unattended overnight run needs both.
 cat > "$HOME/run_actors.sh" <<RUNNER_EOF
 #!/bin/bash
@@ -205,7 +205,7 @@ echo "actor_id_start for this worker: $ACTOR_ID_START"
 echo "Trainer host (from project metadata): $TRAINER_HOST"
 echo
 echo "Run it inside tmux so it also survives an SSH disconnect"
-echo "(see DISTRIBUTED_TRAINING.md's tmux section if you're new to tmux):"
+echo "(see docs/guides/DISTRIBUTED_TRAINING.md's tmux section if you're new to tmux):"
 echo "  tmux new -s actors"
 echo "  ~/run_actors.sh"
 echo "  # then detach with Ctrl-b d -- it keeps running after you disconnect"

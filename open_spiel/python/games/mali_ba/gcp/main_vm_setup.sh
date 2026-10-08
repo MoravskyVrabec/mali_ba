@@ -23,7 +23,7 @@ sudo apt-get install -y -qq build-essential cmake clang git python3-dev curl tmu
 
 echo "=== [2/9] Installing Tailscale ==="
 # Required: workers reach this VM over Tailscale, not a public IP/port-forward
-# (see DISTRIBUTED_TRAINING.md). Without this, no worker can connect at all.
+# (see docs/guides/DISTRIBUTED_TRAINING.md). Without this, no worker can connect at all.
 if ! command -v tailscale &>/dev/null; then
   curl -fsSL https://tailscale.com/install.sh | sudo sh
 else

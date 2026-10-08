@@ -3,7 +3,7 @@
 # zones and, if that's still exhausted, a fallback machine type. GCP doesn't
 # expose capacity ahead of time -- a ZONE_RESOURCE_POOL_EXHAUSTED error is
 # only discoverable by trying, which is exactly what this automates. See
-# DISTRIBUTED_TRAINING.md's "Capacity exhaustion" section for the empirical
+# docs/guides/DISTRIBUTED_TRAINING.md's "Capacity exhaustion" section for the empirical
 # zone/machine-type order this defaults to (from the night this was written).
 #
 # Not a standalone script -- source it: `source lib_create_with_retry.sh`

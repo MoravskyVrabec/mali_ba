@@ -69,7 +69,7 @@ fi
 
 # Wrapper script: re-runs remote_actors.py in a loop if it ever exits/crashes,
 # appending to the same log each time. Meant to be run inside a tmux session
-# (see DISTRIBUTED_TRAINING.md's tmux section) so it also survives an SSH
+# (see docs/guides/DISTRIBUTED_TRAINING.md's tmux section) so it also survives an SSH
 # disconnect -- an unattended overnight run needs both.
 RUNNER_SCRIPT="/home/$RUN_USER/run_actors.sh"
 cat > "$RUNNER_SCRIPT" <<RUNNER_EOF
@@ -111,7 +111,7 @@ actor_id_start for this worker: $ACTOR_ID_START
 
 Wrote ~/run_actors.sh -- auto-restarts remote_actors.py if it ever exits.
 Run it inside tmux so it also survives an SSH disconnect (see
-DISTRIBUTED_TRAINING.md's tmux section if you're new to tmux):
+docs/guides/DISTRIBUTED_TRAINING.md's tmux section if you're new to tmux):
   tmux new -s actors
   ~/run_actors.sh
   # then detach with Ctrl-b d -- it keeps running after you disconnect

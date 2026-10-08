@@ -109,7 +109,7 @@ Games are culled early when they are determined to be hopeless, using a tiered v
 
 ## Distributed Training
 
-See [DISTRIBUTED_TRAINING.md](DISTRIBUTED_TRAINING.md) for the full setup guide.
+See [docs/guides/DISTRIBUTED_TRAINING.md](../../../../docs/guides/DISTRIBUTED_TRAINING.md) for the full setup guide.
 
 ```bash
 # On the training server (desktop):

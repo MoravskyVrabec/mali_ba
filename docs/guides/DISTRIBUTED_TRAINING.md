@@ -24,7 +24,7 @@ re-discover any of it.
   genuine stockout. The desktop-as-trainer + GCP CPU workers design sidesteps
   GPU quota/capacity entirely. The GCP GPU main-vm path (`create_main_vm.sh`,
   `main_vm_setup.sh`) is still there and working if you want to revive it
-  later -- see `HANDOFF-GCP-SETUP.md` for the setup walkthrough.
+  later -- see `GCP_SETUP.md` for the setup walkthrough.
 - **Workers** are GCP spot CPU VMs (`mali-ba-worker-*`) reaching the trainer
   over **Tailscale** (not a public IP / port-forward) -- desktop, workers, and
   a future GPU main-vm are all just nodes on the same tailnet and can reach
@@ -668,7 +668,7 @@ actors will block waiting to push results, appearing to stall.
   *root* on `PYTHONPATH` too, not just `build/python`. Easy to miss this on a
   fresh machine because a stray `pip install open-spiel` elsewhere can
   silently paper over the gap (see the landmine note in
-  `HANDOFF-GCP-SETUP.md`) -- worked "by accident" on one machine, then failed
+  `GCP_SETUP.md`) -- worked "by accident" on one machine, then failed
   immediately with silent, instant actor-respawn loops (no traceback at all)
   on a clean one:
   ```bash

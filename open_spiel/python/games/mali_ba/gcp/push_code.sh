@@ -1,7 +1,7 @@
 #!/bin/bash
 # Pushes the mali_ba repo to a GCP VM's home directory via gcloud compute scp,
 # excluding large training artifacts (weights, replay buffers, build output).
-# GitHub is intentionally not used yet for this -- see HANDOFF-GCP-SETUP.md.
+# GitHub is intentionally not used yet for this -- see docs/guides/GCP_SETUP.md.
 #
 # Run from a Linux shell with gcloud configured (gcloud init) and the target
 # VM already created and RUNNING (see create_main_vm.sh / create_worker_vm.sh).

@@ -2,7 +2,7 @@
 
 **Prepared:** 2026-07-16, for execution after switching this machine to native Linux.
 
-This picks up where `HANDOFF-20260630.html` left off: moving from a two-machine
+This picks up where `docs/handoffs/HANDOFF-20260630.html` left off: moving from a two-machine
 (desktop + laptop) training setup to Google Cloud, so much larger parallel
 self-play runs are possible. It assumes **no GCP account/project exists yet**
 and walks through everything from scratch.
@@ -16,7 +16,7 @@ each VM with `gcp/push_code.sh`.
 
 ## 0. Why native Linux, not WSL
 
-Per `HANDOFF-20260630.html` §12 and confirmed again this session: training
+Per `docs/handoffs/HANDOFF-20260630.html` §12 and confirmed again this session: training
 processes run noticeably faster on native Linux than WSL, and WSL git has
 caused commit complications before. Do all of the following from the native
 Ubuntu install, not WSL.
@@ -220,11 +220,11 @@ python remote_actors.py \
   `create_worker_vm.sh 2`, `3`, ... and `push_code.sh` + `worker_vm_setup.sh`
   each; `remote_actors.py --actor_id_start 200000` etc. per worker to keep IDs
   unique in the log).
-- Revisit the GitHub push that was deferred from `HANDOFF-20260630.html` —
+- Revisit the GitHub push that was deferred from `docs/handoffs/HANDOFF-20260630.html` —
   now that `.gitignore` excludes large binaries, committing is more
   reasonable. Not required for GCP training to work, since `push_code.sh`
   bypasses git entirely for now.
-- Consider `rare_goods_bonus` C++ rebuild status (per `HANDOFF-20260630.html`
+- Consider `rare_goods_bonus` C++ rebuild status (per `docs/handoffs/HANDOFF-20260630.html`
   §10) — rebuild on the main-vm the same way as any other C++ change:
   `cd ~/open_spiel/build && make -j$(nproc) pyspiel`, then re-run
   `worker_vm_setup.sh`'s build step (or just `make pyspiel`) on each worker too,
