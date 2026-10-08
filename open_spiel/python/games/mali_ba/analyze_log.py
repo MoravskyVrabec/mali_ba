@@ -1431,18 +1431,26 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
         print(f'    Timeouts            : {n_nk_timeouts}')
         print(f'    In progress         : {n_nk_killed}  '
               f'(no FINISHED line yet — still running or ended before first kill check)')
+        # Games a cull rule fired on but which played on: how did they really end?
+        flagged = [k for k, ev in no_kill_games.items() if ev and k in game_lookup]
+        if flagged:
+            n_fw = sum(1 for k in flagged if game_lookup[k].get('is_win'))
+            print(f'    Would have been culled, finished: {len(flagged)}  '
+                  f'-> {n_fw} ended in a win ({100 * n_fw / len(flagged):.1f}%), '
+                  f'{len(flagged) - n_fw} timed out')
         print()
+        # Only completed games, the most recent 100 (in-progress ones are left out).
+        shown = 100
+        done_keys = sorted((k for k in no_kill_games if k in game_lookup),
+                           key=lambda k: (game_lookup[k].get('time') or datetime.min, k[1]))[-shown:]
+        print(f'  Last {len(done_keys)} completed no-kill games:')
         print(f'  {"Game":>5}  {"":1}{"Actor":>6}  {"Moves":>5}  {"Outcome":<18}  Would-have-terminated events')
         print(f'  {"─"*5}  {"─"*7}  {"─"*5}  {"─"*18}  {"─"*44}')
-        for key in sorted(no_kill_games.keys(), key=lambda k: k[1]):
+        for key in done_keys:
             actor, game_n = key
-            g = game_lookup.get(key)
-            if g:
-                outcome = f'Win — {g["reason"][:12]}' if g['is_win'] else 'Timeout'
-                moves = str(g['moves'])
-            else:
-                outcome = 'In progress'
-                moves = '?'
+            g = game_lookup[key]
+            outcome = f'Win — {g["reason"][:12]}' if g['is_win'] else 'Timeout'
+            moves = str(g['moves'])
             remote_tag = 'R' if actor >= 100000 else ' '
             events = no_kill_games[key]
             if events:
