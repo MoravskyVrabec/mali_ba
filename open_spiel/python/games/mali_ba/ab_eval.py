@@ -46,11 +46,66 @@ import itertools
 import math
 import multiprocessing as mp
 import os
+import queue
 import random
 import sys
 import time
 
 HEURISTIC = "heuristic"
+
+
+class _Progress:
+    """One self-updating status line on the terminal, e.g.
+        game 123/504 (24%) | 12m elapsed, ~38m left | A 41 B 50 of 91 decided
+
+    Written to /dev/tty, so it shows even when stdout and stderr are redirected to a
+    log (the usual way ab_eval is run) and never ends up in that log. Without a
+    terminal (background or nohup runs) it does nothing.
+    """
+
+    def __init__(self, total):
+        self.total = total
+        self.t0 = time.time()
+        self.n = 0
+        self.score = "starting: loading networks and playing the first games..."
+        try:
+            self.tty = open('/dev/tty', 'w')
+        except OSError:
+            self.tty = None
+        self.update(0, self.score)
+
+    def tick(self):
+        """Redraw with the latest counts, so the clock moves between results."""
+        self.update(self.n, self.score)
+
+    @staticmethod
+    def _fmt(sec):
+        sec = int(sec)
+        return f"{sec // 3600}h{(sec % 3600) // 60:02d}m" if sec >= 3600 else f"{sec // 60}m{sec % 60:02d}s"
+
+    def update(self, n, score):
+        self.n, self.score = n, score
+        if self.tty is None:
+            return
+        el = time.time() - self.t0
+        # The first results arrive only after start-up, so early estimates are wild.
+        left = (f"~{self._fmt(el / n * (self.total - n))} left" if n >= 10
+                else "estimating time left...")
+        line = (f"game {n}/{self.total} ({100 * n // max(1, self.total)}%) | "
+                f"{self._fmt(el)} elapsed, {left} | {score}")
+        try:
+            self.tty.write("\r" + line + "\033[K")
+            self.tty.flush()
+        except OSError:
+            self.tty = None
+
+    def done(self):
+        if self.tty is not None:
+            try:
+                self.tty.write("\n")
+                self.tty.close()
+            except OSError:
+                pass
 
 
 def _wilson(k, n, z=1.96):
@@ -215,6 +270,7 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
     cfg = dict(agent_a=specs["a"], agent_b=specs["b"], agent_c=specs["c"], sims=args.sims,
                uct_c_a=uct_a, uct_c_b=uct_b, uct_c_c=uct_c, cache_size=args.cache_size,
                heur_w=args.heuristic_weight, config_file=args.config_file, gpu=args.gpu)
+    progress = _Progress(total)   # shown from the start, before servers load
     arenas, servers = _start_servers(args, tuple(specs.items()), game, shape, nw, name_fn)
     print(f"running {nw} worker process(es), inference: "
           f"{'GPU server' if servers else 'CPU in each worker'}")
@@ -234,7 +290,11 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
         pr.start()
     finished = 0
     while finished < len(procs):
-        msg = out_q.get()
+        try:
+            msg = out_q.get(timeout=5)
+        except queue.Empty:
+            progress.tick()
+            continue
         if msg[0] == "done":
             finished += 1
             continue
@@ -259,6 +319,8 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
               f"winner={'draw' if winner is None else seating[winner].upper()}  "
               f"[A {wins['a']} B {wins['b']} C {wins['c']} of {dec} decided, "
               f"{(time.time() - t0) / max(1, n):.0f}s/game wall]", flush=True)
+        progress.update(n, f"A {wins['a']} B {wins['b']} C {wins['c']} of {dec} decided")
+    progress.done()
     for pr in procs:
         pr.join(timeout=30)
         if pr.is_alive():
@@ -546,6 +608,7 @@ def main():
                uct_c_a=uct_a, uct_c_b=uct_b, cache_size=args.cache_size,
                heur_w=args.heuristic_weight, config_file=args.config_file,
                gpu=args.gpu)
+    progress = _Progress(total)   # shown from the start, before servers load
     arenas, servers = _start_servers(args, (("a", args.agent_a), ("b", args.agent_b)),
                                      game, shape, nw, _name)
     print(f"running {nw} worker process(es), inference: "
@@ -561,7 +624,11 @@ def main():
     n = 0
     finished = 0
     while finished < len(procs):
-        msg = out_q.get()
+        try:
+            msg = out_q.get(timeout=5)
+        except queue.Empty:
+            progress.tick()
+            continue
         if msg[0] == "done":
             finished += 1
             continue
@@ -590,6 +657,8 @@ def main():
               f"winner={'draw' if winner is None else f'seat {winner}'}  "
               f"[A {a_wins}-{b_wins} of {dec} decided, {el/max(1,n):.0f}s/game wall]",
               flush=True)
+        progress.update(n, f"A {a_wins} B {b_wins} of {dec} decided")
+    progress.done()
     for pr in procs:
         pr.join(timeout=30)
         if pr.is_alive():
