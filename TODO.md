@@ -64,3 +64,18 @@ uniform), so there is nothing sharp to learn.
   just make flat preferences look confident).
 - Consider recording a new probe set under the current rules (the v2 set needs
   probe_data/mali_ba_oldrules.ini).
+
+## Smaller items (carried over from the 2026-09-30 list, 2026-10-08)
+
+- **Trainer busy-waits.** The idle sleep at the end of `trainer_process`'s loop
+  only fires when the buffer holds fewer than `batch_size` positions, which never
+  happens once training is under way, so the loop polls `get_nowait()` constantly
+  and keeps a core busy. One-line fix: sleep briefly whenever nothing was drained.
+- **Actor processes can be orphaned.** They are not started with `daemon=True`, so
+  if the trainer is killed abruptly they keep running at ~1.2 GB each (44 strays,
+  22 GB, were found once). The inference server was fixed; actors were left alone
+  because they are respawned deliberately during a run.
+- **Value network is 16x smaller than the policy network** (323,592 parameters vs
+  5,056,836: a 3-block, 64-filter trunk and a `Dense(64)` head). Noted on
+  2026-09-30 as not believed to be a bottleneck. Worth revisiting, since every
+  strength gain so far (D007, D010) came through the value head.
