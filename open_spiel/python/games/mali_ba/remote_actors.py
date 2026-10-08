@@ -256,6 +256,7 @@ def main():
         hopeless_thresh3=config.get('hopeless_thresh3', 0.30),
         clear_winner_thresh=config.get('clear_winner_thresh', 0.35),
         declining_best_thresh=config.get('declining_best_thresh', 0.0),
+        stalled_thresh=config.get('stalled_thresh', 0.20),
         # Sent by the server but previously not copied, so remote actors used the
         # defaults (exempt near-win games at every level, never no-kill) while
         # desktop actors followed the ini -- the two machines culled differently.

@@ -808,10 +808,11 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                         _stalled_best.append(max(_val))
                         if len(_stalled_best) > 2:
                             _stalled_best.pop(0)
+                        _sthr = getattr(args, 'stalled_thresh', 0.20)
                         if (len(_stalled_best) == 2
-                                and all(v < 0.20 for v in _stalled_best)):
+                                and all(v < _sthr for v in _stalled_best)):
                             _msg = (
-                                f"near_win stalled, max value below 0.20 "
+                                f"near_win stalled, max value below {_sthr:.2f} "
                                 f"{[f'{v:.3f}' for v in _stalled_best]}"
                                 f"{' (near_win overridden)' if _near_win else ''}"
                             )
@@ -822,7 +823,7 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                             else:
                                 log(LogLevel.INFO,
                                     f"Actor {actor_id}, Game {episode_num}, Move {move_count}: "
-                                    f"Early termination — near_win stalled, max value below 0.20 "
+                                    f"Early termination — near_win stalled, max value below {_sthr:.2f} "
                                     f"{_msg}.")
                                 early_terminated = True
                                 break
@@ -1765,6 +1766,7 @@ def main(args):
             'clear_winner_thresh':                 args.clear_winner_thresh,
             'random_no_kill_thresh':               getattr(args, 'random_no_kill_thresh', 0.0),
             'declining_best_thresh':               getattr(args, 'declining_best_thresh', 0.0),
+            'stalled_thresh':                      getattr(args, 'stalled_thresh', 0.20),
             'rare_goods_actor_fraction':           getattr(args, 'rare_goods_actor_fraction', 0.0),
             'rare_goods_added_heuristic_weight':   getattr(args, 'rare_goods_added_heuristic_weight', 0.30),
             'rare_goods_added_tier1_sims':         getattr(args, 'rare_goods_added_tier1_sims', 0),
@@ -2567,6 +2569,7 @@ if __name__ == "__main__":
     parsed_args.clear_winner_thresh = _ini_float('clear_winner_thresh', 0.35)
     parsed_args.random_no_kill_thresh = _ini_float('random_no_kill_thresh', 0.0)
     parsed_args.declining_best_thresh = _ini_float('declining_best_thresh', 0.0)
+    parsed_args.stalled_thresh = _ini_float('stalled_thresh', 0.20)
     if parsed_args.sim_tier1_sims is None:
         parsed_args.sim_tier1_sims = _ini_int('sim_tier1_sims', 150)
     if parsed_args.sim_tier2_start is None:
