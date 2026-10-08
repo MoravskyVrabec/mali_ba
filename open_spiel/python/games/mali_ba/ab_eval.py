@@ -67,7 +67,7 @@ class _Progress:
         self.total = total
         self.t0 = time.time()
         self.n = 0
-        self.score = "starting: loading networks and playing the first games..."
+        self.score = "starting up..."
         try:
             self.tty = open('/dev/tty', 'w')
         except OSError:
@@ -93,6 +93,14 @@ class _Progress:
                 else "estimating time left...")
         line = (f"game {n}/{self.total} ({100 * n // max(1, self.total)}%) | "
                 f"{self._fmt(el)} elapsed, {left} | {score}")
+        # Never wider than the terminal: a wrapped line can't be redrawn with \r, so
+        # every update would leave a copy behind and the output would scroll.
+        try:
+            width = os.get_terminal_size(self.tty.fileno()).columns
+        except OSError:
+            width = 80
+        if len(line) > width - 1:
+            line = line[:max(10, width - 2)] + "…"
         try:
             self.tty.write("\r" + line + "\033[K")
             self.tty.flush()
