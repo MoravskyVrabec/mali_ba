@@ -67,6 +67,7 @@ import json
 import math
 import multiprocessing as mp
 import os
+import queue
 import random
 import sys
 import time
@@ -193,12 +194,36 @@ def generate_positions(n, config_file, seed, min_move, stride, max_move):
     return out[:n], games_played
 
 
+REPLAY_MISMATCH = "replay mismatch"
+
+
 def replay(game, history):
-    """Rebuild a state by replaying its full action history, chance nodes included."""
+    """Rebuild a state by replaying its full action history, chance nodes included.
+
+    Every recorded action must be legal where it is replayed. Positions are stored
+    as action histories, so loading the game with different rules (e.g. the setup
+    rules added 2026-10-06) makes the replay diverge: the next action is illegal,
+    and applying it anyway produced C++ errors and crashed the workers, leaving the
+    probe hanging. Fail loudly instead.
+    """
     state = game.new_initial_state()
-    for a in history:
+    for i, a in enumerate(history):
+        if a not in state.legal_actions():
+            raise ValueError(f"{REPLAY_MISMATCH}: recorded action {a} at step {i} is not "
+                             f"legal in the replayed position")
         state.apply_action(a)
     return state
+
+
+def _next_msg(q, procs):
+    """q.get() that cannot hang: ('dead',) once every worker has exited (e.g. crashed)
+    without saying it was done."""
+    while True:
+        try:
+            return q.get(timeout=10)
+        except queue.Empty:
+            if not any(p.is_alive() for p in procs):
+                return ("dead",)
 
 
 # --------------------------------------------------------------------------- #
@@ -334,7 +359,10 @@ def score_agent(agent_spec, positions, cfg, workers):
     rows, errs, skipped, done = [], [], 0, 0
     per_pos = {}
     while done < len(procs):
-        msg = q.get()
+        msg = _next_msg(q, procs)
+        if msg[0] == "dead":
+            errs.append("worker process exited without finishing (crashed?)")
+            break
         if msg[0] == "done":
             done += 1
         elif msg[0] == "ok":
@@ -556,7 +584,10 @@ def build_reference(positions, cfg, workers, out_path):
     fracs = []
     t0 = time.time()
     while done < len(procs):
-        m = q.get()
+        m = _next_msg(q, procs)
+        if m[0] == "dead":
+            errs.append("worker process exited without finishing (crashed?)")
+            break
         if m[0] == "done":
             done += 1
         elif m[0] == "ok":
@@ -666,7 +697,10 @@ def score_against_reference(agent_spec, positions, ref, cfg, workers):
         pr.start(); procs.append(pr)
     rows, errs, skipped, done, per_pos = [], [], 0, 0, {}
     while done < len(procs):
-        m = q.get()
+        m = _next_msg(q, procs)
+        if m[0] == "dead":
+            errs.append("worker process exited without finishing (crashed?)")
+            break
         if m[0] == "done":
             done += 1
         elif m[0] == "ok":
@@ -891,6 +925,15 @@ def main():
                                                       args.workers)
         paired[name] = per_pos
         results[name] = report(name, rows, errs, skipped, time.time() - t0)
+        n_mismatch = sum(1 for e in errs if REPLAY_MISMATCH in str(e))
+        if n_mismatch > 0.05 * len(positions):
+            print()
+            print(f"ERROR: {n_mismatch} of {len(positions)} positions do not replay under "
+                  f"{args.config_file}.")
+            print("  The positions were recorded under different game rules. Score them with")
+            print("  the ini they were recorded with; see probe_data/README.md (for the v2 set:")
+            print("  --config_file probe_data/mali_ba_oldrules.ini).")
+            sys.exit(2)
 
     ok = {k: v for k, v in results.items() if v}
     if len(ok) > 1:

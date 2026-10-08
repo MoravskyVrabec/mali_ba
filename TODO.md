@@ -43,3 +43,24 @@ The rules document's Game End section (2a) says the end triggers when a player h
 different regions" (`end_game_cond_rare_good_each_region = true`,
 `end_game_cond_rare_good_num_regions = 5`, `end_game_cond_num_rare_goods = -1`),
 which the user prefers. Update the rules document to match.
+
+## Get the policy learning (added 2026-10-08)
+
+The policy head still learns essentially nothing: probe on 2026-10-08 (D007, D010,
+D011, D012) gave top-1 31-34% (no significant differences, inside the untrained
+range) and entropy 92.0% -> 93.2% of uniform, i.e. slightly *flatter* over time.
+All strength gains so far (D007, D010) came through the value head. The policy
+trains on MCTS visit counts, and at uct_c 2.0 those are nearly flat (~90% of
+uniform), so there is nothing sharp to learn.
+
+- Keep heuristic guidance at 0.30 until the policy carries real preferences
+  (probe entropy clearly below ~90%, top-1 clearly above ~36%); then test lower
+  guidance with a head-to-head (needs a per-agent --heuristic_weight in ab_eval).
+- Options, roughly in order: sharpen policy targets (visit counts raised to a
+  power, or temperature); KataGo-style forced playouts with policy-target pruning;
+  revisit uct_c once the value head is stronger (0.5 and 1.0 vs 2.0 were null on
+  D005 and D007).
+- Judge any change by probe entropy/top-1 AND head-to-head (sharper targets can
+  just make flat preferences look confident).
+- Consider recording a new probe set under the current rules (the v2 set needs
+  probe_data/mali_ba_oldrules.ini).

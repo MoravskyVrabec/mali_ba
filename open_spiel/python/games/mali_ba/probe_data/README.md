@@ -16,6 +16,24 @@ replaying a position reproduces the exact board in any process. **Scores are
 exactly repeatable**: the same checkpoint scored three times, with 16 and 5
 workers, gave identical top-1 (31.53%) and CE (1.8322).
 
+**Game rules: score the v2 set with `--config_file probe_data/mali_ba_oldrules.ini`.**
+The positions are stored as action histories recorded under the rules of
+2026-09-30. The setup rules added 2026-10-06 (starting common goods by seat,
+serpentine token placement) change what those histories replay into, so with the
+current `mali_ba.ini` almost every position fails to replay. `mali_ba_oldrules.ini`
+is `mali_ba.ini` with just those two settings off. Since 2026-10-08 the probe
+checks that every recorded action is legal on replay and stops with an error if
+more than 5% of positions do not replay, instead of hanging; before that, a rule
+mismatch crashed the workers and the probe waited forever.
+
+    python policy_probe.py --positions probe_data/probe_positions_v2_600.json \
+        --reference probe_data/probe_reference_v2_600.json \
+        --config_file $PWD/probe_data/mali_ba_oldrules.ini --workers 12 --agents ...
+
+Networks trained under the new rules (D009 on) are then scored on old-rules
+positions. That is fine for policy sharpness (entropy) and relative top-1, but a
+new probe set recorded under the current rules would be the cleaner yardstick.
+
 The reference contains no network, so it serves any observation layout: load
 the game with the ini flags that match the checkpoint being scored (192 planes
 for the C-series, 96 for the B-series).
