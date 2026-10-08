@@ -79,3 +79,9 @@ uniform), so there is nothing sharp to learn.
   5,056,836: a 3-block, 64-filter trunk and a `Dense(64)` head). Noted on
   2026-09-30 as not believed to be a bottleneck. Worth revisiting, since every
   strength gain so far (D007, D010) came through the value head.
+  - **Tested 2026-10-08 (offline, by-game split of the saved buffer): not the
+    limit.** Bigger value nets overfit faster and generalised worse (held-out
+    top-pick: current 54.1%, wider head 53.9%, 6x128 52.0%); all peaked after 1-2
+    epochs. The value head is data-limited: the buffer spans only ~4,000 games.
+    Revisit size only once the buffer spans far more games. Next experiment:
+    `buffer_keep_every = 32` (~8,000 games in the same memory).
