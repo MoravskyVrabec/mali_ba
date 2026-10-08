@@ -30,6 +30,9 @@ RE_SETUP = re.compile(r'Game (\d+): SETUP layout=(\S+) tokens (.*)$')
 RE_FINISHED = re.compile(r'Game (\d+): FINISHED in (\d+) moves\..*?Reason: \'([^\']*)\'.*?'
                          r'Final Returns: \[([^\]]+)\]')
 RE_COORD = re.compile(r'\((-?\d+),(-?\d+),(-?\d+)\)')
+# One seat's tokens: P0=(x,y,z);(x,y,z);(x,y,z). Matched exactly, because lines from
+# different processes are occasionally interleaved in the log.
+RE_SEAT = re.compile(r'\bP(\d+)=((?:\(-?\d+,-?\d+,-?\d+\);?)+)')
 
 
 def hex_dist(a, b):
@@ -38,17 +41,19 @@ def hex_dist(a, b):
 
 def parse(paths):
     setups, results = {}, {}
+    skipped_setups = 0
     for path in paths:
         with open(path, errors='ignore') as f:
             for line in f:
                 if 'SETUP layout=' in line:
                     m = RE_SETUP.search(line)
                     if m:
-                        seats = {}
-                        for part in m.group(3).split():
-                            seat, _, coords = part.partition('=')
-                            seats[int(seat[1:])] = [tuple(map(int, c)) for c in RE_COORD.findall(coords)]
-                        setups[(path, m.group(1))] = seats
+                        seats = {int(s): [tuple(map(int, c)) for c in RE_COORD.findall(coords)]
+                                 for s, coords in RE_SEAT.findall(m.group(3))}
+                        if seats and all(len(t) == 3 for t in seats.values()):
+                            setups[(path, m.group(1))] = seats
+                        else:
+                            skipped_setups += 1
                 elif 'FINISHED in' in line:
                     m = RE_FINISHED.search(line)
                     if m:
@@ -57,6 +62,9 @@ def parse(paths):
                         kind = ('timbuktu' if 'Timbuktu' in reason else
                                 'rare_goods' if 'Rare good' in reason else 'timeout')
                         results[(path, m.group(1))] = (rets, kind, int(m.group(2)))
+    if skipped_setups:
+        print(f'({skipped_setups} garbled SETUP line(s) skipped: output from two processes '
+              f'merged onto one line)')
     return setups, results
 
 
