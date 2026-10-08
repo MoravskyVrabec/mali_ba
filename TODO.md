@@ -35,3 +35,11 @@ reports seat-adjusted win rates by placement feature.
 4. **Later:** let the search choose placements (reacting to and blocking
    opponents), once the value head is reliable early in the game; today it is
    weakest there (~60% top-pick before move 260).
+
+## Rules document: rare-goods end condition (added 2026-10-07)
+
+The rules document's Game End section (2a) says the end triggers when a player has
+"five different rare goods". The code and training runs use "a rare good from five
+different regions" (`end_game_cond_rare_good_each_region = true`,
+`end_game_cond_rare_good_num_regions = 5`, `end_game_cond_num_rare_goods = -1`),
+which the user prefers. Update the rules document to match.
