@@ -66,9 +66,19 @@ def worker(items, cfg, out_q):
     pm.load_weights(cfg['agent'].replace("weights.h5", "_policy.weights.h5"))
     vm.load_weights(cfg['agent'].replace("weights.h5", "_value.weights.h5"))
     for idx, hist in items:
+        # Positions are action histories recorded under the old setup rules; under
+        # other rules an action becomes illegal. Report it rather than apply it
+        # (applying it crashed workers and hung the run).
         state = game.new_initial_state()
+        mismatch = False
         for a in hist:
+            if a not in state.legal_actions():
+                mismatch = True
+                break
             state.apply_action(a)
+        if mismatch:
+            out_q.put({'mismatch': idx})
+            continue
         if state.is_terminal() or state.current_player() < 0 or len(state.legal_actions()) < 2:
             continue
         row = {'idx': idx, 'n_legal': len(state.legal_actions())}
@@ -95,7 +105,9 @@ def main():
     ap = argparse.ArgumentParser(description="Measure how decisive MCTS is at several uct_c values.")
     ap.add_argument('--agent', required=True, help="Checkpoint, e.g. mali_ba_agent_vD005.weights.h5")
     ap.add_argument('--positions', default=os.path.join(HERE, 'probe_data/probe_positions_v2_600.json'))
-    ap.add_argument('--config_file', default=os.path.join(HERE, 'mali_ba.ini'))
+    # The v2 positions were recorded before the 2026-10-06 setup rules; they only
+    # replay under the old rules (see probe_data/README.md).
+    ap.add_argument('--config_file', default=os.path.join(HERE, 'probe_data/mali_ba_oldrules.ini'))
     ap.add_argument('--uct_c', type=float, nargs='+', default=[2.0, 1.0, 0.5, 0.25])
     ap.add_argument('--sims', type=int, default=300)
     ap.add_argument('--heur_w', type=float, default=0.30, help="Heuristic guidance weight in the prior")
@@ -113,15 +125,29 @@ def main():
              for w in range(args.workers)]
     for p in procs:
         p.start()
-    rows, done = [], 0
+    import queue as _queue
+    rows, done, mismatches = [], 0, 0
     while done < args.workers:
-        r = q.get()
+        try:
+            r = q.get(timeout=10)
+        except _queue.Empty:
+            if not any(p.is_alive() for p in procs):
+                print("ERROR: worker processes exited without finishing (crashed?)")
+                sys.exit(1)
+            continue
         if r is None:
             done += 1
+        elif 'mismatch' in r:
+            mismatches += 1
         else:
             rows.append(r)
     for p in procs:
         p.join()
+    if mismatches > 0.05 * len(items):
+        print(f"ERROR: {mismatches} of {len(items)} positions do not replay under "
+              f"{args.config_file}: they were recorded under different game rules. "
+              f"Use the default --config_file (probe_data/mali_ba_oldrules.ini).")
+        sys.exit(2)
 
     ref = args.uct_c[0]
     print(f"{os.path.basename(args.agent)}: {len(rows)} positions, mean legal moves "
