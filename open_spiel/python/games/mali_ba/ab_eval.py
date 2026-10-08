@@ -152,6 +152,154 @@ def _start_server(spec, game, shape, n_slots, config_file):
     return arena, proc, wq, stop
 
 
+def _start_servers(args, side_specs, game, shape, nw, name_fn):
+    """One inference server per distinct network. Returns (arenas by side, servers)."""
+    arenas, servers = {}, []
+    if not args.inference_server:
+        return arenas, servers
+    by_spec = {}
+    for side, spec in side_specs:
+        if spec == HEURISTIC:
+            continue
+        if spec not in by_spec:
+            print(f"starting inference server for {name_fn(spec)} ...", flush=True)
+            srv = _start_server(spec, game, shape, nw, args.config_file)
+            if srv is None:
+                print("  no usable GPU: the server refused to serve, so workers "
+                      "will infer on the CPU")
+                for _, (_, proc, _, stop) in servers:
+                    stop.set()
+                    proc.join(timeout=15)
+                return {}, []
+            by_spec[spec] = srv
+            servers.append((name_fn(spec), srv))
+        arenas[side] = by_spec[spec][0]
+    return arenas, servers
+
+
+def _stop_servers(servers):
+    stats = []
+    for name, (arena, proc, wq, stop) in servers:
+        stats.append((name, arena.stats()))
+        stop.set()
+        from mali_ba.inference_server import STOP
+        wq.put(STOP)
+        proc.join(timeout=30)
+        if proc.is_alive():
+            proc.terminate()
+    return stats
+
+
+def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
+    """A, B and C each take one seat; all 6 seat orders are played equally often."""
+    specs = {"a": args.agent_a, "b": args.agent_b, "c": args.agent_c}
+    names = {s: name_fn(sp) for s, sp in specs.items()}
+    ucts = {"a": uct_a, "b": uct_b, "c": uct_c}
+    orders = list(itertools.permutations("abc"))          # seating per seat 0..2
+    per_order = max(1, math.ceil(args.games / len(orders)))
+    total = per_order * len(orders)
+    for s in "abc":
+        print(f"{s.upper()} = {names[s]}" + ("" if specs[s] == HEURISTIC
+                                             else f"  (uct_c={ucts[s]})"))
+    print(f"{args.sims} sims/move, heuristic_weight={args.heuristic_weight}, "
+          f"three-way: one seat each")
+    print(f"{total} games ({per_order} per seat order), expected win share if equal: 0.333")
+    print()
+    # Orders interleaved, so a partial run is balanced across seat orders.
+    jobs = []
+    for i in range(per_order):
+        for j, order in enumerate(orders):
+            jobs.append((order, order, args.seed + (j * per_order + i) * 7919))
+    nw = max(1, min(args.workers, len(jobs)))
+    buckets = [jobs[i::nw] for i in range(nw)]
+    cfg = dict(agent_a=specs["a"], agent_b=specs["b"], agent_c=specs["c"], sims=args.sims,
+               uct_c_a=uct_a, uct_c_b=uct_b, uct_c_c=uct_c, cache_size=args.cache_size,
+               heur_w=args.heuristic_weight, config_file=args.config_file, gpu=args.gpu)
+    arenas, servers = _start_servers(args, tuple(specs.items()), game, shape, nw, name_fn)
+    print(f"running {nw} worker process(es), inference: "
+          f"{'GPU server' if servers else 'CPU in each worker'}")
+    print()
+
+    wins = {s: 0 for s in "abc"}
+    seat_wins = {s: [0] * nseats for s in "abc"}     # wins by the seat the agent sat in
+    seat_games = {s: [0] * nseats for s in "abc"}
+    by_seat = [0] * nseats
+    draws = errors = n = 0
+    lengths = []
+    t0 = time.time()
+    out_q = mp.Queue()
+    procs = [mp.Process(target=_worker, args=(b, cfg, out_q, i, arenas), daemon=True)
+             for i, b in enumerate(buckets) if b]
+    for pr in procs:
+        pr.start()
+    finished = 0
+    while finished < len(procs):
+        msg = out_q.get()
+        if msg[0] == "done":
+            finished += 1
+            continue
+        if msg[0] == "error":
+            errors += 1
+            print(f"  worker error on order {''.join(msg[1]).upper()}: {msg[2]}", flush=True)
+            continue
+        _, _, seating, winner, moves, reason = msg
+        n += 1
+        lengths.append(moves)
+        for seat, side in enumerate(seating):
+            seat_games[side][seat] += 1
+        if winner is None:
+            draws += 1
+        else:
+            side = seating[winner]
+            wins[side] += 1
+            seat_wins[side][winner] += 1
+            by_seat[winner] += 1
+        dec = sum(wins.values())
+        print(f"  {n:>4}/{total}  order {''.join(seating).upper()}  {moves:>3} moves  "
+              f"winner={'draw' if winner is None else seating[winner].upper()}  "
+              f"[A {wins['a']} B {wins['b']} C {wins['c']} of {dec} decided, "
+              f"{(time.time() - t0) / max(1, n):.0f}s/game wall]", flush=True)
+    for pr in procs:
+        pr.join(timeout=30)
+        if pr.is_alive():
+            pr.terminate()
+    server_stats = _stop_servers(servers)
+
+    decided = sum(wins.values())
+    print()
+    print("=" * 66)
+    print(f"  games played      : {n}   (decided {decided}, timed out {draws})")
+    if decided:
+        for s in sorted("abc", key=lambda s: -wins[s]):
+            p, lo, hi = _wilson(wins[s], decided)
+            verdict = ("above equal share" if lo > 1 / 3 else
+                       "below equal share" if hi < 1 / 3 else "within equal share")
+            print(f"  {s.upper()} {names[s]:<34} {wins[s]:>4}/{decided} = {p:.3f}  "
+                  f"95% CI [{lo:.3f}, {hi:.3f}]  {verdict}")
+        print("  (equal strength = 0.333 each; the three shares sum to 1, so their CIs are")
+        print("   not independent. For a firm A-vs-B verdict, follow up with a two-way run.)")
+    else:
+        print("  every game timed out; raise --sims or --games")
+    print()
+    print(f"  wins by seat (turn-order effect): "
+          + "  ".join(f"seat {s}: {by_seat[s]}" for s in range(nseats)))
+    for s in "abc":
+        print(f"  {s.upper()} wins from seat 0/1/2: "
+              + "  ".join(f"{seat_wins[s][k]}/{seat_games[s][k]}" for k in range(nseats)))
+    if lengths:
+        lengths.sort()
+        print(f"  game length: median {lengths[len(lengths)//2]}  "
+              f"min {lengths[0]}  max {lengths[-1]}")
+    for name, st in server_stats:
+        print(f"  inference server ({name}): {st['requests']:,} evals, "
+              f"avg batch {st['avg_batch']:.1f}, {st['ms_per_request']:.3f} ms/eval")
+    if errors:
+        print(f"  worker errors: {errors}")
+    print(f"  wall time: {(time.time()-t0)/60:.1f} min "
+          f"({nw} workers, {(time.time()-t0)/max(1,n):.0f}s/game wall)")
+    print("=" * 66)
+
+
 def play_game(game, actors, seed):
     """actors: list of callables indexed by seat. Returns (winner_seat|None, moves, reason)."""
     import numpy as np
@@ -222,7 +370,8 @@ def _worker(jobs, cfg, out_q, slot=None, arenas=None):
     # and two clients on one slot would keep separate request sequence numbers.
     clients = {}
     arenas = arenas or {}
-    for side in ("a", "b"):
+    sides = ("a", "b", "c") if cfg.get("agent_c") else ("a", "b")
+    for side in sides:
         ar = arenas.get(side)
         if ar is not None and id(ar) not in clients:
             from mali_ba.inference_server import InferenceClient
@@ -230,19 +379,20 @@ def _worker(jobs, cfg, out_q, slot=None, arenas=None):
     def _client(side):
         ar = arenas.get(side)
         return clients[id(ar)] if ar is not None else None
-    act_a, _ = _build_agent(cfg["agent_a"], game, shape, cfg["sims"], cfg["uct_c_a"],
-                            cfg["cache_size"], cfg["heur_w"], _client("a"))
-    act_b, _ = _build_agent(cfg["agent_b"], game, shape, cfg["sims"], cfg["uct_c_b"],
-                            cfg["cache_size"], cfg["heur_w"], _client("b"))
-    nseats = game.num_players()
-    for rot, seed in jobs:
-        actors = [act_a if s in rot else act_b for s in range(nseats)]
+    acts = {}
+    for side in sides:
+        acts[side], _ = _build_agent(cfg["agent_" + side], game, shape, cfg["sims"],
+                                     cfg["uct_c_" + side], cfg["cache_size"], cfg["heur_w"],
+                                     _client(side))
+    # A job's seating names the agent in each seat, e.g. ('a', 'b', 'b') or ('c', 'a', 'b').
+    for key, seating, seed in jobs:
+        actors = [acts[side] for side in seating]
         try:
             winner, moves, reason = play_game(game, actors, seed)
         except Exception as e:
-            out_q.put(("error", rot, str(e)[:120]))
+            out_q.put(("error", key, str(e)[:120]))
             continue
-        out_q.put(("ok", rot, winner, moves, reason))
+        out_q.put(("ok", key, seating, winner, moves, reason))
     out_q.put(("done",))
 
 
@@ -265,6 +415,13 @@ def main():
                     help="uct_c for agent A only (overrides --uct_c)")
     ap.add_argument("--uct_c_b", type=float, default=None,
                     help="uct_c for agent B only (overrides --uct_c)")
+    ap.add_argument("--agent_c", default=None,
+                    help='three-way mode: a third agent (weights stem or "heuristic"). Each '
+                         'game seats A, B and C once each, cycling through all 6 seat orders '
+                         'so the first-mover advantage cancels; each agent wins 1/3 of '
+                         'decided games if all are equal. --a_seats is ignored.')
+    ap.add_argument("--uct_c_c", type=float, default=None,
+                    help="uct_c for agent C only (overrides --uct_c)")
     ap.add_argument("--a_seats", type=int, default=1, choices=(1, 2),
                     help="how many of the three seats agent A takes (default 1, so an "
                          "equal-strength A wins 1/3)")
@@ -329,7 +486,8 @@ def main():
     def _name(spec):
         return (HEURISTIC if spec == HEURISTIC
                 else os.path.basename(spec).replace(".weights.h5", ""))
-    for spec in (args.agent_a, args.agent_b):
+    three_way = args.agent_c is not None
+    for spec in (args.agent_a, args.agent_b) + ((args.agent_c,) if three_way else ()):
         if spec != HEURISTIC:
             for suf in ("_policy", "_value"):
                 f = spec.replace("weights.h5", suf + ".weights.h5")
@@ -339,6 +497,12 @@ def main():
     name_a, name_b = _name(args.agent_a), _name(args.agent_b)
     uct_a = args.uct_c if args.uct_c_a is None else args.uct_c_a
     uct_b = args.uct_c if args.uct_c_b is None else args.uct_c_b
+    uct_c3 = args.uct_c if args.uct_c_c is None else args.uct_c_c
+    if three_way:
+        if nseats != 3:
+            print("ERROR: three-way mode needs a 3-player game")
+            sys.exit(1)
+        return _main_three_way(args, game, shape, nseats, _name, uct_a, uct_b, uct_c3)
 
     # Every distinct assignment of A to `a_seats` of the seats, so each agent plays
     # every position equally often.
@@ -374,36 +538,16 @@ def main():
     jobs = []
     for i in range(per_rot):
         for j, rot in enumerate(rotations):
-            jobs.append((rot, args.seed + (j * per_rot + i) * 7919))
+            seating = tuple('a' if s in rot else 'b' for s in range(nseats))
+            jobs.append((rot, seating, args.seed + (j * per_rot + i) * 7919))
     nw = max(1, min(args.workers, len(jobs)))
     buckets = [jobs[i::nw] for i in range(nw)]
-    cfg = dict(agent_a=args.agent_a, agent_b=args.agent_b, sims=args.sims,
+    cfg = dict(agent_a=args.agent_a, agent_b=args.agent_b, agent_c=None, sims=args.sims,
                uct_c_a=uct_a, uct_c_b=uct_b, cache_size=args.cache_size,
                heur_w=args.heuristic_weight, config_file=args.config_file,
                gpu=args.gpu)
-    arenas = {}
-    servers = []
-    if args.inference_server:
-        by_spec = {}
-        for side, spec in (("a", args.agent_a), ("b", args.agent_b)):
-            if spec == HEURISTIC:
-                continue
-            if spec not in by_spec:
-                print(f"starting inference server for {_name(spec)} ...", flush=True)
-                srv = _start_server(spec, game, shape, nw, args.config_file)
-                if srv is None:
-                    print("  no usable GPU: the server refused to serve, so workers "
-                          "will infer on the CPU")
-                    by_spec = None
-                    break
-                by_spec[spec] = srv
-                servers.append((_name(spec), srv))
-            arenas[side] = by_spec[spec][0]
-        if by_spec is None:
-            for _, (_, proc, _, stop) in servers:
-                stop.set()
-                proc.join(timeout=15)
-            arenas, servers = {}, []
+    arenas, servers = _start_servers(args, (("a", args.agent_a), ("b", args.agent_b)),
+                                     game, shape, nw, _name)
     print(f"running {nw} worker process(es), inference: "
           f"{'GPU server' if servers else 'CPU in each worker'}")
     print()
@@ -425,7 +569,7 @@ def main():
             errors += 1
             print(f"  worker error on A@{','.join(map(str,msg[1]))}: {msg[2]}", flush=True)
             continue
-        _, rot, winner, moves, reason = msg
+        _, rot, _seating, winner, moves, reason = msg
         n += 1
         lengths.append(moves)
         a_by_rot[rot][1] += 1
@@ -450,15 +594,7 @@ def main():
         pr.join(timeout=30)
         if pr.is_alive():
             pr.terminate()
-    server_stats = []
-    for name, (arena, proc, wq, stop) in servers:
-        server_stats.append((name, arena.stats()))
-        stop.set()
-        from mali_ba.inference_server import STOP
-        wq.put(STOP)
-        proc.join(timeout=30)
-        if proc.is_alive():
-            proc.terminate()
+    server_stats = _stop_servers(servers)
 
     decided = a_wins + b_wins
     print()
