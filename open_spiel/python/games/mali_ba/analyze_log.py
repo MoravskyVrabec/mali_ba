@@ -1471,8 +1471,8 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
         actor_str = f'A{actor}' if actor is not None else '   ?'
         remote_tag = 'R' if actor is not None and actor >= 100000 else ' '
         ir = g.get('inter_rewards')
-        ir_str = f'  inter: [{", ".join(f"{v:.3f}" for v in ir)}]' if ir else ''
-        print(f'  {flag}{phase_tag}{remote_tag} Game #{g["game_num"]:4d}  {g["length"]:3d} moves  '
+        ir_str = f'  inter: [{",".join(f"{v:.3f}" for v in ir)}]' if ir else ''
+        print(f'{flag}{phase_tag}{remote_tag} Gm#{g["game_num"]:4d}  {g["length"]:3d} mvs  '
               f'{actor_str:<8}  winner: {w_str}  returns: {[f"{v:.1f}" for v in r]}{ir_str}')
 
 
