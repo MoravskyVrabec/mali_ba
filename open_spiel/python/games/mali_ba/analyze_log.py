@@ -1921,7 +1921,11 @@ def print_value_calibration(data):
 
 
 def write_value_check_csv(data, log_path, ssh_password=None):
-    """Write value check entries joined with game outcomes to a timestamped CSV.
+    """Write value check entries joined with game outcomes to a CSV, one per log.
+
+    The file is value_checks_<log name>.csv and is overwritten on each run: every
+    run covers the whole log, so an older copy never holds anything the new one
+    lacks. (Until 2026-10-08 each run wrote a new timestamped file; 400 had piled up.)
 
     Uses the actor's internal episode number (game_n) as the 'game' column.
     Winner is determined from max(returns) rather than the trigger field.
@@ -1964,14 +1968,13 @@ def write_value_check_csv(data, log_path, ssh_password=None):
     game_info = _game_outcomes(data)
 
     log_stem = os.path.splitext(os.path.basename(log_path))[0]
-    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     if os.path.isdir('/media/robp/UD/Projects'):
         out_dir = '/media/robp/UD/Projects/open_spiel'
     else:
         _rel = os.path.join(os.path.dirname(__file__), '../../../../../../Projects/open_spiel')
         _rel = os.path.normpath(_rel)
         out_dir = _rel if os.path.isdir(_rel) else os.path.dirname(os.path.abspath(log_path))
-    csv_path = os.path.join(out_dir, f'value_checks_{log_stem}_{ts}.csv')
+    csv_path = os.path.join(out_dir, f'value_checks_{log_stem}.csv')
 
     rows = []
     for vc in value_checks:
