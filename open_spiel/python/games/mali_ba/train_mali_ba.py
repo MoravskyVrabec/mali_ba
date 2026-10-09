@@ -2373,8 +2373,13 @@ def main(args):
             log(LogLevel.WARN, f"Inference server shutdown issue: {_e}")
 
     # Whatever is still buffered in queues this process wrote to has no reader now.
-    # Without this, interpreter exit waits on their feeder threads forever.
-    for _q in (job_queue, replay_buffer_queue, inference_weights_queue):
+    # Without this, interpreter exit waits on their feeder threads forever. That
+    # includes result_queue and log_queue: the queue server puts remote actors' games
+    # and log lines into them from this process, and remote workers keep sending
+    # after the main loop stops reading (D014 hung after "Training complete" with 81
+    # laptop connections still open, 2026-10-08).
+    for _q in (job_queue, result_queue, log_queue, replay_buffer_queue, stats_queue,
+               weights_queue, trainer_signal_queue, inference_weights_queue):
         if _q is not None:
             try:
                 _q.cancel_join_thread()
@@ -2385,6 +2390,12 @@ def main(args):
     end_time = time.time()
     log(LogLevel.INFO, f"Total time: {end_time - start_time:.2f} seconds")
     log(LogLevel.INFO, f"Training complete. Final model saved to {args.save_model_path}")
+    # Everything is saved and every child process has been joined or terminated.
+    # Exit now rather than let interpreter shutdown wait on queue feeder threads or
+    # queue-server connections that remote workers may still hold open.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
     
 
 # --- Main Execution Guard ---
