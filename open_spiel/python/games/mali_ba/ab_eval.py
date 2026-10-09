@@ -305,7 +305,7 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
     total = per_order * len(orders)
     for s in "abc":
         print(f"{s.upper()} = {names[s]}" + ("" if specs[s] == HEURISTIC
-                                             else f"  (uct_c={ucts[s]})"))
+                                             else f"  (uct_c={ucts[s]}, guidance={args._hw[s]})"))
     print(f"{args.sims} sims/move, heuristic_weight={args.heuristic_weight}, "
           f"three-way: one seat each")
     print(f"{total} games ({per_order} per seat order), expected win share if equal: 0.333")
@@ -321,7 +321,8 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
     cfg = dict(record_every=args.record_every if recorder else 0,
                agent_a=specs["a"], agent_b=specs["b"], agent_c=specs["c"], sims=args.sims,
                uct_c_a=uct_a, uct_c_b=uct_b, uct_c_c=uct_c, cache_size=args.cache_size,
-               heur_w=args.heuristic_weight, config_file=args.config_file, gpu=args.gpu)
+               heur_w=args.heuristic_weight, heur_w_a=args._hw["a"], heur_w_b=args._hw["b"],
+               heur_w_c=args._hw["c"], config_file=args.config_file, gpu=args.gpu)
     progress = _Progress(total)   # shown from the start, before servers load
     arenas, servers = _start_servers(args, tuple(specs.items()), game, shape, nw, name_fn)
     print(f"running {nw} worker process(es), inference: "
@@ -518,7 +519,8 @@ def _worker(jobs, cfg, out_q, slot=None, arenas=None):
     acts = {}
     for side in sides:
         acts[side], _ = _build_agent(cfg["agent_" + side], game, shape, cfg["sims"],
-                                     cfg["uct_c_" + side], cfg["cache_size"], cfg["heur_w"],
+                                     cfg["uct_c_" + side], cfg["cache_size"],
+                                     cfg.get("heur_w_" + side, cfg["heur_w"]),
                                      _client(side))
     # A job's seating names the agent in each seat, e.g. ('a', 'b', 'b') or ('c', 'a', 'b').
     for key, seating, seed in jobs:
@@ -578,6 +580,14 @@ def main():
                          "identically to both agents (default 0.35, matching training). "
                          "Use 0.0 to measure the networks in isolation, but expect far "
                          "more games to hit the move cap and decide nothing.")
+    ap.add_argument("--heuristic_weight_a", type=float, default=None,
+                    help="heuristic guidance for agent A only (overrides --heuristic_weight); "
+                         "e.g. the same network at 0.15 vs 0.30 tests whether it still "
+                         "needs the heuristic's help")
+    ap.add_argument("--heuristic_weight_b", type=float, default=None,
+                    help="heuristic guidance for agent B only")
+    ap.add_argument("--heuristic_weight_c", type=float, default=None,
+                    help="heuristic guidance for agent C only (three-way mode)")
     ap.add_argument("--inference_server", action=argparse.BooleanOptionalAction,
                     default=True,
                     help="serve every worker's forward passes from a batched GPU "
@@ -643,6 +653,9 @@ def main():
     uct_a = args.uct_c if args.uct_c_a is None else args.uct_c_a
     uct_b = args.uct_c if args.uct_c_b is None else args.uct_c_b
     uct_c3 = args.uct_c if args.uct_c_c is None else args.uct_c_c
+    hw = {s: (args.heuristic_weight if getattr(args, f"heuristic_weight_{s}") is None
+              else getattr(args, f"heuristic_weight_{s}")) for s in "abc"}
+    args._hw = hw
     if three_way:
         if nseats != 3:
             print("ERROR: three-way mode needs a 3-player game")
@@ -657,8 +670,10 @@ def main():
     expected = args.a_seats / nseats
 
     # uct_c means nothing to the heuristic player, so don't print one for it.
-    print(f"A = {name_a}" + ("" if args.agent_a == HEURISTIC else f"  (uct_c={uct_a})"))
-    print(f"B = {name_b}" + ("" if args.agent_b == HEURISTIC else f"  (uct_c={uct_b})"))
+    print(f"A = {name_a}" + ("" if args.agent_a == HEURISTIC
+                             else f"  (uct_c={uct_a}, guidance={hw['a']})"))
+    print(f"B = {name_b}" + ("" if args.agent_b == HEURISTIC
+                             else f"  (uct_c={uct_b}, guidance={hw['b']})"))
     print(f"{args.sims} sims/move, "
           f"heuristic_weight={args.heuristic_weight}, "
           f"A in {args.a_seats} of {nseats} seats")
@@ -691,7 +706,8 @@ def main():
     cfg = dict(record_every=args.record_every if recorder else 0,
                agent_a=args.agent_a, agent_b=args.agent_b, agent_c=None, sims=args.sims,
                uct_c_a=uct_a, uct_c_b=uct_b, cache_size=args.cache_size,
-               heur_w=args.heuristic_weight, config_file=args.config_file,
+               heur_w=args.heuristic_weight, heur_w_a=hw["a"], heur_w_b=hw["b"],
+               config_file=args.config_file,
                gpu=args.gpu)
     progress = _Progress(total)   # shown from the start, before servers load
     arenas, servers = _start_servers(args, (("a", args.agent_a), ("b", args.agent_b)),
