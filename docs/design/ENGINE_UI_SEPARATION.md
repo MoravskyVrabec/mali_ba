@@ -150,6 +150,31 @@ class Bot:
 4. **Optional: expose `ComputeScores()`** to show live scores (the observation already
    carries them, but a direct call is clearer).
 
+## Other front ends: mobile apps
+
+**Online play (the game runs on the server): same effort as the web front end.** An
+Android or iOS app is one more client of the web server's API: it renders the same
+state JSON, highlights the same `legal_moves()` and sends the same step-by-step
+actions. The engine, GameSession and bots do not change. To keep this true:
+
+- Treat the server's messages as a **documented, versioned protocol** (state JSON,
+  legal-move entries, move format, bot-move and game-end events), not as whatever the
+  first web page happens to need. Web, Android, iOS and even the local GUI are then
+  interchangeable clients.
+- A phone-friendly web app (a progressive web app) can cover mobile before any native
+  app exists.
+
+**Offline play (everything on the phone): much more work.**
+- The engine is C++ and can be built for Android (NDK) and iOS, bringing OpenSpiel and
+  abseil with it.
+- GameSession and the bots are Python in this design; phone apps do not run Python
+  naturally, so they would need porting (to C++, or to Kotlin / Swift).
+- The trained networks would need converting (TensorFlow Lite / Core ML), and the
+  search would run on the phone (OpenSpiel has a C++ MCTS), slower than on a server.
+
+Design choice that keeps offline open: keep GameSession thin, with the rules and
+legal-move logic in the C++ engine, so the part that would need porting stays small.
+
 ## Migration steps
 
 Each step leaves something working and testable on its own.
@@ -175,6 +200,8 @@ Each step leaves something working and testable on its own.
 
 - Which web framework, and is the web version single-machine (local network) or
   internet-facing (then authentication and hosting matter)?
+- Mobile: online-only (a client of the server, same effort as web) or offline too
+  (engine, session and bots on the phone; see "Other front ends")?
 - Bot strength for humans: which checkpoint, how many simulations, and whether to
   offer difficulty levels.
 - Undo for humans: allow it in local games only?
