@@ -114,12 +114,13 @@ def main():
     seat_rate = {s: seat_wins[s] / len(games) for s in range(nseats)}
     print('Seat win shares: ' + '  '.join(f'P{s} {100 * seat_rate[s]:.1f}%' for s in range(nseats)))
 
-    rows = []   # (features, seat, won, outright_win, kind)
-    for seats, (rets, kind, _) in games:
+    rows = []   # (features, seat, won, outright_win, kind, game_index)
+    for gi, (seats, (rets, kind, _)) in enumerate(games):
         w = rets.index(max(rets))
         for s, toks in seats.items():
             if len(toks) == 3:
-                rows.append((features(toks, cities), s, w == s, w == s and kind != 'timeout', kind))
+                rows.append((features(toks, cities), s, w == s, w == s and kind != 'timeout',
+                             kind, gi))
     names = list(rows[0][0])
 
     for name in names:
@@ -166,6 +167,67 @@ def main():
     print('  Rows are seat-games (3 per game), so a bucket and its complement are not independent.')
     print('  The measures overlap (e.g. widely spread tokens tend to sit farther from Timbuktu),')
     print('  so an effect in one can partly be another\'s; compare them before concluding.')
+
+    regression(rows, names, nseats)
+
+
+def _logit_fit(X, y, groups, iters=50):
+    """Logistic regression by Newton's method, with standard errors clustered by game
+    (a game's three seat-rows share one winner, so they are not independent)."""
+    import numpy as np
+    beta = np.zeros(X.shape[1])
+    for _ in range(iters):
+        p = 1 / (1 + np.exp(-X @ beta))
+        H = X.T @ (X * (p * (1 - p))[:, None])
+        step = np.linalg.solve(H, X.T @ (y - p))
+        beta += step
+        if np.max(np.abs(step)) < 1e-8:
+            break
+    p = 1 / (1 + np.exp(-X @ beta))
+    H_inv = np.linalg.inv(X.T @ (X * (p * (1 - p))[:, None]))
+    score = X * (y - p)[:, None]
+    order = np.argsort(groups, kind='stable')
+    g_sorted = groups[order]
+    cuts = np.flatnonzero(np.diff(g_sorted)) + 1
+    S = np.add.reduceat(score[order], np.r_[0, cuts], axis=0)   # per-game score sums
+    V = H_inv @ (S.T @ S) @ H_inv
+    return beta, np.sqrt(np.diag(V)), p
+
+
+def regression(rows, names, nseats):
+    """Each placement feature's effect with the others held fixed, adjusted for seat."""
+    import numpy as np
+    feats = [n for n in names if len({r[0][n] for r in rows}) > 2]   # skip near-constant ones
+    F = np.array([[r[0][n] for n in feats] for r in rows], dtype=float)
+    seat = np.array([r[1] for r in rows])
+    groups = np.array([r[5] for r in rows])
+    X = np.column_stack([np.ones(len(rows)), F]
+                        + [(seat == s).astype(float) for s in range(1, nseats)])
+    labels = ['intercept'] + feats + [f'seat P{s} (vs P0)' for s in range(1, nseats)]
+    for target, title in ((2, 'won (best final return)'), (3, 'won outright (Timbuktu / rare goods)')):
+        y = np.array([float(r[target]) for r in rows])
+        beta, se, p = _logit_fit(X, y, groups)
+        slope = np.mean(p * (1 - p))          # average d(probability)/d(logit)
+        print(f'\n  REGRESSION: {title}, all features together, seat-adjusted')
+        print(f'  (logistic; standard errors clustered by game; {len(rows):,} seat-games)')
+        print(f'    {"feature":<40} {"per unit":>9} {"10th->90th pct":>15} {"z":>6}')
+        for j, lab in enumerate(labels):
+            if j == 0:
+                continue
+            z = beta[j] / se[j]
+            per_unit = 100 * slope * beta[j]
+            if lab in feats:
+                col = F[:, feats.index(lab)]
+                lo, hi = np.percentile(col, [10, 90])
+                span = f'{100 * slope * beta[j] * (hi - lo):+6.1f} pts'
+                unit_note = f'{per_unit:+6.2f} pts'
+            else:
+                span, unit_note = '', f'{per_unit:+6.2f} pts'
+            flag = '  *' if abs(z) > 2 else ''
+            print(f'    {lab:<40} {unit_note:>9} {span:>15} {z:+6.1f}{flag}')
+    print('\n  per unit: change in win probability for +1 of the feature (e.g. +1 hex, +1 culture),')
+    print('  others held fixed. 10th->90th pct: change across the feature\'s typical range.')
+    print('  * = |z| > 2. These separate the overlapping features in the tables above.')
 
 
 if __name__ == '__main__':

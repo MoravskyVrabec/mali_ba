@@ -17,9 +17,25 @@ reports seat-adjusted win rates by placement feature.
        the same effect as spread);
      - all three tokens close to cities helps a little (+1.7 vs -3.6);
      - a token right next to Timbuktu is slightly worse (-2.0).
-   - **Next:** pool D011 + D012 for tighter margins (`analyze_placements.py`
-     takes several logs), then step 2.
-2. **If it matters, fit a placement heuristic from the data.** Add a logistic
+   - **Pooled D011-D013 (18,973 games, 2026-10-08): confirmed**, and every run
+     agrees on its own (spread: D011 -3.2/+2.3, D012 -2.8/+2.1, D013 -3.5/+2.0).
+2. **Regression done (2026-10-08, in `analyze_placements.py`).** Each feature with
+   the others held fixed, seat-adjusted, standard errors clustered by game.
+   Effect on winning over the feature's typical range (10th-90th percentile):
+   - spread (avg distance between own tokens): **+4.3 pts** (+1.2 per hex, z 7.9);
+     the only feature that also raises *outright* wins (+1.7 pts on ~7.7%)
+   - average distance to nearest city: **-3.2 pts** (-4.8 per hex, z -5.6)
+   - closest token to Timbuktu: **+1.8 pts** (+0.6 per hex, z 3.5), points wins only
+   - distinct cultures: +1.4 pts (z 3.0); mostly spread in disguise, no effect on
+     outright wins
+   - seat P2 still -3.2 vs P0 in the pooled data (D013 alone was nearly even)
+
+   Candidate heuristic score (win-probability points):
+   `+1.2*spread - 4.8*avg_city_distance + 0.6*timbuktu_distance + 1.4*cultures`.
+   **Next:** set the C++ placement heuristic's weights from this (step 3 below),
+   if placement is worth the effort for training; worth a few points at most.
+   *(Original plan for step 2, kept for context:)*
+   **If it matters, fit a placement heuristic from the data.** Add a logistic
    regression to `analyze_placements.py`: win probability from a few placement
    features (distance to Timbuktu, spread, culture diversity, ...), adjusted for
    seat. Its handful of weights become a readable scoring formula. A separate
