@@ -10,6 +10,7 @@ All of them live in `open_spiel/python/games/mali_ba/`.
 | Is the current run healthy, and is the value head improving? | `analyze_log.py` | 2-5 min, reads a log |
 | Is checkpoint X **stronger** than checkpoint Y? | `ab_eval.py` | ~55-80 min for 501 games, needs the whole machine |
 | Is the **policy** head learning? | `policy_probe.py` | seconds per checkpoint |
+| Did the **value** head improve between runs? | `value_probe.py` | seconds per checkpoint |
 | How decisive is the search? | `search_sharpness.py` | minutes |
 | Do starting token positions matter? | `analyze_placements.py` | about a minute, reads logs |
 
@@ -183,6 +184,41 @@ python policy_probe.py --positions probe_data/probe_positions_v2_600.json \
   learning things the heuristic does not know. It measures policy learning, not
   strength; head-to-head play is the strength test.
 - See `probe_data/README.md` for the set's history and the stale sets not to use.
+
+---
+
+## value_probe.py: did the value head improve between runs?
+
+analyze_log's value numbers score each run on its own games, so they do not compare
+across runs that play or keep different games (D011 looked better than D010 but was
+level head to head; D013 looked worse than D011 but won). This probe scores every
+checkpoint's value head on the **same** held-out positions.
+
+```bash
+# 1. record a set: any head-to-head can do it as a side effect
+python ab_eval.py --agent_a ... --agent_b ... --sims 300 --heuristic_weight 0.30 \
+    --games 501 --workers 64 --config_file $PWD/mali_ba.ini \
+    --record_positions /media/robp/UD/Projects/open_spiel/value_probe_set.npz > ab.log 2>&1
+# 2. score checkpoints on it (CPU, seconds each)
+python value_probe.py --positions /media/robp/UD/Projects/open_spiel/value_probe_set.npz \
+    --agents mali_ba_agent_vD011.weights.h5 mali_ba_agent_vD013.weights.h5
+```
+
+**How it works.** `--record_positions` saves every 8th move of each head-to-head game
+(the mover's observation) with the game's final result. Head-to-head games are never
+trained on, so the set is held out for every checkpoint. Positions are stored as
+observations, not move histories, so a rules change cannot break the set (unlike the
+policy probe); it only needs the same 192-plane layout. A 501-game run gives ~25,000
+positions (~18 MB).
+
+**What it reports.** Top-pick (does the value head rate highest the player with the
+best final return, timeout leader included), overall, by moves remaining and by how the
+game ended; MSE against final returns; calibration (average prediction minus average
+result). Against the first checkpoint listed, the top-pick difference with a 95%
+interval from resampling whole games (positions in one game are correlated).
+
+**Pitfalls.** The set reflects the two agents that played it; refresh it now and then
+from recent head-to-heads. It measures judgement on positions, not play.
 
 ---
 

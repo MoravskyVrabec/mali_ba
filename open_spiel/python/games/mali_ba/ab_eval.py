@@ -54,6 +54,48 @@ import time
 HEURISTIC = "heuristic"
 
 
+class _Recorder:
+    """Collects recorded positions from finished games and writes the value-probe set."""
+
+    def __init__(self, args):
+        self.args = args
+        self.games = []
+
+    def add(self, rec):
+        if rec is not None:
+            self.games.append(rec)
+
+    def save(self):
+        import json
+        import numpy as np
+        if not self.games:
+            print("  (no positions recorded)")
+            return
+        X, move, player, game, to_end, rets, ending = [], [], [], [], [], [], []
+        for gi, g in enumerate(self.games):
+            n = len(g["move"])
+            X.append(g["obs"])
+            move.append(g["move"]); player.append(g["player"])
+            game.append(np.full(n, gi, np.int32))
+            to_end.append((g["length"] - g["move"]).astype(np.int16))
+            rets.append(np.repeat(g["returns"][None, :], n, axis=0))
+            kind = ("timbuktu" if "Timbuktu" in g["reason"] else
+                    "rare_goods" if "Rare good" in g["reason"] else "timeout")
+            ending.extend([kind] * n)
+        meta = dict(created=time.strftime("%Y-%m-%d %H:%M"), config_file=self.args.config_file,
+                    agents=[a for a in (self.args.agent_a, self.args.agent_b, self.args.agent_c) if a],
+                    sims=self.args.sims, heuristic_weight=self.args.heuristic_weight,
+                    record_every=self.args.record_every, games=len(self.games),
+                    obs_shape=list(self.games[0]["obs"].shape[1:]))
+        np.savez_compressed(self.args.record_positions, X=np.concatenate(X),
+                            move=np.concatenate(move), player=np.concatenate(player),
+                            game=np.concatenate(game), moves_to_end=np.concatenate(to_end),
+                            returns=np.concatenate(rets), ending=np.array(ending),
+                            meta=json.dumps(meta))
+        print(f"  recorded {sum(len(g['move']) for g in self.games):,} positions from "
+              f"{len(self.games)} games -> {self.args.record_positions}")
+
+
 class _Progress:
     """One self-updating status line on the terminal, e.g.
         game 123/504 (24%) | 12m elapsed, ~38m left | A 41 B 50 of 91 decided
@@ -275,7 +317,9 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
             jobs.append((order, order, args.seed + (j * per_order + i) * 7919))
     nw = max(1, min(args.workers, len(jobs)))
     buckets = [jobs[i::nw] for i in range(nw)]
-    cfg = dict(agent_a=specs["a"], agent_b=specs["b"], agent_c=specs["c"], sims=args.sims,
+    recorder = _Recorder(args) if args.record_positions else None
+    cfg = dict(record_every=args.record_every if recorder else 0,
+               agent_a=specs["a"], agent_b=specs["b"], agent_c=specs["c"], sims=args.sims,
                uct_c_a=uct_a, uct_c_b=uct_b, uct_c_c=uct_c, cache_size=args.cache_size,
                heur_w=args.heuristic_weight, config_file=args.config_file, gpu=args.gpu)
     progress = _Progress(total)   # shown from the start, before servers load
@@ -310,7 +354,9 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
             errors += 1
             print(f"  worker error on order {''.join(msg[1]).upper()}: {msg[2]}", flush=True)
             continue
-        _, _, seating, winner, moves, reason = msg
+        _, _, seating, winner, moves, reason = msg[:6]
+        if recorder is not None:
+            recorder.add(msg[6])
         n += 1
         lengths.append(moves)
         for seat, side in enumerate(seating):
@@ -367,11 +413,18 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
         print(f"  worker errors: {errors}")
     print(f"  wall time: {(time.time()-t0)/60:.1f} min "
           f"({nw} workers, {(time.time()-t0)/max(1,n):.0f}s/game wall)")
+    if recorder is not None:
+        recorder.save()
     print("=" * 66)
 
 
-def play_game(game, actors, seed):
-    """actors: list of callables indexed by seat. Returns (winner_seat|None, moves, reason)."""
+def play_game(game, actors, seed, record_every=0):
+    """actors: list of callables indexed by seat. Returns (winner_seat|None, moves, reason).
+
+    With record_every > 0, also returns a dict of recorded positions (every Nth move:
+    the mover's observation as float16, the move number and the player to move) plus
+    the game's final returns, for value_probe.py.
+    """
     import numpy as np
     import pyspiel
     rng = random.Random(seed)
@@ -390,6 +443,7 @@ def play_game(game, actors, seed):
         state.apply_action(la[rng.randrange(len(la))])
         ms = pyspiel.mali_ba.downcast_state(state)
     moves = 0
+    rec_obs, rec_move, rec_player = [], [], []
     while not state.is_terminal():
         la = state.legal_actions()
         if not la:
@@ -398,6 +452,11 @@ def play_game(game, actors, seed):
         if p < 0:
             state.apply_action(la[rng.randrange(len(la))])
             continue
+        if record_every and moves % record_every == 0:
+            rec_obs.append(np.asarray(state.observation_tensor(p), dtype=np.float16)
+                           .reshape(game.observation_tensor_shape()))
+            rec_move.append(moves)
+            rec_player.append(p)
         try:
             a = actors[p](state)
         except Exception:
@@ -411,6 +470,13 @@ def play_game(game, actors, seed):
     rets = list(state.returns())
     won = "Max game length" not in reason
     winner = rets.index(max(rets)) if won else None
+    if record_every:
+        rec = None
+        if rec_obs:
+            rec = dict(obs=np.stack(rec_obs), move=np.array(rec_move, np.int16),
+                       player=np.array(rec_player, np.int8),
+                       returns=np.array(rets, np.float32), length=moves, reason=reason)
+        return winner, moves, reason, rec
     return winner, moves, reason
 
 
@@ -458,11 +524,13 @@ def _worker(jobs, cfg, out_q, slot=None, arenas=None):
     for key, seating, seed in jobs:
         actors = [acts[side] for side in seating]
         try:
-            winner, moves, reason = play_game(game, actors, seed)
+            res = play_game(game, actors, seed, record_every=cfg.get("record_every", 0))
+            winner, moves, reason = res[:3]
+            rec = res[3] if len(res) > 3 else None
         except Exception as e:
             out_q.put(("error", key, str(e)[:120]))
             continue
-        out_q.put(("ok", key, seating, winner, moves, reason))
+        out_q.put(("ok", key, seating, winner, moves, reason, rec))
     out_q.put(("done",))
 
 
@@ -485,6 +553,13 @@ def main():
                     help="uct_c for agent A only (overrides --uct_c)")
     ap.add_argument("--uct_c_b", type=float, default=None,
                     help="uct_c for agent B only (overrides --uct_c)")
+    ap.add_argument("--record_positions", default=None, metavar="FILE.npz",
+                    help="save positions from these games (every --record_every moves, "
+                         "with each game's final result) as a value-probe set for "
+                         "value_probe.py. Head-to-head games are never trained on, so the "
+                         "set is held out for every checkpoint.")
+    ap.add_argument("--record_every", type=int, default=8,
+                    help="with --record_positions, keep every Nth move (default 8)")
     ap.add_argument("--agent_c", default=None,
                     help='three-way mode: a third agent (weights stem or "heuristic"). Each '
                          'game seats A, B and C once each, cycling through all 6 seat orders '
@@ -612,7 +687,9 @@ def main():
             jobs.append((rot, seating, args.seed + (j * per_rot + i) * 7919))
     nw = max(1, min(args.workers, len(jobs)))
     buckets = [jobs[i::nw] for i in range(nw)]
-    cfg = dict(agent_a=args.agent_a, agent_b=args.agent_b, agent_c=None, sims=args.sims,
+    recorder = _Recorder(args) if args.record_positions else None
+    cfg = dict(record_every=args.record_every if recorder else 0,
+               agent_a=args.agent_a, agent_b=args.agent_b, agent_c=None, sims=args.sims,
                uct_c_a=uct_a, uct_c_b=uct_b, cache_size=args.cache_size,
                heur_w=args.heuristic_weight, config_file=args.config_file,
                gpu=args.gpu)
@@ -644,7 +721,9 @@ def main():
             errors += 1
             print(f"  worker error on A@{','.join(map(str,msg[1]))}: {msg[2]}", flush=True)
             continue
-        _, rot, _seating, winner, moves, reason = msg
+        _, rot, _seating, winner, moves, reason = msg[:6]
+        if recorder is not None:
+            recorder.add(msg[6])
         n += 1
         lengths.append(moves)
         a_by_rot[rot][1] += 1
@@ -704,6 +783,8 @@ def main():
         print(f"  worker errors: {errors}")
     print(f"  wall time: {(time.time()-t0)/60:.1f} min "
           f"({nw} workers, {(time.time()-t0)/max(1,n):.0f}s/game wall)")
+    if recorder is not None:
+        recorder.save()
     print("=" * 66)
 
 
