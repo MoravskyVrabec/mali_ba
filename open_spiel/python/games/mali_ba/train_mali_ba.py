@@ -592,7 +592,10 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
 
     for _ in range(args.games_per_actor):
         job = job_queue.get()
-        if job is None:  break
+        if job is None:
+            # The trainer's stop sentinel. Remote workers read this return value so they
+            # stop instead of respawning the actor (remote_actors.py).
+            return 'stopped'
 
         episode_num, (policy_weights, value_weights), game_rng_seed = job[:3]
         _rg_heuristic_override = job[4]  # None for non-focused games, set at dispatch (line ~1511)
@@ -2385,6 +2388,15 @@ def main(args):
                 _q.cancel_join_thread()
             except Exception:
                 pass
+
+    # The replay-count Manager is a separate server process; os._exit below skips the
+    # finalizer that normally stops it, and it holds the terminal's output pipe, so a
+    # `| tee` never returns (D015, 2026-10-09).
+    if args.replay_counts is not None:
+        try:
+            _replay_mgr.shutdown()
+        except Exception:
+            pass
 
     log(LogLevel.INFO, "All processes terminated.")
     end_time = time.time()

@@ -55,6 +55,7 @@ _WATCHDOG_ENV = 'MALIBA_REMOTE_WATCHDOG_RESTARTS'
 _WATCHDOG_POLL_S = 120          # how often to ask the trainer
 _WATCHDOG_MAX_FAILURES = 5      # consecutive unanswered checks (~10 min) before restarting
 _RECONNECT_WINDOW_S = 30 * 60   # after a restart, keep retrying the connection this long
+_STOPPED_EXIT = 3               # actor exit code: it received the trainer's stop sentinel
 
 
 def _should_relay(line):
@@ -109,11 +110,12 @@ def _actor_worker(actor_id, initial_game_params, actor_args,
         sys.path.insert(0, script_dir)
 
     from train_mali_ba import actor_process
+    stopped = False
     try:
-        actor_process(actor_id, initial_game_params, actor_args,
-                      job_queue, result_queue, games_per_actor,
-                      arena=arena, server_weights_queue=server_weights_queue,
-                      inference_slot=inference_slot)
+        stopped = actor_process(actor_id, initial_game_params, actor_args,
+                                job_queue, result_queue, games_per_actor,
+                                arena=arena, server_weights_queue=server_weights_queue,
+                                inference_slot=inference_slot) == 'stopped'
     finally:
         if relay_thread is not None:
             # Replace fd 1/2 with devnull so the relay thread sees EOF and exits.
@@ -122,6 +124,8 @@ def _actor_worker(actor_id, initial_game_params, actor_args,
             os.dup2(dn, 2)
             os.close(dn)
             relay_thread.join(timeout=5.0)
+    if stopped:
+        sys.exit(_STOPPED_EXIT)
 
 
 def main():
@@ -419,7 +423,32 @@ def main():
                 if args.actor_id_start <= aid < next_actor_id and t >= wd_t0]
         return snap['now'] - (max(mine) if mine else wd_t0)
 
-    # Keep the pool full: respawn actors that finish their quota
+    def trainer_reachable():
+        import socket
+        try:
+            socket.create_connection((args.server_host, args.server_port), timeout=5).close()
+            return True
+        except OSError:
+            return False
+
+    def restart(why):
+        """Stop the actors and re-exec this worker, which then retries the connection
+        for _RECONNECT_WINDOW_S: a network blip recovers, and a trainer that has
+        exited makes the worker give up and exit at the end of that window."""
+        n = int(os.environ.get(_WATCHDOG_ENV, '0')) + 1
+        print(f"[Remote] WATCHDOG: {why}. Restarting this worker "
+              f"(restart #{n}): stopping actors and reconnecting.", flush=True)
+        shutdown()
+        os.environ[_WATCHDOG_ENV] = str(n)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    # Keep the pool full: respawn actors that finish their quota. An actor the
+    # trainer told to stop ends the worker: the run is over (before, it was respawned,
+    # and the new actors looped starting and failing; D015, 2026-10-09). An actor that
+    # fails while the trainer's port is closed goes through the watchdog restart.
+    # A failure while the trainer is still reachable is respawned as before.
     last_stat = time.time()
     last_wd = time.time()
     wd_failures = 0
@@ -432,6 +461,15 @@ def main():
                 freed = inference_slot_by_proc.pop(p, None)
                 if freed is not None:
                     inference_free_slots.append(freed)
+                if p.exitcode == _STOPPED_EXIT:
+                    print(f"[Remote] Actor {aid} received the trainer's stop signal. "
+                          f"The run is over: stopping all actors.", flush=True)
+                    shutdown()
+                    print("[Remote] All actors stopped.")
+                    return
+                if p.exitcode != 0 and not trainer_reachable():
+                    restart(f"actor {aid} exited (code {p.exitcode}) and the trainer at "
+                            f"{args.server_host}:{args.server_port} is not reachable")
                 print(f"[Remote] Actor {aid} finished, respawning...", flush=True)
                 spawn()
             if inference_arena is not None and time.time() - last_stat >= 300:
@@ -447,17 +485,9 @@ def main():
                 wd_failures = wd_failures + 1 if stale is None else 0
                 limit = args.watchdog_minutes * 60
                 if (stale is not None and stale > limit) or wd_failures >= _WATCHDOG_MAX_FAILURES:
-                    why = (f"the trainer has received none of this worker's games for "
-                           f"{stale / 60:.1f} min" if stale is not None else
-                           f"the trainer has not answered {wd_failures} checks in a row")
-                    n = int(os.environ.get(_WATCHDOG_ENV, '0')) + 1
-                    print(f"[Remote] WATCHDOG: {why}. Restarting this worker "
-                          f"(restart #{n}): stopping actors and reconnecting.", flush=True)
-                    shutdown()
-                    os.environ[_WATCHDOG_ENV] = str(n)
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                    restart(f"the trainer has received none of this worker's games for "
+                            f"{stale / 60:.1f} min" if stale is not None else
+                            f"the trainer has not answered {wd_failures} checks in a row")
             time.sleep(2.0)
     except KeyboardInterrupt:
         print("\n[Remote] Shutting down...")
