@@ -134,3 +134,8 @@ PC (e.g. business SFF with i7-12700/13700, 32-64 GB, low-profile RTX A2000;
 ~$650-900 used). Workers need a GPU now (inference server); count physical
 cores, not vCPUs. Rule of thumb: owning wins if a worker would run most days for
 more than ~4-6 months.
+Earlier distributed setups (Google Cloud spot workers and Hetzner Cloud, networked
+with Tailscale) are documented in `docs/guides/GCP_SETUP.md` (section 9 = Hetzner)
+and `docs/guides/DISTRIBUTED_TRAINING.md`, with scripts in
+`open_spiel/python/games/mali_ba/gcp/`. They predate the GPU inference server (July
+workers were CPU-only), so refresh them for GPU workers before reuse.
