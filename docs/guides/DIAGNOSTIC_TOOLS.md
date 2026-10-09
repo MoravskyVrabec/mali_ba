@@ -269,11 +269,17 @@ python analyze_placements.py /media/robp/UD/Projects/open_spiel/train_runD011.lo
 - "Won" means best return: the winner of a Timbuktu or rare-goods game, or the
   leader at a timeout. It also shows outright wins and the Timbuktu/rare-goods split.
 
-**Pitfalls.** The features overlap (spread-out tokens also tend to be farther from
-Timbuktu), so an effect in one can belong to another; a regression to separate them
-is on the to-do list. Rows are seat-games (three per game).
-First result (D011, 6,156 games): effects up to ~3-5 points; spreading tokens apart
-is the main one.
+**Regression section.** Because the features overlap (spread-out tokens also tend to
+sit farther from Timbuktu and near more cultures), the script ends with a logistic
+regression: each feature's effect with the others held fixed, adjusted for seat, with
+standard errors clustered by game. Read this, not the single-feature tables, when
+deciding which feature matters. It is reported for best-return wins and for outright
+wins.
+
+**Result (D011-D013 pooled, 18,973 games):** spreading tokens apart is the main effect
+(+4.3 points across its typical range, and the only one that raises outright wins);
+each token near its own city (-3.2 points for being farther); a little better away
+from Timbuktu (+1.8); culture diversity is mostly spread in disguise.
 
 ---
 
