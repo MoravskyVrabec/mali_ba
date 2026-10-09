@@ -1547,6 +1547,26 @@ def plot_win_rate(mcts_games, window=50, trainer_losses=None, run_start=None):
     ax1.axhline(y=sum(is_win) / len(is_win) * 100, color='purple',
                 linestyle='--', linewidth=1, alpha=0.5,
                 label=f'Overall avg ({sum(is_win)/len(is_win)*100:.1f}%)')
+
+    # Least-squares trend of win rate over the run, fitted to every game (not to the
+    # moving average). The label gives the fitted start and end values and the change
+    # with its 95% margin, so a slope within noise is not over-read.
+    _tx = [to_hours(g['time']) for g in mcts_games]
+    _ty = [100.0 * w for w in is_win]
+    _n = len(_tx)
+    _mx, _my = sum(_tx) / _n, sum(_ty) / _n
+    _sxx = sum((x - _mx) ** 2 for x in _tx)
+    if _n > 2 and _sxx > 0:
+        _slope = sum((x - _mx) * (y - _my) for x, y in zip(_tx, _ty)) / _sxx
+        _icpt = _my - _slope * _mx
+        _resid = sum((y - (_icpt + _slope * x)) ** 2 for x, y in zip(_tx, _ty))
+        _se = (_resid / (_n - 2) / _sxx) ** 0.5
+        _x0, _x1 = _tx[0], _tx[-1]
+        _y0, _y1 = _icpt + _slope * _x0, _icpt + _slope * _x1
+        _chg, _margin = _y1 - _y0, 1.96 * _se * (_x1 - _x0)
+        ax1.plot([_x0, _x1], [_y0, _y1], color='darkorange', linewidth=2,
+                 label=f'Trend {_y0:.1f}% -> {_y1:.1f}% '
+                       f'(change {_chg:+.1f} ± {_margin:.1f} pts, 95%)')
     ax1.set_ylabel('Win Rate (%)', color='purple')
     ax1.tick_params(axis='y', labelcolor='purple')
     ax1.set_ylim(0, 100)
