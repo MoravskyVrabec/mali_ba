@@ -32,8 +32,15 @@ reports seat-adjusted win rates by placement feature.
 
    Candidate heuristic score (win-probability points):
    `+1.2*spread - 4.8*avg_city_distance + 0.6*timbuktu_distance + 1.4*cultures`.
-   **Next:** set the C++ placement heuristic's weights from this (step 3 below),
-   if placement is worth the effort for training; worth a few points at most.
+   **Built (2026-10-08), off by default:** `placement_mode = heuristic` in the
+   ini makes bots sample placements by this score (spread and Timbuktu distance
+   capped at 6 and 4, where the data levelled off), with
+   `placement_random_fraction = 0.20` of games random as a control group and
+   `placement_temperature = 1.0`. Offline, it moves spread 4.9 -> 6.2, city
+   distance 1.23 -> 1.03, Timbuktu distance 2.5 -> 3.5, cultures 2.75 -> 2.96, with
+   293/300 distinct openings. **Planned as D015's one change**; judge by the
+   PLACEMENT MODES table in `analyze_placements.py` (heuristic vs random games, same
+   run), seat balance (serpentine order now matters) and a head-to-head vs D014.
    *(Original plan for step 2, kept for context:)*
    **If it matters, fit a placement heuristic from the data.** Add a logistic
    regression to `analyze_placements.py`: win probability from a few placement

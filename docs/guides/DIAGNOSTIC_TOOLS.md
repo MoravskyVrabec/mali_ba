@@ -269,6 +269,14 @@ python analyze_placements.py /media/robp/UD/Projects/open_spiel/train_runD011.lo
 - "Won" means best return: the winner of a Timbuktu or rare-goods game, or the
   leader at a timeout. It also shows outright wins and the Timbuktu/rare-goods split.
 
+**Placement modes.** From 2026-10-08 bots can place tokens with a heuristic
+(`placement_mode = heuristic` in the ini; the SETUP line then carries
+`placement=heuristic` or `placement=random`). Effect estimates use only randomly placed
+games by default (`--placement all` to include the rest), because only those are clean.
+When a log has both kinds, a **PLACEMENT MODES** table compares them (outright-win
+rate, Timbuktu / rare-goods split, median win length). The mode is drawn at random per
+game, so that comparison is a fair test of what heuristic placement does.
+
 **Regression section.** Because the features overlap (spread-out tokens also tend to
 sit farther from Timbuktu and near more cultures), the script ends with a logistic
 regression: each feature's effect with the others held fixed, adjusted for seat, with

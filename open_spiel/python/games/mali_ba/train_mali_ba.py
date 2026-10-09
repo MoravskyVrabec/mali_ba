@@ -1,3 +1,4 @@
+import math
 import os
 import re
 import sys
@@ -468,6 +469,65 @@ def log_pass_diagnostic(state, player, root, actor_id, episode_num, move_count):
             f"  [PASS_DIAG] Near-forced pass. All legal actions: {action_strs}")
 
 
+# --- Heuristic token placement (placement_mode = heuristic) -----------------------
+# Weights in win-probability points, from analyze_placements.py's regression on 18,973
+# randomly placed games (D011-D013, 2026-10-08): spread +1.2/hex, average distance to
+# the nearest city -4.8/hex, closest token's distance from Timbuktu +0.6/hex, distinct
+# cultures of the nearest cities +1.4 each. Spread and Timbuktu distance are capped at
+# the range where the data showed gains (their top buckets levelled off), so bots are
+# not pushed to extremes the data never covered.
+_PLACEMENT_WEIGHTS = {'spread': 1.2, 'city': -4.8, 'timbuktu': 0.6, 'cultures': 1.4}
+_PLACEMENT_CAPS = {'spread': 6.0, 'timbuktu': 4.0}
+_RE_HEX = re.compile(r'\((-?\d+),(-?\d+),(-?\d+)\)')
+
+
+def _hex_dist(a, b):
+    return max(abs(a[0] - b[0]), abs(a[1] - b[1]), abs(a[2] - b[2]))
+
+
+def _placement_cities(game):
+    """[(coord, culture)] and Timbuktu's coord, for placement scoring."""
+    cities, timbuktu = [], None
+    for c in game.get_cities():
+        loc = (c.location.x, c.location.y, c.location.z)
+        cities.append((loc, c.culture))
+        if c.name == 'Timbuktu':
+            timbuktu = loc
+    return cities, timbuktu
+
+
+def _placement_score(tokens, cities, timbuktu):
+    """Regression-weighted score of one seat's (partial) set of token hexes."""
+    near = [min(cities, key=lambda c: _hex_dist(t, c[0])) for t in tokens]
+    avg_city = sum(_hex_dist(t, c[0]) for t, c in zip(tokens, near)) / len(tokens)
+    pairs = [(a, b) for i, a in enumerate(tokens) for b in tokens[i + 1:]]
+    spread = sum(_hex_dist(a, b) for a, b in pairs) / len(pairs) if pairs else 0.0
+    tim = min(_hex_dist(t, timbuktu) for t in tokens) if timbuktu else 0.0
+    w, cap = _PLACEMENT_WEIGHTS, _PLACEMENT_CAPS
+    return (w['spread'] * min(spread, cap['spread']) + w['city'] * avg_city
+            + w['timbuktu'] * min(tim, cap['timbuktu'])
+            + w['cultures'] * len({c[1] for c in near}))
+
+
+def _choose_placement(state, legal_actions, own_tokens, cities, timbuktu, temperature):
+    """Pick a placement hex in proportion to exp(score / temperature), where score is
+    the seat's token set with that hex added. Sampling, not argmax, keeps openings varied."""
+    player = state.current_player()
+    cands, scores = [], []
+    for a in legal_actions:
+        m = _RE_HEX.search(state.action_to_string(player, a))
+        if not m:
+            continue
+        h = tuple(int(v) for v in m.groups())
+        cands.append(a)
+        scores.append(_placement_score(own_tokens + [h], cities, timbuktu))
+    if not cands:
+        return random.choice(legal_actions)
+    top = max(scores)
+    weights = [math.exp((s - top) / max(temperature, 1e-6)) for s in scores]
+    return random.choices(cands, weights=weights)[0]
+
+
 def actor_process(actor_id, game_params, args, job_queue, result_queue, games_per_actor,
                   arena=None, server_weights_queue=None, inference_slot=None):
     # --- (Delayed imports are the same and correct) ---
@@ -503,6 +563,7 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
     # --- Create ONE game object and ONE model for the actor's lifetime ---
     log(LogLevel.INFO, f"Actor {actor_id}: Initializing its game instance and model.")
     game = pyspiel.load_game(args.game_name, game_params)
+    _place_cities, _place_timbuktu = _placement_cities(game)
 
     # Batched GPU inference client -- must come after `game`, whose observation shape
     # it needs. Local models are still built below: they serve the periodic
@@ -636,6 +697,11 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
         mali_ba_state = pyspiel.mali_ba.downcast_state(state)
         if mali_ba_state.current_phase() == pyspiel.mali_ba.Phase.PLACE_TOKEN:
             log(LogLevel.INFO, f"Actor {actor_id}, Game {episode_num}: Starting token placement phase.")
+            # Per game, all seats: heuristic placement, except a random fraction kept as a
+            # control group (and so analyze_placements can keep measuring placement).
+            _placement = ('heuristic' if getattr(args, 'placement_mode', 'random') == 'heuristic'
+                          and random.random() >= getattr(args, 'placement_random_fraction', 0.20)
+                          else 'random')
             
             # --- START OF OPTIMIZATION ---
             while mali_ba_state.current_phase() == pyspiel.mali_ba.Phase.PLACE_TOKEN:
@@ -648,7 +714,14 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                     break
                 
                 # Use Python's random for this, as it's already seeded.
-                action = random.choice(legal_actions)
+                if _placement == 'heuristic':
+                    _own = [tuple(int(v) for v in _RE_HEX.search(t).groups())
+                            for t in _setup_tokens.get(mali_ba_state.current_player(), [])]
+                    action = _choose_placement(mali_ba_state, legal_actions, _own,
+                                               _place_cities, _place_timbuktu,
+                                               getattr(args, 'placement_temperature', 1.0))
+                else:
+                    action = random.choice(legal_actions)
                 
                 # Optional: Log the placement move
                 action_str = mali_ba_state.action_to_string(mali_ba_state.current_player(), action)
@@ -664,7 +737,8 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
             # clean (randomised) comparison. Must not contain " plays ": the remote
             # log relay drops such lines.
             log(LogLevel.INFO,
-                f"Actor {actor_id}, Game {episode_num}: SETUP layout={_setup_layout} tokens "
+                f"Actor {actor_id}, Game {episode_num}: SETUP layout={_setup_layout} "
+                f"placement={_placement} tokens "
                 + " ".join(f"P{p}=" + ";".join(_setup_tokens.get(p, []))
                            for p in range(game.num_players())))
 
@@ -1767,6 +1841,9 @@ def main(args):
             'random_no_kill_thresh':               getattr(args, 'random_no_kill_thresh', 0.0),
             'declining_best_thresh':               getattr(args, 'declining_best_thresh', 0.0),
             'stalled_thresh':                      getattr(args, 'stalled_thresh', 0.20),
+            'placement_mode':                      getattr(args, 'placement_mode', 'random'),
+            'placement_random_fraction':           getattr(args, 'placement_random_fraction', 0.20),
+            'placement_temperature':               getattr(args, 'placement_temperature', 1.0),
             'rare_goods_actor_fraction':           getattr(args, 'rare_goods_actor_fraction', 0.0),
             'rare_goods_added_heuristic_weight':   getattr(args, 'rare_goods_added_heuristic_weight', 0.30),
             'rare_goods_added_tier1_sims':         getattr(args, 'rare_goods_added_tier1_sims', 0),
@@ -2570,6 +2647,9 @@ if __name__ == "__main__":
     parsed_args.random_no_kill_thresh = _ini_float('random_no_kill_thresh', 0.0)
     parsed_args.declining_best_thresh = _ini_float('declining_best_thresh', 0.0)
     parsed_args.stalled_thresh = _ini_float('stalled_thresh', 0.20)
+    parsed_args.placement_mode = _ini.get('MLTraining', 'placement_mode', fallback='random').strip().lower()
+    parsed_args.placement_random_fraction = _ini_float('placement_random_fraction', 0.20)
+    parsed_args.placement_temperature = _ini_float('placement_temperature', 1.0)
     if parsed_args.sim_tier1_sims is None:
         parsed_args.sim_tier1_sims = _ini_int('sim_tier1_sims', 150)
     if parsed_args.sim_tier2_start is None:
@@ -2686,6 +2766,11 @@ if __name__ == "__main__":
               f'decisions {"exempt" if parsed_args.playout_cap_exempt_route_decisions else "capped"}')
     else:
         print(f'  playout cap                 : off')
+    if parsed_args.placement_mode == 'heuristic':
+        print(f'  token placement             : heuristic (temperature {parsed_args.placement_temperature:g}), '
+              f'{parsed_args.placement_random_fraction:.0%} of games random')
+    else:
+        print(f'  token placement             : random')
     if parsed_args.aux_targets:
         print(f'  aux targets                 : ON  win type (weight {parsed_args.aux_win_type_weight:g}), '
               f'moves left (weight {parsed_args.aux_moves_left_weight:g})')

@@ -26,7 +26,7 @@ import re
 from collections import defaultdict
 from itertools import combinations
 
-RE_SETUP = re.compile(r'Game (\d+): SETUP layout=(\S+) tokens (.*)$')
+RE_SETUP = re.compile(r'Game (\d+): SETUP layout=(\S+) (?:placement=(\w+) )?tokens (.*)$')
 RE_FINISHED = re.compile(r'Game (\d+): FINISHED in (\d+) moves\..*?Reason: \'([^\']*)\'.*?'
                          r'Final Returns: \[([^\]]+)\]')
 RE_COORD = re.compile(r'\((-?\d+),(-?\d+),(-?\d+)\)')
@@ -40,7 +40,7 @@ def hex_dist(a, b):
 
 
 def parse(paths):
-    setups, results = {}, {}
+    setups, results, modes = {}, {}, {}
     skipped_setups = 0
     for path in paths:
         with open(path, errors='ignore') as f:
@@ -49,9 +49,10 @@ def parse(paths):
                     m = RE_SETUP.search(line)
                     if m:
                         seats = {int(s): [tuple(map(int, c)) for c in RE_COORD.findall(coords)]
-                                 for s, coords in RE_SEAT.findall(m.group(3))}
+                                 for s, coords in RE_SEAT.findall(m.group(4))}
                         if seats and all(len(t) == 3 for t in seats.values()):
                             setups[(path, m.group(1))] = seats
+                            modes[(path, m.group(1))] = m.group(3) or 'random'
                         else:
                             skipped_setups += 1
                 elif 'FINISHED in' in line:
@@ -65,7 +66,32 @@ def parse(paths):
     if skipped_setups:
         print(f'({skipped_setups} garbled SETUP line(s) skipped: output from two processes '
               f'merged onto one line)')
-    return setups, results
+    return setups, results, modes
+
+
+def compare_modes(setups, results, modes):
+    """Heuristic vs random placement games in the same run(s). The mode is chosen at
+    random per game, so this is a fair test of what heuristic placement does."""
+    import statistics
+    by = {}
+    for k in setups:
+        if k in results:
+            by.setdefault(modes.get(k, 'random'), []).append(results[k])
+    if len(by) < 2:
+        return
+    print('\nPLACEMENT MODES (chosen at random per game, so a fair comparison)')
+    print(f'    {"mode":<10} {"games":>6} {"outright wins":>14} {"Timbuktu":>9} {"rare":>6} '
+          f'{"median win length":>18}')
+    for mode in sorted(by):
+        rs = by[mode]
+        n = len(rs)
+        tim = sum(r[1] == 'timbuktu' for r in rs)
+        rare = sum(r[1] == 'rare_goods' for r in rs)
+        se = 100 * ((tim + rare) / n * (1 - (tim + rare) / n) / n) ** 0.5
+        win_lens = [r[2] for r in rs if r[1] != 'timeout']
+        med = f'{statistics.median(win_lens):.0f}' if win_lens else '-'
+        print(f'    {mode:<10} {n:>6} {100 * (tim + rare) / n:8.1f}% ±{2 * se:3.1f} '
+              f'{100 * tim / n:8.1f}% {100 * rare / n:5.1f}% {med:>18}')
 
 
 def features(tokens, cities):
@@ -90,6 +116,9 @@ def main():
     ap = argparse.ArgumentParser(description='Win rates by starting token placement')
     ap.add_argument('logs', nargs='+')
     ap.add_argument('--config_file', default='mali_ba.ini')
+    ap.add_argument('--placement', choices=('random', 'heuristic', 'all'), default='random',
+                    help='which games to analyse for placement effects (default random: '
+                         'only randomly placed games give clean, causal estimates)')
     ap.add_argument('--min_n', type=int, default=150,
                     help='hide buckets with fewer seat-games than this (default 150)')
     args = ap.parse_args()
@@ -99,8 +128,14 @@ def main():
     cities = [(c.name, (c.location.x, c.location.y, c.location.z), c.culture)
               for c in game.get_cities()]
 
-    setups, results = parse(args.logs)
-    games = [(setups[k], results[k]) for k in setups if k in results]
+    setups, results, modes = parse(args.logs)
+    compare_modes(setups, results, modes)
+    keep = [k for k in setups if k in results
+            and (args.placement == 'all' or modes.get(k, 'random') == args.placement)]
+    n_other = sum(1 for k in setups if k in results) - len(keep)
+    if n_other:
+        print(f'({n_other} games with other placement modes left out; --placement all to include)')
+    games = [(setups[k], results[k]) for k in keep]
     print(f'{len(setups)} games with a SETUP line, {len(results)} results, '
           f'{len(games)} matched (unmatched setups are mostly culled games).')
     if not games:
