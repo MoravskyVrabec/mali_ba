@@ -42,6 +42,7 @@ Examples
 """
 
 import argparse
+from collections import Counter
 import itertools
 import math
 import multiprocessing as mp
@@ -335,6 +336,7 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
     by_seat = [0] * nseats
     draws = errors = n = 0
     lengths = []
+    ended = {s: [0, 0] for s in "abc"}   # decided games each agent ended: [won it, handed it on]
     t0 = time.time()
     out_q = mp.Queue()
     procs = [mp.Process(target=_worker, args=(b, cfg, out_q, i, arenas), daemon=True)
@@ -358,6 +360,9 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
         _, _, seating, winner, moves, reason = msg[:6]
         if recorder is not None:
             recorder.add(msg[6])
+        trigger = msg[7] if len(msg) > 7 else None
+        if winner is not None and trigger is not None and 0 <= trigger < nseats:
+            ended[seating[trigger]][0 if trigger == winner else 1] += 1
         n += 1
         lengths.append(moves)
         for seat, side in enumerate(seating):
@@ -403,6 +408,10 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
     for s in "abc":
         print(f"  {s.upper()} wins from seat 0/1/2: "
               + "  ".join(f"{seat_wins[s][k]}/{seat_games[s][k]}" for k in range(nseats)))
+    for s in "abc":
+        if sum(ended[s]):
+            print(f"  decided games ended by {s.upper()} ({sum(ended[s])}): won it {ended[s][0]}, "
+                  f"handed it to another agent {ended[s][1]}")
     if lengths:
         lengths.sort()
         print(f"  game length: median {lengths[len(lengths)//2]}  "
@@ -420,11 +429,12 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
 
 
 def play_game(game, actors, seed, record_every=0):
-    """actors: list of callables indexed by seat. Returns (winner_seat|None, moves, reason).
+    """actors: list of callables indexed by seat.
+    Returns (winner_seat|None, moves, reason, rec, trigger_seat|None).
 
-    With record_every > 0, also returns a dict of recorded positions (every Nth move:
-    the mover's observation as float16, the move number and the player to move) plus
-    the game's final returns, for value_probe.py.
+    rec is None unless record_every > 0: then a dict of recorded positions (every Nth
+    move: the mover's observation as float16, the move number and the player to move)
+    plus the game's final returns, for value_probe.py.
     """
     import numpy as np
     import pyspiel
@@ -471,14 +481,14 @@ def play_game(game, actors, seed, record_every=0):
     rets = list(state.returns())
     won = "Max game length" not in reason
     winner = rets.index(max(rets)) if won else None
-    if record_every:
-        rec = None
-        if rec_obs:
-            rec = dict(obs=np.stack(rec_obs), move=np.array(rec_move, np.int16),
-                       player=np.array(rec_player, np.int8),
-                       returns=np.array(rets, np.float32), length=moves, reason=reason)
-        return winner, moves, reason, rec
-    return winner, moves, reason
+    # The seat whose move met the win condition; it is not always the winner.
+    trigger = ms.get_game_end_triggering_player() if won else None
+    rec = None
+    if record_every and rec_obs:
+        rec = dict(obs=np.stack(rec_obs), move=np.array(rec_move, np.int16),
+                   player=np.array(rec_player, np.int8),
+                   returns=np.array(rets, np.float32), length=moves, reason=reason)
+    return winner, moves, reason, rec, trigger
 
 
 def _worker(jobs, cfg, out_q, slot=None, arenas=None):
@@ -527,12 +537,11 @@ def _worker(jobs, cfg, out_q, slot=None, arenas=None):
         actors = [acts[side] for side in seating]
         try:
             res = play_game(game, actors, seed, record_every=cfg.get("record_every", 0))
-            winner, moves, reason = res[:3]
-            rec = res[3] if len(res) > 3 else None
+            winner, moves, reason, rec, trigger = res
         except Exception as e:
             out_q.put(("error", key, str(e)[:120]))
             continue
-        out_q.put(("ok", key, seating, winner, moves, reason, rec))
+        out_q.put(("ok", key, seating, winner, moves, reason, rec, trigger))
     out_q.put(("done",))
 
 
@@ -688,6 +697,11 @@ def main():
     by_seat = {s: [0, 0] for s in range(nseats)}
     a_by_rot = {r: [0, 0] for r in rotations}
     lengths = []
+    # Who ended each decided game: (trigger's agent, outcome) -> count, outcome being
+    # "won", "own" (another seat of the same agent won) or "other" (the other agent won).
+    # Under the old rewards a losing bot gained by ending the game, which in this
+    # 1-vs-2-seat format can hand wins to its own agent's other seat (2026-10-09).
+    endings = Counter()
 
     # Build the job list with rotations INTERLEAVED (A@0, A@1, A@2, A@0, ...), then deal
     # it round-robin to workers, so the games finished at any point are balanced across
@@ -737,9 +751,14 @@ def main():
             errors += 1
             print(f"  worker error on A@{','.join(map(str,msg[1]))}: {msg[2]}", flush=True)
             continue
-        _, rot, _seating, winner, moves, reason = msg[:6]
+        _, rot, seating, winner, moves, reason = msg[:6]
         if recorder is not None:
             recorder.add(msg[6])
+        trigger = msg[7] if len(msg) > 7 else None
+        if winner is not None and trigger is not None and 0 <= trigger < nseats:
+            t_side = seating[trigger]
+            endings[(t_side, "won" if trigger == winner else
+                     "own" if seating[winner] == t_side else "other")] += 1
         n += 1
         lengths.append(moves)
         a_by_rot[rot][1] += 1
@@ -792,6 +811,12 @@ def main():
         lengths.sort()
         print(f"  game length: median {lengths[len(lengths)//2]}  "
               f"min {lengths[0]}  max {lengths[-1]}")
+    for side in ("a", "b"):
+        tot = sum(v for (t, _), v in endings.items() if t == side)
+        if tot:
+            print(f"  decided games ended by {side.upper()} ({tot}): won it {endings[(side, 'won')]}, "
+                  f"handed it to its own other seat {endings[(side, 'own')]}, "
+                  f"handed it to the other agent {endings[(side, 'other')]}")
     for name, st in server_stats:
         print(f"  inference server ({name}): {st['requests']:,} evals, "
               f"avg batch {st['avg_batch']:.1f}, {st['ms_per_request']:.3f} ms/eval")
