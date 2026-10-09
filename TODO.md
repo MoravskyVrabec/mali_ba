@@ -124,3 +124,13 @@ the trained network as an opponent.
 - Plan: GameSession + one bot interface (heuristic, network + MCTS, data-fitted
   placement) with headless tests; engine changes (per-decision move pruning,
   describe-action); then move the GUI onto it; then a web server.
+
+## Parked: extra training compute (added 2026-10-08)
+
+Decide only once training is clearly improving (after the policy-learning work).
+First trial a rented GPU box (marketplace, a few hours) as a remote worker to
+measure games per hour per dollar; then compare with owning a small-form-factor
+PC (e.g. business SFF with i7-12700/13700, 32-64 GB, low-profile RTX A2000;
+~$650-900 used). Workers need a GPU now (inference server); count physical
+cores, not vCPUs. Rule of thumb: owning wins if a worker would run most days for
+more than ~4-6 months.
