@@ -108,3 +108,19 @@ uniform), so there is nothing sharp to learn.
     epochs. The value head is data-limited: the buffer spans only ~4,000 games.
     Revisit size only once the buffer spans far more games. Next experiment:
     `buffer_keep_every = 32` (~8,000 games in the same memory).
+
+## Human play: separate the engine from the presentation layer (added 2026-10-08)
+
+Design for review: `docs/design/ENGINE_UI_SEPARATION.md`. Goal: humans vs bots in
+the local GUI and later a web front end, with move-by-move legal-move feedback and
+the trained network as an opponent.
+
+- **Blocking now:** the local GUI sends whole-turn move strings (`place (x,y,z)`,
+  `mancala a:b:c post`) that the engine no longer accepts (it uses step-by-step
+  actions such as `PlaceToken_(x,y,z)`, `StartMancala_`, `MancalaDir_k`); human moves
+  in the GUI are very likely broken.
+- GUI bots are the C++ heuristic (via a pygame timer), with a second, inconsistent
+  network-bot path patched into `GameInterface`.
+- Plan: GameSession + one bot interface (heuristic, network + MCTS, data-fitted
+  placement) with headless tests; engine changes (per-decision move pruning,
+  describe-action); then move the GUI onto it; then a web server.

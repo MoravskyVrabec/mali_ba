@@ -18,6 +18,11 @@ The project's to-do list is [`../TODO.md`](../TODO.md) at the repo root.
 - [DEVELOPMENT.md](guides/DEVELOPMENT.md): the UI development mode (working on the
   game UI without the C++ backend).
 
+## design/ (proposals for review)
+- [ENGINE_UI_SEPARATION.md](design/ENGINE_UI_SEPARATION.md): separating the game
+  engine from the presentation layer, for a local GUI and a web front end against
+  trained bots (2026-10-08).
+
 ## handoffs/ (dated session handoffs, oldest first)
 Snapshots of where the project stood at the end of a working session: runs,
 results, open problems and next steps. The newest is the best starting point;
