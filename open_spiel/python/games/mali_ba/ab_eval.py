@@ -586,7 +586,9 @@ def main():
     ap.add_argument("--cache_size", type=int, default=8192)
     ap.add_argument("--heuristic_weight", type=float, default=0.35,
                     help="heuristic prior blended into the network policy, applied "
-                         "identically to both agents (default 0.35, matching training). "
+                         "identically to both agents (default 0.35; kept for comparability "
+                         "with earlier evals, it does not track training's "
+                         "heuristic_guidance_weight). "
                          "Use 0.0 to measure the networks in isolation, but expect far "
                          "more games to hit the move cap and decide nothing.")
     ap.add_argument("--heuristic_weight_a", type=float, default=None,
