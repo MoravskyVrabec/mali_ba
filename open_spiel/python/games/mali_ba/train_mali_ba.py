@@ -94,6 +94,8 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
         aux_targets=getattr(args, 'aux_targets', False),
         aux_win_type_weight=getattr(args, 'aux_win_type_weight', 0.5),
         aux_moves_left_weight=getattr(args, 'aux_moves_left_weight', 1.0),
+        aux_route_target=getattr(args, 'aux_route_target', False),
+        aux_route_weight=getattr(args, 'aux_route_weight', 1.0),
     )
     del temp_game
 
@@ -564,6 +566,23 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
     log(LogLevel.INFO, f"Actor {actor_id}: Initializing its game instance and model.")
     game = pyspiel.load_game(args.game_name, game_params)
     _place_cities, _place_timbuktu = _placement_cities(game)
+
+    # Timbuktu-route distance for every player, the aux route target
+    # (route_features.py). About 0.3 ms per move, so every step gets one.
+    _route_dist = None
+    if getattr(args, 'aux_targets', False) and getattr(args, 'aux_route_target', False):
+        try:
+            from mali_ba.route_features import RouteDistance
+            _cfg = (game_params.get('config_file') if isinstance(game_params, dict) else None) \
+                or getattr(args, 'config_file', None)
+            _route_dist = RouteDistance(game, _cfg, game.num_players())
+            if not _route_dist.enabled:
+                log(LogLevel.WARN, f"Actor {actor_id}: no Timbuktu/desert/coast data in "
+                                   f"{_cfg}; aux route target off.")
+                _route_dist = None
+        except Exception as e:
+            log(LogLevel.WARN, f"Actor {actor_id}: aux route target off ({e}).")
+            _route_dist = None
 
     # Batched GPU inference client -- must come after `game`, whose observation shape
     # it needs. Local models are still built below: they serve the periodic
@@ -1198,11 +1217,19 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
             if action == pyspiel.INVALID_ACTION: break
 
             _t_pick += time.perf_counter() - _t0
+            # Route distances describe the position the observation shows, so they are
+            # taken before the move. Steps without one stay 4 items long.
+            _route_extra = ()
+            if _route_dist is not None:
+                try:
+                    _route_extra = (_route_dist.from_state(pyspiel.mali_ba.downcast_state(state)),)
+                except Exception:
+                    _route_extra = ()
             _t0 = time.perf_counter()
             state.apply_action(action)
             reward_vector = state.rewards()  # Called after apply_action so Rewards() sees the move in moves_history_
             _t_apply += time.perf_counter() - _t0
-            episode_trajectory.append((observation, player, mcts_policy_full, reward_vector))
+            episode_trajectory.append((observation, player, mcts_policy_full, reward_vector) + _route_extra)
             _t0 = time.perf_counter()
             if replay_file:
                 try:
@@ -1320,7 +1347,8 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                 non_zero_reward_steps = 0
 
                 # The trajectory is a list of (observation, player, policy, reward_vector)
-                for _, _, _, reward_vector in episode_trajectory:
+                for _step in episode_trajectory:
+                    reward_vector = _step[3]
                     if any(r != 0 for r in reward_vector):
                         non_zero_reward_steps += 1
                     for i in range(num_players):
@@ -2104,7 +2132,8 @@ def main(args):
             next_state_discounted_returns = final_terminal_returns
 
             for i in range(len(trajectory) - 1, -1, -1):
-                observation, player, policy_target, immediate_reward_vector = trajectory[i]
+                observation, player, policy_target, immediate_reward_vector = trajectory[i][:4]
+                _route = trajectory[i][4] if len(trajectory[i]) > 4 else None
                 
                 # The value of a state is: (the immediate reward you get) + gamma * (the value of the state you land in).
                 # Since we are iterating backwards, 'next_state_discounted_returns' holds the value of the next state.
@@ -2113,7 +2142,8 @@ def main(args):
                 ]
                 
                 # Add this step's data with the correctly calculated value to our list.
-                trajectory_with_values.append((observation, player, policy_target, current_state_value_vector))
+                trajectory_with_values.append((observation, player, policy_target,
+                                               current_state_value_vector, _route))
 
                 _step_min = min(current_state_value_vector)
                 _step_max = max(current_state_value_vector)
@@ -2207,14 +2237,19 @@ def main(args):
                 f"x{oversample_factor}). bootstrap={is_bootstrap_game} near_win={near_win_flag}")
             queued_count = 0
             for _ in range(oversample_factor):
-                for step_idx, (observation, player, policy_target, value_target_vector) in kept_steps:
+                for step_idx, _kept in kept_steps:
+                    observation, player, policy_target, value_target_vector, _route = _kept
                     player_value = value_target_vector[player]
                     if _aux_type is None:
                         value_data = (player, player_value, value_target_vector)
                     else:
                         _moves_left = min(1.0, (game_length - step_idx) / _aux_max_moves)
-                        value_data = (player, player_value, value_target_vector,
-                                      (_aux_type, _moves_left))
+                        # (win type, moves left[, route distance per player]). The third
+                        # item is absent for games from workers without the route target.
+                        _aux = (_aux_type, _moves_left)
+                        if _route is not None and getattr(args, 'aux_route_target', False):
+                            _aux = _aux + (tuple(float(v) for v in _route),)
+                        value_data = (player, player_value, value_target_vector, _aux)
 
                     # Always send to trainer — bootstrap games are tagged so the
                     # trainer can route them to the correct buffer pool.
@@ -2709,6 +2744,9 @@ if __name__ == "__main__":
         parsed_args.aux_targets = bool(parsed_args.aux_targets)
     parsed_args.aux_win_type_weight = _ini_float('aux_win_type_weight', 0.5)
     parsed_args.aux_moves_left_weight = _ini_float('aux_moves_left_weight', 1.0)
+    # Needs aux_targets: the route distance rides in the same aux tuple and head file.
+    parsed_args.aux_route_target = parsed_args.aux_targets and _ini_bool('aux_route_target', False)
+    parsed_args.aux_route_weight = _ini_float('aux_route_weight', 1.0)
     if parsed_args.sim_route_decision_sims is None:
         parsed_args.sim_route_decision_sims = _ini_int('sim_route_decision_sims', 500)
     if parsed_args.sim_route_decision_min_candidates is None:
@@ -2796,7 +2834,9 @@ if __name__ == "__main__":
         print(f'  token placement             : random')
     if parsed_args.aux_targets:
         print(f'  aux targets                 : ON  win type (weight {parsed_args.aux_win_type_weight:g}), '
-              f'moves left (weight {parsed_args.aux_moves_left_weight:g})')
+              f'moves left (weight {parsed_args.aux_moves_left_weight:g})'
+              + (f', Timbuktu route distance (weight {parsed_args.aux_route_weight:g})'
+                 if parsed_args.aux_route_target else ''))
     else:
         print(f'  aux targets                 : off')
     print(f'  job_timeout_hours           : {parsed_args.job_timeout_hours}')

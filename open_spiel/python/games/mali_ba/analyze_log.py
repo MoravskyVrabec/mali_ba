@@ -31,6 +31,10 @@ RE_AUX_LOSS = re.compile(
     r'(\d{8}-\d{6}) \[INFO\] \[Python:0\] Training: Aux losses: win_type CE=([\d.]+) '
     r'\(acc ([\d.]+), always-majority ([\d.]+)\), moves_left MSE=([\d.]+), rows (\d+)/(\d+)'
 )
+RE_AUX_ROUTE = re.compile(
+    r'(\d{8}-\d{6}) \[INFO\] \[Python:0\] Training: Aux route: MSE=([\d.]+) '
+    r'\(always-mean ([\d.]+)\), mean abs error ([\d.]+) build steps, rows (\d+)/(\d+)'
+)
 RE_PASS_ONLY = re.compile(
     r"MCTS top visits: \['Pass: \d+ visits'\]"
 )
@@ -118,6 +122,7 @@ def parse_log(path):
     losses = []         # (game_num, total, policy, value)
     trainer_losses = [] # (timestamp, loss) from "Training successful" lines
     aux_losses = []     # (ce, acc, majority_acc, moves_mse, rows, batch) per training step
+    aux_route = []      # (mse, always_mean_mse, abs_err_steps, rows, batch) per training step
     pass_only_count = 0
     near_win_retained_count = 0
     near_win_bootstrap_count = 0
@@ -257,6 +262,13 @@ def parse_log(path):
                 ts, loss = m.groups()
                 trainer_losses.append((parse_time(ts), float(loss)))
                 continue
+
+            if 'Aux route:' in line:
+                m = RE_AUX_ROUTE.search(line)
+                if m:
+                    _, mse, base, mae, rows, bs = m.groups()
+                    aux_route.append((float(mse), float(base), float(mae), int(rows), int(bs)))
+                    continue
 
             if 'Aux losses' in line:
                 m = RE_AUX_LOSS.search(line)
@@ -402,6 +414,7 @@ def parse_log(path):
         'early_terminations': early_terminations,
         'trainer_losses': trainer_losses,
         'aux_losses': aux_losses,
+        'aux_route': aux_route,
         'value_checks': value_checks,
         'no_kill_games': no_kill_games,
         'oversample_threshold': oversample_threshold,
@@ -1262,6 +1275,31 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
             rows = sum(c[4] / c[5] for c in ch) / k
             print(f'  steps {lo:4d}-{hi-1:4d}  {acc:12.2f}  {maj:8.2f}  {acc-maj:+6.2f}  '
                   f'{ce:7.3f}  {mse:9.4f}  {rows:5.0%}')
+
+    route = data.get('aux_route', [])
+    if route:
+        section('AUX ROUTE HEAD (distance to the Timbuktu end condition)')
+        print('  Predicts each player\'s build steps still needed for the Timbuktu ending')
+        print('  (0-10: centers at Timbuktu, a desert city, two other cities and the coast;')
+        print('  see route_features.py). WANT: MSE falling well below "always-mean" (always')
+        print('  predicting the batch average) and the error in build steps falling.')
+        print()
+        n = len(route)
+        nb = min(10, n)
+        size = n // nb or 1
+        print(f'  {"Steps":>14}  {"MSE":>7}  {"always-mean":>11}  {"ratio":>6}  '
+              f'{"abs err (steps)":>15}  {"rows":>5}')
+        for b in range(nb):
+            lo = b * size
+            hi = lo + size if b < nb - 1 else n
+            ch = route[lo:hi]
+            k = len(ch)
+            mse = sum(c[0] for c in ch) / k
+            base = sum(c[1] for c in ch) / k
+            mae = sum(c[2] for c in ch) / k
+            rows = sum(c[3] / c[4] for c in ch) / k
+            print(f'  steps {lo:4d}-{hi-1:4d}  {mse:7.4f}  {base:11.4f}  '
+                  f'{(mse / base if base else float("nan")):6.2f}  {mae:15.2f}  {rows:5.0%}')
 
     # ── MCTS action preferences ───────────────────────────────────────────────
     if top_actions:

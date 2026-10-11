@@ -214,29 +214,68 @@ class ReplayBuffer:
 class SimpleAgent:
     # ** Accept num_players in constructor **
     def __init__(self, observation_shape, num_actions, num_players, learning_rate=0.001,
-                 aux_targets=False, aux_win_type_weight=0.5, aux_moves_left_weight=1.0):
+                 aux_targets=False, aux_win_type_weight=0.5, aux_moves_left_weight=1.0,
+                 aux_route_target=False, aux_route_weight=1.0):
         # Create two separate models
         self.policy_model = create_mali_ba_policy_network(observation_shape, num_actions)
         # With aux_targets the value network also predicts how the game ends (see
         # AUX_WIN_TYPES). value_model is then a view of its value output only, so
         # everything that saves, loads or distributes value weights sees the plain
         # network; only train() and the _value_aux file use the extra heads.
+        self.aux_route_target = bool(aux_targets and aux_route_target)
         if aux_targets:
             self.value_full = create_mali_ba_value_network(observation_shape, num_players,
-                                                           aux_heads=True)
+                                                           aux_heads=True,
+                                                           route_head=self.aux_route_target)
             self.value_model = value_only_view(self.value_full)
         else:
             self.value_full = None
             self.value_model = create_mali_ba_value_network(observation_shape, num_players)
         self.aux_win_type_weight = aux_win_type_weight
         self.aux_moves_left_weight = aux_moves_left_weight
+        self.aux_route_weight = aux_route_weight
+        self._obs_shape = observation_shape
         
         # Create two separate optimizers
         self.policy_optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
         self.value_optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
         
         self.num_players = num_players
-    
+
+    def _load_aux_other_layout(self, aux_path):
+        """Load a _value_aux file saved with the route head on when it is now off, or
+        off when it is now on (e.g. a checkpoint from before the route head existed).
+
+        Builds a network of the file's layout, loads the file into it, and copies every
+        layer except the route head's into value_full, in order. A route head only in
+        value_full stays randomly initialised. Layer names can't be matched: unnamed
+        layers get session-dependent names. Returns False, leaving value_full
+        untouched, if anything doesn't fit.
+        """
+        try:
+            other = create_mali_ba_value_network(self._obs_shape, self.num_players,
+                                                 aux_heads=True,
+                                                 route_head=not self.aux_route_target)
+            other.load_weights(aux_path)
+            target = [l for l in self.value_full.layers if not l.name.startswith('aux_route')]
+            source = [l for l in other.layers if not l.name.startswith('aux_route')]
+            if len(target) != len(source):
+                return False
+            for t, s in zip(target, source):
+                tw, sw = t.get_weights(), s.get_weights()
+                if len(tw) != len(sw) or any(a.shape != b.shape for a, b in zip(tw, sw)):
+                    return False
+            initial = self.value_full.get_weights()
+            try:
+                for t, s in zip(target, source):
+                    t.set_weights(s.get_weights())
+            except Exception:
+                self.value_full.set_weights(initial)
+                return False
+            return True
+        except Exception:
+            return False
+
     def save_model(self, path):
         """Saves the policy and value model weights to separate files."""
         try:
@@ -297,8 +336,16 @@ class SimpleAgent:
                 value_path = None
             except ValueError as e:
                 self.value_full.set_weights(initial)
-                log(LogLevel.WARN, f"Agent: aux value weights at {aux_path} do not fit "
-                                   f"({str(e)[:200]}); loading the plain value file instead.")
+                if self._load_aux_other_layout(aux_path):
+                    log(LogLevel.INFO, f"Agent: loaded value network and win-type / moves-left "
+                                       f"heads from {aux_path}, saved "
+                                       f"{'without' if self.aux_route_target else 'with'} the route "
+                                       f"head" + ("; the route head starts from random "
+                                                  "initialisation." if self.aux_route_target else "."))
+                    value_path = None
+                else:
+                    log(LogLevel.WARN, f"Agent: aux value weights at {aux_path} do not fit "
+                                       f"({str(e)[:200]}); loading the plain value file instead.")
         heads = [("policy", policy_path, self.policy_model)]
         if value_path is None:
             loaded.append("value")
@@ -358,6 +405,10 @@ class SimpleAgent:
             aux_mask = np.zeros(batch_size, dtype=bool)
             aux_win_type = np.zeros(batch_size, dtype=np.int32)
             aux_moves_left = np.zeros((batch_size, 1), dtype=np.float32)
+            # Optional 3rd aux item: Timbuktu route distance per player (route_features.py).
+            # Entries from before it existed, or from workers without it, are masked out.
+            route_mask = np.zeros(batch_size, dtype=bool)
+            aux_route = np.zeros((batch_size, self.num_players), dtype=np.float32)
             for i, vd in enumerate(value_data_list):
                 if i >= batch_size: break
                 all_discounted_returns = vd[2]
@@ -368,7 +419,11 @@ class SimpleAgent:
                     aux_mask[i] = True
                     aux_win_type[i] = int(vd[3][0])
                     aux_moves_left[i, 0] = float(vd[3][1])
+                    if len(vd[3]) > 2 and vd[3][2] is not None and len(vd[3][2]) == self.num_players:
+                        route_mask[i] = True
+                        aux_route[i] = vd[3][2]
             n_aux_rows = int(np.count_nonzero(aux_mask))
+            n_route_rows = int(np.count_nonzero(route_mask)) if self.aux_route_target else 0
             
             # --- Input Sanity Checks ---
             if np.any(np.isnan(observations_reshaped)) or np.any(np.isinf(observations_reshaped)):
@@ -406,9 +461,12 @@ class SimpleAgent:
             
             # --- Value Model Training Step ---
             value_net = self.value_full if self.value_full is not None else self.value_model
-            aux_type_loss = aux_moves_loss = None
+            aux_type_loss = aux_moves_loss = aux_route_loss = None
             with tf.GradientTape() as tape:
-                if self.value_full is not None:
+                if self.value_full is not None and self.aux_route_target:
+                    predicted_value, pred_win_type, pred_moves_left, pred_route = value_net(
+                        observations_reshaped, training=True)
+                elif self.value_full is not None:
                     predicted_value, pred_win_type, pred_moves_left = value_net(
                         observations_reshaped, training=True)
                 else:
@@ -427,6 +485,10 @@ class SimpleAgent:
                     value_objective = (value_objective
                                        + self.aux_win_type_weight * aux_type_loss
                                        + self.aux_moves_left_weight * aux_moves_loss)
+                if self.value_full is not None and n_route_rows > 0:
+                    aux_route_loss = tf.keras.losses.MeanSquaredError()(
+                        aux_route[route_mask], tf.boolean_mask(pred_route, route_mask))
+                    value_objective = value_objective + self.aux_route_weight * aux_route_loss
 
             # DEBUG =====================================================================
             log(LogLevel.INFO, f"Training: Observation range: min={np.min(observations_reshaped):.6f}, max={np.max(observations_reshaped):.6f}")
@@ -443,11 +505,12 @@ class SimpleAgent:
                 return None
 
             value_grads = tape.gradient(value_objective, value_net.trainable_variables)
-            if self.value_full is not None and aux_type_loss is None:
-                # No aux rows in this batch, so the aux heads are not in the loss and
-                # their gradients are None. Without this, the check below skipped the
-                # whole value step (2026-10-06, D009's first batches came from a buffer
-                # with no aux targets). Zero gradients leave the heads as they are.
+            if self.value_full is not None:
+                # An aux head with no rows in this batch is not in the loss, so its
+                # gradients are None. Without this, the check below skipped the whole
+                # value step (2026-10-06, D009's first batches came from a buffer with no
+                # aux targets; the route head likewise until labelled games arrive).
+                # Zero gradients leave such a head as it is.
                 value_grads = [tf.zeros_like(v) if g is None else g
                                for g, v in zip(value_grads, value_net.trainable_variables)]
             if any(g is None for g in value_grads):
@@ -465,6 +528,15 @@ class SimpleAgent:
                     f"Training: Aux losses: win_type CE={aux_type_loss.numpy():.4f} "
                     f"(acc {_acc:.2f}, always-majority {_base:.2f}), "
                     f"moves_left MSE={aux_moves_loss.numpy():.4f}, rows {n_aux_rows}/{batch_size}")
+            if aux_route_loss is not None:
+                _rt = aux_route[route_mask]
+                # Baseline: always predicting this batch's mean distance.
+                _rbase = float(np.mean((_rt - _rt.mean()) ** 2))
+                _rmae = float(np.mean(np.abs(tf.boolean_mask(pred_route, route_mask).numpy() - _rt)))
+                log(LogLevel.INFO,
+                    f"Training: Aux route: MSE={aux_route_loss.numpy():.4f} "
+                    f"(always-mean {_rbase:.4f}), mean abs error {10 * _rmae:.2f} build steps, "
+                    f"rows {n_route_rows}/{batch_size}")
 
             # --- Logging and Return ---
             total_loss = policy_loss + value_loss
@@ -720,7 +792,8 @@ def create_mali_ba_policy_network(observation_shape, num_actions):
 AUX_WIN_TYPES = ('timeout', 'timbuktu', 'rare_goods')
 
 
-def create_mali_ba_value_network(observation_shape, num_players, aux_heads=False):
+def create_mali_ba_value_network(observation_shape, num_players, aux_heads=False,
+                                 route_head=False):
     """Creates the value network.
 
     With aux_heads=True the model has three outputs: [value, aux_win_type (softmax
@@ -776,7 +849,21 @@ def create_mali_ba_value_network(observation_shape, num_players, aux_heads=False
     win_type = layers.Dense(len(AUX_WIN_TYPES), activation='softmax',
                             name='aux_win_type')(aux)
     moves_left = layers.Dense(1, activation='sigmoid', name='aux_moves_left')(aux)
-    return models.Model(inputs=inputs, outputs=[value_head, win_type, moves_left])
+    if not route_head:
+        return models.Model(inputs=inputs, outputs=[value_head, win_type, moves_left])
+
+    # Route head (2026-10-10): each player's distance to the Timbuktu end condition as
+    # a fraction of 10 build steps (route_features.py). Its own branch, created last,
+    # so the layers above keep their order and a file saved without it still loads
+    # (SimpleAgent._load_aux_without_route). More channels than aux_conv: it has to
+    # tell apart which cities and coastal hexes each player holds.
+    route = layers.Conv2D(4, 1, padding='same', name='aux_route_conv')(x)
+    route = layers.BatchNormalization(name='aux_route_bn')(route)
+    route = layers.Activation('relu', name='aux_route_relu')(route)
+    route = layers.Flatten(name='aux_route_flatten')(route)
+    route = layers.Dense(64, activation='relu', name='aux_route_dense')(route)
+    route = layers.Dense(num_players, activation='sigmoid', name='aux_route_distance')(route)
+    return models.Model(inputs=inputs, outputs=[value_head, win_type, moves_left, route])
 
 
 def value_only_view(full_value_model):
