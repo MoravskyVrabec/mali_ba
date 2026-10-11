@@ -1,0 +1,414 @@
+<title>Mali-Ba Training Handoff</title>
+<meta name="description" content="Runs D005 to D018: what helped, what did not, the current state of run D018, and the recommended next steps.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #f5f4ef;
+  --surface: #ffffff;
+  --ink: #1c2130;
+  --muted: #586073;
+  --rule: #dad8cf;
+  --accent: #2c3c8c;
+  --accent-soft: #e5e8f5;
+  --ochre: #9a5a0e;
+  --ochre-soft: #f6ead8;
+  --good: #2a7349;
+  --good-soft: #e1f0e6;
+  --bad: #a23626;
+  --code-bg: #eeede6;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11131a;
+    --surface: #191c26;
+    --ink: #e5e6eb;
+    --muted: #9aa0b1;
+    --rule: #2c3041;
+    --accent: #a5b4ff;
+    --accent-soft: #222949;
+    --ochre: #e3a54e;
+    --ochre-soft: #33281a;
+    --good: #72c695;
+    --good-soft: #1b3326;
+    --bad: #e7846f;
+    --code-bg: #20232f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11131a;
+  --surface: #191c26;
+  --ink: #e5e6eb;
+  --muted: #9aa0b1;
+  --rule: #2c3041;
+  --accent: #a5b4ff;
+  --accent-soft: #222949;
+  --ochre: #e3a54e;
+  --ochre-soft: #33281a;
+  --good: #72c695;
+  --good-soft: #1b3326;
+  --bad: #e7846f;
+  --code-bg: #20232f;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.6 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding-inline: 16px;
+}
+main { max-width: 880px; margin: 0 auto; padding-block: 40px 80px; }
+h1, h2, h3 { line-height: 1.25; text-wrap: balance; font-weight: 600; }
+h1 { font-size: 2rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+h2 { font-size: 1.4rem; margin: 56px 0 14px; padding-top: 18px; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.08rem; margin: 30px 0 8px; }
+p, li { max-width: 68ch; }
+p { margin: 0 0 14px; }
+ul, ol { padding-left: 22px; margin: 0 0 14px; }
+li { margin-bottom: 6px; }
+a { color: var(--accent); }
+code, .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre {
+  background: var(--code-bg); padding: 12px 14px; border-radius: 6px; overflow-x: auto;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.82rem; line-height: 1.5; margin: 0 0 16px;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+.eyebrow { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.sub { color: var(--muted); margin: 0 0 24px; }
+.status {
+  background: var(--surface); border: 1px solid var(--rule); border-left: 4px solid var(--good);
+  border-radius: 6px; padding: 16px 18px; margin: 24px 0;
+}
+.status h3 { margin: 0 0 8px; }
+.status p:last-child, .status ul:last-child { margin-bottom: 0; }
+.note {
+  background: var(--ochre-soft); border-left: 4px solid var(--ochre); border-radius: 6px;
+  padding: 12px 16px; margin: 18px 0;
+}
+.note p:last-child { margin-bottom: 0; }
+nav.toc { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 18px; }
+nav.toc ol { margin: 0; columns: 2; column-gap: 32px; }
+nav.toc li { margin-bottom: 4px; break-inside: avoid; }
+.table-wrap { overflow-x: auto; margin: 0 0 18px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; background: var(--surface); }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 0.8rem; letter-spacing: 0.03em; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.hl td { background: var(--accent-soft); }
+.timeline { list-style: none; padding: 0; margin: 0; border-left: 2px solid var(--rule); }
+.timeline > li { position: relative; padding: 0 0 22px 22px; max-width: none; }
+.timeline > li::before {
+  content: ""; position: absolute; left: -7px; top: 6px; width: 12px; height: 12px;
+  border-radius: 50%; background: var(--surface); border: 2px solid var(--accent);
+}
+.timeline .when { font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; color: var(--muted); }
+.timeline h3 { margin: 2px 0 6px; }
+.tag { display: inline-block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 10px; margin-left: 6px; vertical-align: 2px; }
+.tag.good { background: var(--good-soft); color: var(--good); }
+.tag.bad { background: var(--ochre-soft); color: var(--ochre); }
+.steps { counter-reset: step; list-style: none; padding: 0; }
+.steps > li { counter-increment: step; position: relative; padding: 14px 16px 6px 54px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; max-width: none; }
+.steps > li::before {
+  content: counter(step); position: absolute; left: 16px; top: 14px; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent); color: var(--surface); font-weight: 600; font-size: 0.85rem; display: grid; place-items: center;
+}
+.steps h3 { margin: 0 0 6px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 0.92rem; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
+@media (max-width: 560px) {
+  nav.toc ol { columns: 1; }
+  h1 { font-size: 1.6rem; }
+  .kv { grid-template-columns: 1fr; }
+  .kv dt { margin-top: 6px; }
+}
+</style>
+
+<main>
+  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 10 October 2026</div>
+  <h1>Where we are, how we got here, what's next</h1>
+  <p class="sub">Runs D005 through D018, 2–10 October. Written so either of us can pick this up cold. It continues <a href="HANDOFF-20261002.html">the 2 October handoff</a>; read that for the earlier history (memorization, the axis fix, pretraining). The source of truth is the <code>mali_ba</code> repo (branch <code>main</code>); <code>open_spiel</code> only holds symlinks.</p>
+
+  <div class="status">
+    <h3>Status on 10 October (evening)</h3>
+    <ul>
+      <li><strong>Run D018 has finished</strong> (stopped at 22:20 after 6,996 games). It continued from D017 with one change: training guidance lowered from 0.30 to 0.20. It hasn't been played head to head yet.</li>
+      <li><strong>A new aux target is merged and ready for a run:</strong> the value network also learns each player's distance to the Timbuktu ending (<a href="#route">section 4b</a>). It's Python only, with no rebuild needed.</li>
+      <li><strong>Strongest model:</strong> D013 is the last one confirmed best. D017 scored 0.375 against it, leaning stronger but just short of significant (95% CI [0.330, 0.422]; an even match is 0.333).</li>
+      <li><strong>Learning is measurable now.</strong> Since 2 October, head-to-head play has shown real gains four times: D007 over D005, D010 over D007, D013 over D011, and possibly D017 over D013.</li>
+      <li><strong>Main open problem, unchanged:</strong> the policy is still nearly flat (92–93% of uniform entropy). The gains so far come from more games, better data and a better value head.</li>
+    </ul>
+  </div>
+
+  <nav class="toc" aria-label="Contents">
+    <ol>
+      <li><a href="#summary">The short version</a></li>
+      <li><a href="#runs">Every run since D005</a></li>
+      <li><a href="#findings">What we learned</a></li>
+      <li><a href="#built">What was built or fixed</a></li>
+      <li><a href="#plan">The plan</a></li>
+      <li><a href="#settings">Settings in effect</a></li>
+      <li><a href="#reference">Tools, files and commands</a></li>
+      <li><a href="#traps">Things that misled us</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="summary">1. The short version</h2>
+  <ol>
+    <li><strong>More games per hour was the first big win.</strong> The playout cap (25% of moves get a full search, the rest 40 simulations) plus faster remote workers gave D007, the first head-to-head gain in the project: 0.499 against D005.</li>
+    <li><strong>Aux value targets helped.</strong> The value network now also learns how the game will end and how many moves remain. D010 beat D007 0.431.</li>
+    <li><strong>Turning culling off helped.</strong> Games that would have been cut short now play out and their data is kept. D013 beat D011 0.387 and became the reference model.</li>
+    <li><strong>Several ideas didn't help:</strong> a lower <code>uct_c</code>, training every 4 seconds, swapping the win-pool shares, keeping 1 position in 32 instead of 16, and lower guidance at play time.</li>
+    <li><strong>The rewards changed, and games got longer.</strong> A loss now costs −0.7 however the game ends (D015), and games run to 500 moves instead of 420 (D016). D015 alone was weaker. With 500-move games, D016 matched D013 and D017 may have passed it.</li>
+    <li><strong>Next:</strong> read D018, then consider training less often (reuse is back up to 4.35×), and work on getting the policy to learn.</li>
+  </ol>
+
+  <h2 id="runs">2. Every run since D005</h2>
+  <p>Head-to-head: 501 games, 300 simulations per move, guidance 0.35 for both agents (ab_eval's default), A in one seat and B in two. The share is A's wins out of decided games; 0.333 means equal strength. Each run is one change from the run it starts from.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Run</th><th>From</th><th>The change</th><th class="n">Games</th><th>Head-to-head result</th></tr></thead>
+    <tbody>
+      <tr><td>D006 / D007</td><td>D005</td><td>Playout cap on (D006); then actor-side trajectory thinning and the route-decision exemption (D007)</td><td class="n">~7,000</td><td><strong>D007 beat D005</strong> 0.499 [0.452, 0.545]</td></tr>
+      <tr><td>D008</td><td>D007</td><td>Train every 4 s instead of 8; new setup rules</td><td class="n"></td><td>Lost to D007 0.252 [0.213, 0.294]</td></tr>
+      <tr><td>D009 / D010</td><td>D007</td><td>Back to 8 s; aux value targets; new rules</td><td class="n">~11,000</td><td><strong>D010 beat D007</strong> 0.431 [0.386, 0.477]</td></tr>
+      <tr><td>D011</td><td>D010</td><td>No change; first run logging token placements</td><td class="n"></td><td>Even with D010</td></tr>
+      <tr><td>D012</td><td>D011</td><td>Pool shares swapped: Timbuktu 0.20, rare goods 0.10</td><td class="n"></td><td>Lost to D011 0.278 [0.238, 0.322]</td></tr>
+      <tr class="hl"><td>D013</td><td>D011</td><td>Culling off; pool shares back to 0.10 / 0.20</td><td class="n">5,528</td><td><strong>D013 beat D011</strong> 0.387 [0.344, 0.433]</td></tr>
+      <tr><td>D014</td><td>D013</td><td><code>buffer_keep_every</code> 16 → 32</td><td class="n">6,000</td><td>Even with D013, 0.315 [0.269, 0.363]</td></tr>
+      <tr><td>D015</td><td>D014</td><td>New rewards: a loss is −0.7 however the game ends</td><td class="n">7,000</td><td>Lost to D013 0.283 [0.241, 0.330]; three-way D013 0.390, D014 0.323, D015 0.287</td></tr>
+      <tr><td>D016</td><td>D013</td><td><code>max_play_moves</code> 420 → 500 (new rewards kept)</td><td class="n">5,382</td><td>Even with D013, 0.329 [0.286, 0.376]</td></tr>
+      <tr class="hl"><td>D017</td><td>D016</td><td>No change, longer clean run</td><td class="n">9,067</td><td>0.375 [0.330, 0.422] vs D013: leaning stronger, not significant</td></tr>
+      <tr><td>D018</td><td>D017</td><td>Training guidance 0.30 → 0.20</td><td class="n">6,996</td><td>Not yet played. Self-play wins flat at 22–24%, below D017's 26–30%, as expected with less heuristic help.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Tests on a single checkpoint, playing it against itself with one setting changed:</p>
+  <ul>
+    <li><strong><code>uct_c</code> 0.5 vs 2.0</strong> (D005): 0.288 [0.242, 0.339]. <strong>1.0 vs 2.0</strong> (D007): 0.346 [0.302, 0.392]. A sharper search on this value head doesn't play better, so <code>uct_c</code> stays at 2.0.</li>
+    <li><strong>Guidance 0.15 vs 0.30 at play time</strong> (D017): 0.269 [0.232, 0.311]. The network still needs the heuristic to play well. D018 tests a different question: whether training at lower guidance helps the policy learn.</li>
+  </ul>
+
+  <h2 id="findings">3. What we learned</h2>
+
+  <h3>In-run metrics don't predict head-to-head results</h3>
+  <p>D011's value checks looked better than D010's, yet they were level head to head. D013's looked worse than D011's, yet it won. When a run changes what is played or kept, the in-run test changes with it. Only head-to-head play, or a fixed held-out set (<code>value_probe.py</code>), compares runs.</p>
+
+  <h3>The value head is limited by data, not size</h3>
+  <p>Three value networks trained from scratch on the same buffer, scored on held-out games: the current size reached 54.1% top-pick, a wider head 53.9%, and a network twice as deep and wide 52.0%. Bigger networks overfit sooner. D011's production head, trained on about 30,000 games, scored 57.6% on the same positions. More and more varied games remain the lever.</p>
+
+  <h3>Training too often brings back memorization</h3>
+  <p>D008 trained every 4 seconds; each position was trained on 5.5 times and the model got weaker. At 8 seconds D007 had reuse of 2.4×. With <code>buffer_keep_every = 32</code>, which halves the positions each game adds, reuse is now about <strong>4.35×</strong>, close to D008's level (see the plan).</p>
+
+  <h3>Culling discarded useful data</h3>
+  <p>Culling threw away about 16% of the compute. With it off, would-be-culled games ended in a win only 5.2% of the time (17/326), so the cull rules are about 95% right that a game won't produce a win. But keeping those games' data made D013 stronger. When the score lead is large, the current leader is the final timeout leader at least 96% of the time: a lead of 125 points or more at moves 320–359, 75 or more at moves 360–399, 50 or more from move 400. A safer future option is to end such games early while keeping their data.</p>
+
+  <h3>The reward change: losers no longer end games, but that habit came from weak search</h3>
+  <ul>
+    <li><strong>Under the old rewards</strong> a loser got −0.1 when a win condition ended the game but −0.7 at a timeout. So in self-play, 58% of Timbuktu endings were triggered by a player who then lost.</li>
+    <li><strong>After the change</strong> (D015) that fell to 19%, and the self-play win rate halved (23% → 12%). The lost wins were the gifted ones. Timbuktu wins the eventual winner triggered held steady at about 6.6% of games.</li>
+    <li><strong>But at full search strength</strong> the bots almost never hand a win to someone else. ab_eval now records who ended each game: D013 did so in 7 of 154 decided games it ended, D014 in 1 of 114. The habit comes from self-play's 40-simulation moves.</li>
+    <li>So the change fixed little in strong play while halving win positions, and D015 was weaker. We kept it anyway, because it matches the real game.</li>
+  </ul>
+
+  <h3>Longer games add wins</h3>
+  <p>Wins arrive at a steady rate of about 0.9% of games per 10 moves from move 340 up to the cap, with no pile-up just before it. At 500 moves, desktop self-play in D016 rose from 21% to 27% wins. The gain came from games won by move 420 (11% → 16–17%). Late wins in moves 421–500 stayed at about 10–11% of games. D017 continued from 26% to 30%, mostly through more rare-goods wins.</p>
+
+  <h3>The policy is still flat</h3>
+  <p>Policy probe (8 October): entropy 92.0% of uniform for D007, 93.2% for D012. The policy's effective batch is small: only full-search moves train it, about 36 of every 128 rows.</p>
+
+  <h3>The Timbuktu ending is a checklist, and the network can't see the landmarks</h3>
+  <p>A trade route needs no adjacency: it's any set of 3–8 of a player's trading centers. The engine ends the game when a declared route includes Timbuktu, a desert city (Agadez or Oudane), at least 2 other cities and a coastal hex. The observation has a single plane marking every city alike, and nothing for Timbuktu, the desert cities or the coast. So the network has to learn from absolute board position which city is which, and convolutions are bad at that. That fits the value head anticipating rare-goods wins (visible in the goods planes) better than Timbuktu wins. An earlier guess, that it struggled to follow route connections, was wrong.</p>
+
+  <h3>Starting positions matter</h3>
+  <p><code>analyze_placements.py</code> on 18,973 games from D011–D013, as a seat-adjusted regression with game-clustered errors. Effects on win chance, in percentage points:</p>
+  <ul>
+    <li>spread between a player's tokens: <strong>+4.3</strong></li>
+    <li>distance to the nearest city: <strong>−3.2</strong></li>
+    <li>distance from Timbuktu: <strong>+1.8</strong></li>
+    <li>number of cultures covered: <strong>+1.4</strong></li>
+    <li>sitting in seat P2: <strong>−3.2</strong></li>
+  </ul>
+  <p>A heuristic placement that uses these weights is built and off by default (<code>placement_mode</code>).</p>
+
+  <h3>Seat 0 wins most often at full strength</h3>
+  <p>In self-play the seats are now balanced (about 33/34/33% of wins) thanks to the setup rules: starting common goods 0/1/2 by seat, and serpentine token placement. In head-to-heads at 300 simulations, seat 0 still takes about 45% of decided games and seat 2 about 23%.</p>
+
+  <h2 id="built">4. What was built or fixed</h2>
+  <h3>Training</h3>
+  <ul>
+    <li><strong>Playout cap</strong>, with large route decisions exempt. <strong>Remote workers</strong> now receive every server setting; previously most were silently dropped.</li>
+    <li><strong>Actor-side trajectory thinning:</strong> laptop uploads went from 71 MB to about 4.5 MB per game, and results had been arriving 11–14 minutes late.</li>
+    <li><strong>Aux value targets</strong> (win type, moves left). They're trained by the learner only and saved in a <code>_value_aux</code> file.</li>
+    <li><strong>Inference server pins itself</strong> to fast cores (<code>inference_cpus = auto</code>): the V-cache CCD on the desktop, the P-cores on the laptop.</li>
+    <li><strong>Remote watchdog:</strong> a worker restarts itself if the trainer receives none of its games for 20 minutes or stops answering. It came after a Wi-Fi blip silently lost 411 laptop games.</li>
+    <li><strong>Setup rules</strong> for seat balance: <code>starting_common_goods_per_seat</code>, <code>serpentine_token_placement</code>.</li>
+    <li><strong>Culling settings in the ini</strong> (<code>stalled_thresh</code>, <code>declining_best_thresh</code>; <code>random_no_kill_thresh = 1.0</code> turns culling off).</li>
+    <li><strong>Heuristic token placement</strong>, with a random control fraction (off).</li>
+    <li><strong>Fixes:</strong>
+      <ul>
+        <li>Dispatch now continues until <code>num_episodes</code> games are <em>received</em>.</li>
+        <li>The value step was skipped on batches without aux rows.</li>
+        <li>Shutdown hangs on both machines: the trainer exits cleanly, and remote workers stop on the trainer's stop signal instead of respawning. Untested at the end of a full run.</li>
+      </ul>
+    </li>
+  </ul>
+  <h3>Evaluation and analysis</h3>
+  <ul>
+    <li><strong><code>ab_eval.py</code></strong>:
+      <ul>
+        <li>a GPU inference server and interleaved seat rotations, so interim results aren't biased</li>
+        <li>three-way mode (<code>--agent_c</code>)</li>
+        <li>per-agent <code>uct_c</code> and guidance settings</li>
+        <li>a one-line live progress display, and a record of who ended each game</li>
+        <li><code>--record_positions</code> for the value probe</li>
+      </ul>
+    </li>
+    <li><strong><code>value_probe.py</code></strong> compares value heads on one fixed held-out set of positions.</li>
+    <li><strong><code>analyze_placements.py</code></strong> runs the starting-placement study.</li>
+    <li><strong><code>analyze_log.py</code></strong>:
+      <ul>
+        <li>a win-rate trend line with a 95% margin</li>
+        <li>a no-kill section</li>
+        <li>one value-check CSV per log</li>
+        <li>the <code>taskset</code> pin command</li>
+      </ul>
+    </li>
+    <li><strong>Probe safety:</strong> <code>policy_probe.py</code> and <code>search_sharpness.py</code> fail fast on a rules mismatch, and old probe sets need <code>probe_data/mali_ba_oldrules.ini</code>.</li>
+  </ul>
+  <h3>Documentation</h3>
+  <ul>
+    <li>Documents are organised under <code>docs/</code> (rules, guides, design, handoffs, notes, archive). The to-do list is <code>TODO.md</code> at the repo root.</li>
+    <li><code>docs/guides/DIAGNOSTIC_TOOLS.md</code> explains every analysis tool.</li>
+    <li><code>docs/design/ENGINE_UI_SEPARATION.md</code> proposes how to separate the engine from the presentation layer for human play: a local GUI, a web front end, and possibly mobile. The current GUI's whole-turn move strings no longer match the engine's step-by-step moves, so human play is likely broken today.</li>
+  </ul>
+
+  <h3 id="route">4b. The route-distance aux target (10 October, merged as <code>fb0a4a2</code>)</h3>
+  <ul>
+    <li><strong>The target:</strong> for every player, the build steps still needed for the Timbuktu ending, from 0 to 10. A hex with the player's trading center counts 0, one with a post counts 1, and anything else counts 2. The checklist is Timbuktu, the cheaper desert city, the cheapest two other cities, and a coastal hex, which a coastal city can provide. It ignores what the rules might block (goods for upgrades, other players' posts, declaring the route), so it's a training signal, not a rule.</li>
+    <li><strong><code>route_features.py</code></strong> computes it from the state JSON, the city list and the ini's <code>coastal_hexes</code>, in about 0.3 ms per position. It's Python only, so no C++ rebuild.</li>
+    <li><strong>Actors</strong> label every step before the move, as an optional fifth item. The trainer carries it as a third aux item. Older buffer entries, and games from workers running older code, are left out of the route loss only.</li>
+    <li><strong>The value network</strong> gets a separate <code>aux_route</code> head, built last, so the value path, search and evaluation are unchanged. <code>_value_aux</code> files load whether or not they include the route head; checked with D017, whose value, win-type and moves-left outputs came out identical.</li>
+    <li><strong>Settings:</strong> <code>aux_route_target = true</code>, <code>aux_route_weight = 1.0</code> (needs <code>aux_targets</code>).</li>
+    <li><strong>analyze_log</strong> has an "AUX ROUTE HEAD" section: the route loss against always predicting the batch average, and the error in build steps. WANT: the loss well below that baseline and falling.</li>
+    <li><strong>Smoke test</strong> (24 games from D018, empty buffer, scratch paths): D018's head file loaded through the fallback, with only the route head starting fresh. Every position with aux targets got a route label. The route loss fell below the always-mean baseline within about 10 training steps, reaching about half of it (0.018 against 0.045) and an error of about 1.1 build steps. The run saved and exited cleanly, and the saved file reloads with all heads.</li>
+  </ul>
+
+  <h2 id="plan">5. The plan</h2>
+  <ol class="steps">
+    <li>
+      <h3>Read D018</h3>
+      <ul>
+        <li><strong>Head-to-head against D013</strong> at the default guidance of 0.35, so it compares directly with D017's 0.375.</li>
+        <li><strong>If D018 looks weak there,</strong> rerun with both agents at 0.20. It was trained at 0.20, and the question is whether the network itself improved.</li>
+        <li><strong>Policy probe</strong> on D018: lower guidance in training should show here first, as entropy below about 92%.</li>
+      </ul>
+    </li>
+    <li>
+      <h3>D019 and D020: the route target, then training less often</h3>
+      <p>Two prepared changes; run them one at a time:</p>
+      <ul>
+        <li><strong>Route-distance aux target</strong> (<a href="#route">4b</a>): already on in the ini. Judge it by the AUX ROUTE HEAD section, by Timbuktu-win value accuracy across the run, and by head-to-head play.</li>
+        <li><strong><code>train_interval_seconds</code> 8 → 12:</strong> reuse is about 4.35× with 1 position kept in 32, close to D008's 5.5×, which got weaker. Twelve seconds gives about 2.9×. The alternative is <code>buffer_keep_every</code> back to 16 (about 2.2×), but that shortens the span of games the buffer holds.</li>
+        <li><strong>If the route head learns but Timbuktu prediction stays weak,</strong> add landmark planes: Timbuktu, the desert cities and the coast. Give the network's first layer zero weights for the new channels, so it starts exactly as before. Landmarks are constant, so they can be appended exactly to every stored position. Route-progress planes would need a fresh buffer. Both need C++ changes and a rebuild.</li>
+        <li><strong>Optional:</strong> raise the Timbuktu pool share to 0.15, taken from near-win (0.35 → 0.30). Don't take it from rare goods: D012's swap lost.</li>
+      </ul>
+    </li>
+    <li>
+      <h3>Get the policy learning</h3>
+      <ul>
+        <li><strong>A larger effective policy batch:</strong> a bigger batch, or extra full-search rows per step. The policy currently sees about 36 rows per step.</li>
+        <li><strong>Per-node Q normalization</strong> (MuZero-style) is still a candidate. Lowering <code>uct_c</code> didn't help, so treat it with care, and test it head to head.</li>
+      </ul>
+    </li>
+    <li>
+      <h3>Heuristic token placement as a run</h3>
+      <p>Built and ready (<code>placement_mode = heuristic</code>, 20% random control). It changes how starting positions are distributed in the training data, so give it a run of its own. Evaluations still place tokens at random for both agents.</p>
+    </li>
+    <li>
+      <h3>Later</h3>
+      <ul>
+        <li>Seat balance in strong play: seat 0 has about a 45% share of decided games at 300 simulations.</li>
+        <li>End settled games early while keeping their data, using the lead thresholds in section 3.</li>
+        <li>Human play: follow the migration steps in <code>ENGINE_UI_SEPARATION.md</code>, starting with GameSession and the bots, headless and tested.</li>
+        <li>Rules document: update the rare-goods end condition to five regions. The question of whether the Timbuktu route ends the game too easily is parked in <code>TODO.md</code>.</li>
+        <li>Extra compute (a second machine or hosted workers) is parked until training progress justifies it; see <code>TODO.md</code>.</li>
+      </ul>
+    </li>
+    <li>
+      <h3>Housekeeping and run checklist</h3>
+      <ul>
+        <li><strong>Rsync <code>mali_ba.ini</code> and the Python files to the laptop before every run,</strong> and rebuild both machines after any C++ change. In D016 the laptop played its first 1,400 games at 420 moves.</li>
+        <li>Check that a new run's first log lines show the expected weights, buffer and settings on both machines.</li>
+        <li>Don't edit the ini while a run or head-to-head is active: respawned actors and evals re-read it.</li>
+        <li>Buffer backups in <code>/media/robp/UD/Projects/open_spiel/</code>:
+          <ul>
+            <li><code>mali_ba_buffer.D014-oldrewards.pkl.gz</code>: old rewards</li>
+            <li><code>mali_ba_buffer.D015-newrewards.pkl.gz</code>: new rewards, still at 420 moves</li>
+          </ul>
+          The live buffer is D017's, saved at 500 moves.</li>
+      </ul>
+    </li>
+  </ol>
+
+  <h2 id="settings">6. Settings in effect (D018)</h2>
+  <dl class="kv">
+    <dt>Started from</dt><dd><code>mali_ba_agent_vD017.weights.h5</code> (D017 started from D016, and D016 from D013)</dd>
+    <dt>Rewards</dt><dd>win +1.0; loss −0.7 however the game ends; timeout leader +0.1; time penalty −0.0005 per move; gamma 1.0</dd>
+    <dt>Game length</dt><dd><code>max_play_moves = 500</code></dd>
+    <dt>Guidance</dt><dd>0.20 constant (<code>heuristic_guidance_weight</code> and <code>_final</code>)</dd>
+    <dt>Search</dt><dd><code>uct_c</code> 2.0; playout cap on (25% full search, otherwise 40 simulations; large route decisions exempt)</dd>
+    <dt>Buffer</dt><dd>100k positions; pools: timeout and near-win 0.35, rare goods 0.20, Timbuktu 0.10; 1 position in 32 kept</dd>
+    <dt>Training</dt><dd>every 8 s, batch 128; aux value targets on</dd>
+    <dt>Culling</dt><dd>off (<code>random_no_kill_thresh = 1.0</code>)</dd>
+    <dt>Setup</dt><dd>starting common goods by seat on; serpentine token placement on; bots place tokens at random</dd>
+    <dt>Machines</dt><dd>desktop, 68 actors; laptop, 16 actors (it isn't run overnight)</dd>
+  </dl>
+
+  <h2 id="reference">7. Tools, files and commands</h2>
+  <p>Run these from <code>mali_ba/open_spiel/python/games/mali_ba</code> with the trainer's environment. <code>docs/guides/DIAGNOSTIC_TOOLS.md</code> explains what each one measures.</p>
+  <h3>Head to head</h3>
+  <pre><code># two-way (A in one seat, B in two)
+python ab_eval.py --agent_a mali_ba_agent_vD018.weights.h5 --agent_b mali_ba_agent_vD013.weights.h5 \
+    --sims 300 --games 501 --workers 64 --config_file $PWD/mali_ba.ini > ab_D018_vs_D013.log 2>&1
+# three-way (one seat each; games round up to a multiple of 6)
+python ab_eval.py --agent_a … --agent_b … --agent_c … --sims 300 --games 504 --workers 64 --config_file $PWD/mali_ba.ini
+# same network, different guidance (A = first value)
+python ab_eval.py --agent_a X --agent_b X --heuristic_weight_a 0.15 --heuristic_weight_b 0.30 …</code></pre>
+  <h3>Probes and analysis</h3>
+  <pre><code>python policy_probe.py --positions probe_data/probe_positions_v2_600.json \
+    --reference probe_data/probe_reference_v2_600.json --workers 6 --agents …   # needs the old-rules ini (see probe_data/README)
+# value probe: no position set exists yet. Record one by adding
+#   --record_positions /media/robp/UD/Projects/open_spiel/value_probe_set.npz
+# to any head-to-head, then:
+python value_probe.py --positions /media/robp/UD/Projects/open_spiel/value_probe_set.npz --agents …
+python analyze_placements.py /media/robp/UD/Projects/open_spiel/train_runD013.log
+python analyze_log.py /media/robp/UD/Projects/open_spiel/train_runD018.log</code></pre>
+  <dl class="kv">
+    <dt>Logs</dt><dd><code>/media/robp/UD/Projects/open_spiel/train_run*.log</code>; head-to-head logs <code>ab_*.log</code> and <code>ab3_*.log</code> in the mali_ba directory</dd>
+    <dt>Buffer</dt><dd><code>/media/robp/UD/Projects/open_spiel/mali_ba_buffer.pkl.gz</code></dd>
+    <dt>Weights</dt><dd><code>mali_ba_agent_v*.weights.h5</code> → <code>_policy</code>, <code>_value</code> and <code>_value_aux</code> files in the mali_ba directory</dd>
+    <dt>Laptop</dt><dd><code>robp@192.168.0.241</code>; <code>remote_actors.py --server_host … --num_actors 16</code>. Read-only account for checks from the desktop: <code>ssh laptop-ro …</code> (user <code>claude-ro</code>, key <code>~/.ssh/claude_laptop_ro</code>; read access to <code>~/Projects/open_spiel</code> only). The worker prints to your terminal; to make its output readable, start it with <code>| tee ~/Projects/open_spiel/remote_DNNN.log</code>.</dd>
+  </dl>
+
+  <h2 id="traps">8. Things that misled us (don't repeat)</h2>
+  <ul>
+    <li><strong>Self-play win rate isn't strength,</strong> and it can't be compared across a reward change: D015's halved win rate was gifted wins disappearing. Judge by head-to-head play.</li>
+    <li><strong>In-run value checks don't compare across runs</strong> when the run changes what is played or kept. Use <code>value_probe.py</code> or head-to-head play.</li>
+    <li><strong>Don't read interim head-to-head results from a rotation-ordered run.</strong> ab_eval used to play all A-in-seat-0 games first; an interim 0.51 finished at 0.346. Rotations are interleaved now.</li>
+    <li><strong>Self-play behaviour isn't strong-play behaviour.</strong> The 58% loser-triggered endings vanished at 300 simulations.</li>
+    <li><strong>A remote worker can silently use stale settings</strong> if it isn't rsynced. Check its log lines at the start of every run.</li>
+    <li><strong>Changing <code>max_play_moves</code> rescales the move-count plane and the aux moves-left target.</strong> A saved buffer must be rescaled to match. It's exact: multiply both by old ÷ new, building new arrays, because oversampled entries share one array.</li>
+    <li><strong>Changing rewards invalidates stored value targets.</strong> D014's buffer was relabelled exactly: non-winners in win-condition games, −0.6.</li>
+    <li><strong>ab_eval's default guidance is 0.35, not the training value.</strong> It's kept for comparability with earlier evals.</li>
+    <li><strong>Editing code while a run is active changes the run.</strong> The trainer starts fresh actor processes about every 10 games, and they import the live (symlinked) <code>train_mali_ba.py</code>. Develop in a separate git worktree and merge only after the run ends.</li>
+    <li><strong>Launch the trainer through the <code>open_spiel</code> tree</strong> (<code>/media/robp/UD/Projects/open_spiel/open_spiel/python/games/mali_ba</code>), with the build's <code>python</code> directory first on <code>PYTHONPATH</code>. It finds the <code>mali_ba</code> package relative to its own path, and another <code>pyspiel</code> on the path breaks it.</li>
+    <li><strong>Python's configparser crashes on inline ini comments</strong> in the sections it reads. Comments go on their own line.</li>
+  </ul>
+
+  <footer>Prepared 10 October 2026. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest <code>fb0a4a2</code>.</footer>
+</main>

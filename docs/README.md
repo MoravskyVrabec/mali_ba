@@ -30,6 +30,9 @@ older ones are history.
 - HANDOFF-20260523.md, -20260624, -20260626, -20260630, -20260725 (.html)
 - [HANDOFF-20261002.html](handoffs/HANDOFF-20261002.html): the A-D series, the
   memorization finding and the plan that led to D005-D007.
+- [HANDOFF-20261010.html](handoffs/HANDOFF-20261010.html): runs D005-D018 (playout
+  cap, aux targets, culling off, new rewards, 500-move games), D018 in progress, and
+  the plan from there.
 
 ## notes/ (past design notes and write-ups)
 Records of specific changes, investigations and plans, kept for context:
