@@ -131,17 +131,17 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
 </style>
 
 <main>
-  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 10 October 2026</div>
+  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 10 October 2026, updated 11 October</div>
   <h1>Where we are, how we got here, what's next</h1>
   <p class="sub">Runs D005 through D018, 2–10 October. Written so either of us can pick this up cold. It continues <a href="HANDOFF-20261002.html">the 2 October handoff</a>; read that for the earlier history (memorization, the axis fix, pretraining). The source of truth is the <code>mali_ba</code> repo (branch <code>main</code>); <code>open_spiel</code> only holds symlinks.</p>
 
   <div class="status">
-    <h3>Status on 10 October (evening)</h3>
+    <h3>Status on 11 October</h3>
     <ul>
-      <li><strong>Run D018 has finished</strong> (stopped at 22:20 after 6,996 games). It continued from D017 with one change: training guidance lowered from 0.30 to 0.20. It hasn't been played head to head yet.</li>
-      <li><strong>A new aux target is merged and ready for a run:</strong> the value network also learns each player's distance to the Timbuktu ending (<a href="#route">section 4b</a>). It's Python only, with no rebuild needed.</li>
-      <li><strong>Strongest model:</strong> D013 is the last one confirmed best. D017 scored 0.375 against it, leaning stronger but just short of significant (95% CI [0.330, 0.422]; an even match is 0.333).</li>
-      <li><strong>Learning is measurable now.</strong> Since 2 October, head-to-head play has shown real gains four times: D007 over D005, D010 over D007, D013 over D011, and possibly D017 over D013.</li>
+      <li><strong>D019 is the strongest model.</strong> It beat D013 0.412 (95% CI [0.366, 0.460]; an even match is 0.333), the first clear win over D013. It added the route-distance aux head (<a href="#route">section 4b</a>) and trained every 12 s instead of 8.</li>
+      <li><strong>Run D020 is running</strong> (started 11 October, 13:41): D019 continued with no changes, as a longer run.</li>
+      <li><strong>Learning is measurable now.</strong> Since 2 October, head-to-head play has shown real gains five times: D007 over D005, D010 over D007, D013 over D011, D019 over D017 and D018 (three-way), and D019 over D013.</li>
+      <li><strong>Watch seat 2:</strong> in strong play it wins far less than the other seats (<a href="#seat2">section 3</a>).</li>
       <li><strong>Main open problem, unchanged:</strong> the policy is still nearly flat (92–93% of uniform entropy). The gains so far come from more games, better data and a better value head.</li>
     </ul>
   </div>
@@ -166,7 +166,8 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
     <li><strong>Turning culling off helped.</strong> Games that would have been cut short now play out and their data is kept. D013 beat D011 0.387 and became the reference model.</li>
     <li><strong>Several ideas didn't help:</strong> a lower <code>uct_c</code>, training every 4 seconds, swapping the win-pool shares, keeping 1 position in 32 instead of 16, and lower guidance at play time.</li>
     <li><strong>The rewards changed, and games got longer.</strong> A loss now costs −0.7 however the game ends (D015), and games run to 500 moves instead of 420 (D016). D015 alone was weaker. With 500-move games, D016 matched D013 and D017 may have passed it.</li>
-    <li><strong>Next:</strong> read D018, then consider training less often (reuse is back up to 4.35×), and work on getting the policy to learn.</li>
+    <li><strong>The route-distance aux head plus a 12 s training interval made D019 the strongest model</strong> (0.412 against D013). Lower guidance alone (D018) didn't help.</li>
+    <li><strong>Next:</strong> read D020 (a plain continuation of D019), look into seat 2's weakness in strong play, and work on getting the policy to learn.</li>
   </ol>
 
   <h2 id="runs">2. Every run since D005</h2>
@@ -184,7 +185,9 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
       <tr><td>D015</td><td>D014</td><td>New rewards: a loss is −0.7 however the game ends</td><td class="n">7,000</td><td>Lost to D013 0.283 [0.241, 0.330]; three-way D013 0.390, D014 0.323, D015 0.287</td></tr>
       <tr><td>D016</td><td>D013</td><td><code>max_play_moves</code> 420 → 500 (new rewards kept)</td><td class="n">5,382</td><td>Even with D013, 0.329 [0.286, 0.376]</td></tr>
       <tr class="hl"><td>D017</td><td>D016</td><td>No change, longer clean run</td><td class="n">9,067</td><td>0.375 [0.330, 0.422] vs D013: leaning stronger, not significant</td></tr>
-      <tr><td>D018</td><td>D017</td><td>Training guidance 0.30 → 0.20</td><td class="n">6,996</td><td>Not yet played. Self-play wins flat at 22–24%, below D017's 26–30%, as expected with less heuristic help.</td></tr>
+      <tr><td>D018</td><td>D017</td><td>Training guidance 0.30 → 0.20</td><td class="n">6,996</td><td>Three-way with D017 and D019: 0.294, level with D017's 0.313. No gain from lower guidance alone.</td></tr>
+      <tr class="hl"><td>D019</td><td>D018</td><td>Route-distance aux head; <code>train_interval_seconds</code> 8 → 12 (two changes)</td><td class="n">10,000</td><td><strong>Three-way: D019 0.392</strong> [0.350, 0.437], D017 0.313, D018 0.294. <strong>Beat D013</strong> 0.412 [0.366, 0.460].</td></tr>
+      <tr><td>D020</td><td>D019</td><td>No change, longer run</td><td class="n">running</td><td>—</td></tr>
     </tbody>
   </table></div>
   <p>Tests on a single checkpoint, playing it against itself with one setting changed:</p>
@@ -234,6 +237,24 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
     <li>sitting in seat P2: <strong>−3.2</strong></li>
   </ul>
   <p>A heuristic placement that uses these weights is built and off by default (<code>placement_mode</code>).</p>
+
+  <h3>D019: the route head learns, and the model got stronger</h3>
+  <ul>
+    <li><strong>Route head:</strong> by the end of D019 its loss was 0.28× the always-mean baseline, and its error fell from 1.12 to 0.82 build steps, still falling. Labelled rows grew from 6% to 60% of each batch as new games replaced the old buffer.</li>
+    <li><strong>Value head on Timbuktu games:</strong> top-pick 67% (D017), 69% (D018), 71% (D019); within D019, 70 / 69 / 72% by thirds. That points the right way but is within noise, since D018 swung as much.</li>
+    <li><strong>Training interval:</strong> 12 s cut reuse from 4.35× to 2.97×.</li>
+    <li><strong>Self-play wins</strong> rose from 23.0% to 26.8% during D019 (+3.8 ± 2.9 points), mostly rare-goods wins.</li>
+    <li><strong>Strength:</strong> D019 beat both its predecessors in the three-way and beat D013 two-way. The two changes were made together, so their effects can't be separated; both are cheap to keep.</li>
+    <li><strong>Shutdown fixes confirmed:</strong> at the end of D019 the trainer and the laptop worker both exited on their own.</li>
+  </ul>
+
+  <h3 id="seat2">Seat 2 wins far less in strong play</h3>
+  <p>In self-play the seats are balanced (about 33/34/33% of wins). At 300 simulations they aren't:</p>
+  <ul>
+    <li>D019 vs D013 (two-way): seat 0 209, seat 1 140, seat 2 73 decided games (17% for seat 2).</li>
+    <li>D019 / D018 / D017 three-way: 212 / 228 / 39 (8% for seat 2), and every agent was weak from seat 2.</li>
+    <li>Earlier evals had seat 2 at about 23%. Games are getting shorter (three-way median 258 moves), which may finish them before seat 2's extra starting goods pay off. Not yet investigated.</li>
+  </ul>
 
   <h3>Seat 0 wins most often at full strength</h3>
   <p>In self-play the seats are now balanced (about 33/34/33% of wins) thanks to the setup rules: starting common goods 0/1/2 by seat, and serpentine token placement. In head-to-heads at 300 simulations, seat 0 still takes about 45% of decided games and seat 2 about 23%.</p>
@@ -301,19 +322,18 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
   <h2 id="plan">5. The plan</h2>
   <ol class="steps">
     <li>
-      <h3>Read D018</h3>
+      <h3>Read D020</h3>
       <ul>
-        <li><strong>Head-to-head against D013</strong> at the default guidance of 0.35, so it compares directly with D017's 0.375.</li>
-        <li><strong>If D018 looks weak there,</strong> rerun with both agents at 0.20. It was trained at 0.20, and the question is whether the network itself improved.</li>
-        <li><strong>Policy probe</strong> on D018: lower guidance in training should show here first, as entropy below about 92%.</li>
+        <li><strong>analyze_log:</strong> the AUX ROUTE HEAD section (it starts with a buffer that already has route labels), Timbuktu-win value accuracy across the run, and the win-rate trend.</li>
+        <li><strong>Head-to-head against D019.</strong> If D020 wins, continue the line; if it's level, D019's improvement may have plateaued.</li>
+        <li><strong>Policy probe</strong> on D019 and D020, to see whether the policy has started to sharpen (entropy below about 92%).</li>
       </ul>
     </li>
     <li>
-      <h3>D019 and D020: the route target, then training less often</h3>
-      <p>Two prepared changes; run them one at a time:</p>
+      <h3>Building on D019</h3>
+      <p>D019 took both prepared changes at once, the route-distance aux target and the 12 s interval, and won. Next options, one per run:</p>
       <ul>
-        <li><strong>Route-distance aux target</strong> (<a href="#route">4b</a>): already on in the ini. Judge it by the AUX ROUTE HEAD section, by Timbuktu-win value accuracy across the run, and by head-to-head play.</li>
-        <li><strong><code>train_interval_seconds</code> 8 → 12:</strong> reuse is about 4.35× with 1 position kept in 32, close to D008's 5.5×, which got weaker. Twelve seconds gives about 2.9×. The alternative is <code>buffer_keep_every</code> back to 16 (about 2.2×), but that shortens the span of games the buffer holds.</li>
+        <li><strong>Guidance back to 0.30:</strong> lowering it to 0.20 didn't help by itself (D018). Worth testing on the D019 line, since 0.30 gives more win positions.</li>
         <li><strong>If the route head learns but Timbuktu prediction stays weak,</strong> add landmark planes: Timbuktu, the desert cities and the coast. Give the network's first layer zero weights for the new channels, so it starts exactly as before. Landmarks are constant, so they can be appended exactly to every stored position. Route-progress planes would need a fresh buffer. Both need C++ changes and a rebuild.</li>
         <li><strong>Optional:</strong> raise the Timbuktu pool share to 0.15, taken from near-win (0.35 → 0.30). Don't take it from rare goods: D012's swap lost.</li>
       </ul>
@@ -355,15 +375,15 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
     </li>
   </ol>
 
-  <h2 id="settings">6. Settings in effect (D018)</h2>
+  <h2 id="settings">6. Settings in effect (D020)</h2>
   <dl class="kv">
-    <dt>Started from</dt><dd><code>mali_ba_agent_vD017.weights.h5</code> (D017 started from D016, and D016 from D013)</dd>
+    <dt>Started from</dt><dd>D020: <code>mali_ba_agent_vD019.weights.h5</code> (line: D013 → D016 → D017 → D018 → D019)</dd>
     <dt>Rewards</dt><dd>win +1.0; loss −0.7 however the game ends; timeout leader +0.1; time penalty −0.0005 per move; gamma 1.0</dd>
     <dt>Game length</dt><dd><code>max_play_moves = 500</code></dd>
     <dt>Guidance</dt><dd>0.20 constant (<code>heuristic_guidance_weight</code> and <code>_final</code>)</dd>
     <dt>Search</dt><dd><code>uct_c</code> 2.0; playout cap on (25% full search, otherwise 40 simulations; large route decisions exempt)</dd>
     <dt>Buffer</dt><dd>100k positions; pools: timeout and near-win 0.35, rare goods 0.20, Timbuktu 0.10; 1 position in 32 kept</dd>
-    <dt>Training</dt><dd>every 8 s, batch 128; aux value targets on</dd>
+    <dt>Training</dt><dd>every 12 s, batch 128; aux value targets on (win type, moves left, route distance)</dd>
     <dt>Culling</dt><dd>off (<code>random_no_kill_thresh = 1.0</code>)</dd>
     <dt>Setup</dt><dd>starting common goods by seat on; serpentine token placement on; bots place tokens at random</dd>
     <dt>Machines</dt><dd>desktop, 68 actors; laptop, 16 actors (it isn't run overnight)</dd>
@@ -410,5 +430,5 @@ python analyze_log.py /media/robp/UD/Projects/open_spiel/train_runD018.log</code
     <li><strong>Python's configparser crashes on inline ini comments</strong> in the sections it reads. Comments go on their own line.</li>
   </ul>
 
-  <footer>Prepared 10 October 2026. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest <code>fb0a4a2</code>.</footer>
+  <footer>Prepared 10 October 2026, updated 11 October. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest code commit <code>3512c91</code>.</footer>
 </main>
