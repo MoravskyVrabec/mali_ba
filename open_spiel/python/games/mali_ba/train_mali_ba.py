@@ -96,6 +96,7 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
         aux_moves_left_weight=getattr(args, 'aux_moves_left_weight', 1.0),
         aux_route_target=getattr(args, 'aux_route_target', False),
         aux_route_weight=getattr(args, 'aux_route_weight', 1.0),
+        policy_legal_mask=getattr(args, 'policy_legal_mask', False),
     )
     del temp_game
 
@@ -553,7 +554,7 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
     os.environ.setdefault("TF_NUM_INTRAOP_THREADS", "1")
     os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
     import tensorflow as tf
-    from mali_ba.training_utils import AlphaZeroEvaluator, create_mali_ba_policy_network, create_mali_ba_value_network
+    from mali_ba.training_utils import AlphaZeroEvaluator, create_mali_ba_policy_network, create_mali_ba_value_network, POLICY_LEGAL_MARK
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     tf.config.set_visible_devices([], 'GPU')
@@ -693,7 +694,8 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
         # Pass both models to the evaluator
         evaluator = AlphaZeroEvaluator(game, policy_model, value_model,
                                        heuristic_guidance_weight=job_heuristic_weight,
-                                       client=_infer_client)
+                                       client=_infer_client,
+                                       blend_normalized=getattr(args, 'guidance_blend_normalized', False))
         
         bot = mcts.MCTSBot(
             game=game, uct_c=args.uct_c, max_simulations=args.max_simulations,
@@ -1209,6 +1211,11 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                     prob = 1.0 / len(legal_actions)
                     for act in legal_actions:
                         mcts_policy_full[act] = prob
+                # Mark legal moves the search never visited, so the trainer can restrict
+                # the policy loss to the legal moves (training_utils.POLICY_LEGAL_MARK).
+                for act in legal_actions:
+                    if 0 <= act < len(mcts_policy_full) and mcts_policy_full[act] == 0:
+                        mcts_policy_full[act] = POLICY_LEGAL_MARK
             
             if action != pyspiel.INVALID_ACTION:
                 action_str = state.action_to_string(player, action)
@@ -2747,6 +2754,8 @@ if __name__ == "__main__":
     # Needs aux_targets: the route distance rides in the same aux tuple and head file.
     parsed_args.aux_route_target = parsed_args.aux_targets and _ini_bool('aux_route_target', False)
     parsed_args.aux_route_weight = _ini_float('aux_route_weight', 1.0)
+    parsed_args.policy_legal_mask = _ini_bool('policy_legal_mask', False)
+    parsed_args.guidance_blend_normalized = _ini_bool('guidance_blend_normalized', False)
     if parsed_args.sim_route_decision_sims is None:
         parsed_args.sim_route_decision_sims = _ini_int('sim_route_decision_sims', 500)
     if parsed_args.sim_route_decision_min_candidates is None:
