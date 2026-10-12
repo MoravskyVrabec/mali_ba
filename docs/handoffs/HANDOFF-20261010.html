@@ -131,15 +131,17 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
 </style>
 
 <main>
-  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 10 October 2026, updated 11 October</div>
+  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 10 October 2026, updated 11 October (night)</div>
   <h1>Where we are, how we got here, what's next</h1>
   <p class="sub">Runs D005 through D018, 2–10 October. Written so either of us can pick this up cold. It continues <a href="HANDOFF-20261002.html">the 2 October handoff</a>; read that for the earlier history (memorization, the axis fix, pretraining). The source of truth is the <code>mali_ba</code> repo (branch <code>main</code>); <code>open_spiel</code> only holds symlinks.</p>
 
   <div class="status">
-    <h3>Status on 11 October</h3>
+    <h3>Status on 11 October (night)</h3>
     <ul>
       <li><strong>D019 is the strongest model.</strong> It beat D013 0.412 (95% CI [0.366, 0.460]; an even match is 0.333), the first clear win over D013. It added the route-distance aux head (<a href="#route">section 4b</a>) and trained every 12 s instead of 8.</li>
-      <li><strong>Run D020 is running</strong> (started 11 October, 13:41): D019 continued with no changes, as a longer run.</li>
+      <li><strong>The desktop has a hardware memory fault</strong> (<a href="#hardware">section 3</a>). It killed D020's trainer at 19:41 mid-save, and 68 Python processes that day. Fix it before the next long run: steps are first in <code>TODO.md</code>.</li>
+      <li><strong>Run D020 ended early</strong> (trainer killed at 19:41; stopped by hand at about 22:15). Its usable result is the 19:41 checkpoint, <code>mali_ba_agent_vD020_ckpt_20261011_1941.weights.h5</code>. The main <code>mali_ba_agent_vD020</code> files are not usable: the policy file was cut off at 1.5 MB.</li>
+      <li><strong>Ready for D021</strong> (merged as <code>1411db0</code>): the policy loss now covers legal moves only, and guidance mixes in the heuristic at its true share (<a href="#policyloss">section 3</a>).</li>
       <li><strong>Learning is measurable now.</strong> Since 2 October, head-to-head play has shown real gains five times: D007 over D005, D010 over D007, D013 over D011, D019 over D017 and D018 (three-way), and D019 over D013.</li>
       <li><strong>Watch seat 2:</strong> in strong play it wins far less than the other seats (<a href="#seat2">section 3</a>).</li>
       <li><strong>Main open problem, unchanged:</strong> the policy is still nearly flat (92–93% of uniform entropy). The gains so far come from more games, better data and a better value head.</li>
@@ -167,7 +169,8 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
     <li><strong>Several ideas didn't help:</strong> a lower <code>uct_c</code>, training every 4 seconds, swapping the win-pool shares, keeping 1 position in 32 instead of 16, and lower guidance at play time.</li>
     <li><strong>The rewards changed, and games got longer.</strong> A loss now costs −0.7 however the game ends (D015), and games run to 500 moves instead of 420 (D016). D015 alone was weaker. With 500-move games, D016 matched D013 and D017 may have passed it.</li>
     <li><strong>The route-distance aux head plus a 12 s training interval made D019 the strongest model</strong> (0.412 against D013). Lower guidance alone (D018) didn't help.</li>
-    <li><strong>Next:</strong> read D020 (a plain continuation of D019), look into seat 2's weakness in strong play, and work on getting the policy to learn.</li>
+    <li><strong>Most of the policy loss was wasted on illegal moves,</strong> and the same flaw made the guidance settings mean more than they said. Both are fixed for D021.</li>
+    <li><strong>Next:</strong> fix the desktop's memory fault, then D021 from D020's 19:41 checkpoint with the policy fixes; look into seat 2's weakness in strong play.</li>
   </ol>
 
   <h2 id="runs">2. Every run since D005</h2>
@@ -187,7 +190,7 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
       <tr class="hl"><td>D017</td><td>D016</td><td>No change, longer clean run</td><td class="n">9,067</td><td>0.375 [0.330, 0.422] vs D013: leaning stronger, not significant</td></tr>
       <tr><td>D018</td><td>D017</td><td>Training guidance 0.30 → 0.20</td><td class="n">6,996</td><td>Three-way with D017 and D019: 0.294, level with D017's 0.313. No gain from lower guidance alone.</td></tr>
       <tr class="hl"><td>D019</td><td>D018</td><td>Route-distance aux head; <code>train_interval_seconds</code> 8 → 12 (two changes)</td><td class="n">10,000</td><td><strong>Three-way: D019 0.392</strong> [0.350, 0.437], D017 0.313, D018 0.294. <strong>Beat D013</strong> 0.412 [0.366, 0.460].</td></tr>
-      <tr><td>D020</td><td>D019</td><td>No change, longer run</td><td class="n">running</td><td>—</td></tr>
+      <tr><td>D020</td><td>D019</td><td>No change, longer run</td><td class="n">~7,400</td><td>Trainer killed by a memory fault at 19:41 (about 5,500 games trained on). Not yet played; use the 19:41 checkpoint.</td></tr>
     </tbody>
   </table></div>
   <p>Tests on a single checkpoint, playing it against itself with one setting changed:</p>
@@ -246,6 +249,30 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
     <li><strong>Self-play wins</strong> rose from 23.0% to 26.8% during D019 (+3.8 ± 2.9 points), mostly rare-goods wins.</li>
     <li><strong>Strength:</strong> D019 beat both its predecessors in the three-way and beat D013 two-way. The two changes were made together, so their effects can't be separated; both are cheap to keep.</li>
     <li><strong>Shutdown fixes confirmed:</strong> at the end of D019 the trainer and the laptop worker both exited on their own.</li>
+  </ul>
+
+  <h3 id="hardware">The desktop has a hardware memory fault</h3>
+  <ul>
+    <li><strong>What happened:</strong> on 11 October the kernel killed <strong>68 Python processes</strong> with machine-check exceptions ("MCE: Killing python … due to hardware memory corruption fault"), from 16:14 on. Most were D020 actors, which the trainer quietly restarted, until the trainer itself was killed at 19:41 while writing the main weights. One earlier event, on 9 October at 19:05, was during D016.</li>
+    <li><strong>Evidence:</strong> the error records say <code>UE … Poison</code> (uncorrectable). <code>/proc/meminfo</code> showed <code>HardwareCorrupted: 8 kB</code>: the kernel took two memory pages out of service. Many processes faulted at the same addresses, which fits one bad page holding part of Python's own program code.</li>
+    <li><strong>The main process didn't notice the dead trainer,</strong> and actors played on for about 2.5 hours with nothing training on their games or saving. Fixed: a run now stops with an error when its trainer dies, and says to resume from the last 2-hour checkpoint.</li>
+    <li><strong>Likely cause and fix:</strong> four DDR5 modules on AM5 with EXPO/XMP enabled are a common source of this. The steps (record the module configuration, BIOS settings, MemTest86+, test modules singly) are first in <code>TODO.md</code>.</li>
+  </ul>
+
+  <h3 id="policyloss">Most of the policy loss was wasted on illegal moves (fixed for D021)</h3>
+  <ul>
+    <li><strong>The loss breaks down as:</strong> total ≈ 3.0 = policy ≈ 2.78 + value ≈ 0.23. The policy part can't fall below the entropy of its targets, the search's visit spread, which is ≈ 1.75 nats: like an even choice among about 6 moves, 91% of fully flat. That leaves a gap of about 1.0.</li>
+    <li><strong>Most of that gap was illegal moves.</strong> The policy outputs all 624 actions, and on 3,000 real self-play positions D019 put about <strong>52% of its probability on illegal ones</strong>, costing about 0.67 nats of loss by itself. Play was unaffected, because the search ignores illegal moves, but much of the policy's learning went into avoiding them.</li>
+    <li><strong>The same flaw inflated guidance.</strong> The prior mixed the network and the heuristic over all actions, then rescaled over the legal moves. The heuristic's real share was therefore about <strong>0.38 at setting 0.20, 0.50 at 0.30, and 0.55 at ab_eval's 0.35</strong>. Read the earlier guidance results in those terms: 0.27 vs 0.50 at play time (D017 test), and about 0.38 vs 0.50 in training (D018).</li>
+    <li><strong>Fixes (merged as <code>1411db0</code>):</strong>
+      <ul>
+        <li>The actor marks legal moves the search didn't visit in each recorded target (value 1e-6).</li>
+        <li><code>policy_legal_mask = true</code> computes the policy loss over legal moves only.</li>
+        <li><code>guidance_blend_normalized = true</code> rescales the network's policy over the legal moves before mixing, with the weight at <strong>0.38</strong>, the same real share as D018–D020. ab_eval has a matching <code>--guidance_blend_normalized</code> option.</li>
+      </ul>
+      Tested on the CPU: with the switch off, the prior is exactly as before. The masked loss closed the legal-move gap in 12 steps from 0.65 to 0.18, where the old loss went from 0.96 to 0.50. Smoke test (from D020's 19:41 checkpoint, scratch paths): guidance ran at 0.380 with the normalized blend, the masked loss trained, and the route head carried on (error 0.92 build steps). Killing the trainer with SIGKILL made the run stop itself at once (exit code −9 reported), with "Run stopped early" instead of "Training complete".</li>
+    <li><strong>The policy already matches its targets over the legal moves.</strong> First masked step, from D020's checkpoint: target entropy 1.59, cross-entropy over legal moves 1.70, a <strong>gap of only 0.11</strong>. Cross-entropy over all actions was 3.32, with 58% off the legal moves. So the old "~1.0 gap" was nearly all illegal-move probability, and <strong>the policy is flat because its search targets are flat</strong>, not because the network fails to learn them. The lever is sharper targets: a better value head (larger differences between moves), more simulations on recorded moves, or Gumbel-style targets.</li>
+    <li><strong>New log line and analyze_log section, POLICY FIT:</strong> target entropy, cross-entropy over legal moves, the <strong>gap</strong> between them (the number to watch from now on), cross-entropy over all actions, and the share off the legal moves. With the masked loss on, the policy loss drops by about 0.7 at once, so judge by the gap, not the loss.</li>
   </ul>
 
   <h3 id="seat2">Seat 2 wins far less in strong play</h3>
@@ -322,11 +349,12 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
   <h2 id="plan">5. The plan</h2>
   <ol class="steps">
     <li>
-      <h3>Read D020</h3>
+      <h3>Fix the memory fault, then D021</h3>
       <ul>
-        <li><strong>analyze_log:</strong> the AUX ROUTE HEAD section (it starts with a buffer that already has route labels), Timbuktu-win value accuracy across the run, and the win-rate trend.</li>
-        <li><strong>Head-to-head against D019.</strong> If D020 wins, continue the line; if it's level, D019's improvement may have plateaued.</li>
-        <li><strong>Policy probe</strong> on D019 and D020, to see whether the policy has started to sharpen (entropy below about 92%).</li>
+        <li><strong>First, the hardware:</strong> work through the memory steps in <code>TODO.md</code>.</li>
+        <li><strong>D020 vs D019 head-to-head</strong>, using the 19:41 checkpoint. It's worth knowing whether the plain continuation helped before building on it.</li>
+        <li><strong>D021:</strong> start from the stronger of D019 and D020's 19:41 checkpoint, with the merged policy fixes. They're already set in the ini: masked loss on, normalized blend on, guidance 0.38. Watch the POLICY FIT gap falling and the probe's entropy. Expect the policy loss to drop by about 0.7 at once; that's the masking, not progress.</li>
+        <li><strong>Evaluating D021:</strong> use <code>--guidance_blend_normalized</code> with <code>--heuristic_weight 0.55</code>, the old default's real share, for both agents, so results compare with earlier ones.</li>
       </ul>
     </li>
     <li>
@@ -375,12 +403,13 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
     </li>
   </ol>
 
-  <h2 id="settings">6. Settings in effect (D020)</h2>
+  <h2 id="settings">6. Settings in effect (for D021)</h2>
   <dl class="kv">
-    <dt>Started from</dt><dd>D020: <code>mali_ba_agent_vD019.weights.h5</code> (line: D013 → D016 → D017 → D018 → D019)</dd>
+    <dt>Started from</dt><dd>D021 (planned): the stronger of <code>mali_ba_agent_vD019.weights.h5</code> and <code>mali_ba_agent_vD020_ckpt_20261011_1941.weights.h5</code> (line: D013 → D016 → D017 → D018 → D019 → D020)</dd>
     <dt>Rewards</dt><dd>win +1.0; loss −0.7 however the game ends; timeout leader +0.1; time penalty −0.0005 per move; gamma 1.0</dd>
     <dt>Game length</dt><dd><code>max_play_moves = 500</code></dd>
-    <dt>Guidance</dt><dd>0.20 constant (<code>heuristic_guidance_weight</code> and <code>_final</code>)</dd>
+    <dt>Guidance</dt><dd>0.38 constant with <code>guidance_blend_normalized = true</code>: the true heuristic share, the same as D018–D020's 0.20 under the old blend</dd>
+    <dt>Policy loss</dt><dd>over legal moves only (<code>policy_legal_mask = true</code>)</dd>
     <dt>Search</dt><dd><code>uct_c</code> 2.0; playout cap on (25% full search, otherwise 40 simulations; large route decisions exempt)</dd>
     <dt>Buffer</dt><dd>100k positions; pools: timeout and near-win 0.35, rare goods 0.20, Timbuktu 0.10; 1 position in 32 kept</dd>
     <dt>Training</dt><dd>every 12 s, batch 128; aux value targets on (win type, moves left, route distance)</dd>
@@ -425,10 +454,13 @@ python analyze_log.py /media/robp/UD/Projects/open_spiel/train_runD018.log</code
     <li><strong>Changing <code>max_play_moves</code> rescales the move-count plane and the aux moves-left target.</strong> A saved buffer must be rescaled to match. It's exact: multiply both by old ÷ new, building new arrays, because oversampled entries share one array.</li>
     <li><strong>Changing rewards invalidates stored value targets.</strong> D014's buffer was relabelled exactly: non-winners in win-condition games, −0.6.</li>
     <li><strong>ab_eval's default guidance is 0.35, not the training value.</strong> It's kept for comparability with earlier evals.</li>
+    <li><strong>The total loss isn't a measure of learning.</strong> About 1.75 of the policy loss is the search's own indecision, and about 0.67 was illegal-move probability. Watch the POLICY FIT gap instead.</li>
+    <li><strong>Guidance settings didn't mean what they said</strong> before <code>guidance_blend_normalized</code>: the real heuristic share was much higher (0.20 → about 0.38). Compare guidance results only in real shares.</li>
+    <li><strong>A run can lose its trainer silently</strong> (hardware fault, crash). Runs now stop themselves when that happens, but check any run that looks quiet for saves (<code>Buffer saved</code>, checkpoints) and check <code>journalctl -k</code> for machine-check errors.</li>
     <li><strong>Editing code while a run is active changes the run.</strong> The trainer starts fresh actor processes about every 10 games, and they import the live (symlinked) <code>train_mali_ba.py</code>. Develop in a separate git worktree and merge only after the run ends.</li>
     <li><strong>Launch the trainer through the <code>open_spiel</code> tree</strong> (<code>/media/robp/UD/Projects/open_spiel/open_spiel/python/games/mali_ba</code>), with the build's <code>python</code> directory first on <code>PYTHONPATH</code>. It finds the <code>mali_ba</code> package relative to its own path, and another <code>pyspiel</code> on the path breaks it.</li>
     <li><strong>Python's configparser crashes on inline ini comments</strong> in the sections it reads. Comments go on their own line.</li>
   </ul>
 
-  <footer>Prepared 10 October 2026, updated 11 October. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest code commit <code>3512c91</code>.</footer>
+  <footer>Prepared 10 October 2026, updated 11 October. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest code commit <code>1411db0</code>.</footer>
 </main>

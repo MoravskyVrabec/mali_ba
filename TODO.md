@@ -1,5 +1,36 @@
 # Mali-Ba to-do
 
+## FIRST: desktop memory errors (added 2026-10-11)
+
+The desktop is reporting uncorrectable RAM errors. On 2026-10-11 the kernel killed
+68 Python processes with machine-check exceptions ("MCE: Killing python ... due to
+hardware memory corruption fault"), from 16:14 on; most were D020 actors (silently
+respawned), then at 19:41 the trainer itself, mid-save. There was an earlier one on
+2026-10-09 19:05 (during D016). `/proc/meminfo` showed `HardwareCorrupted: 8 kB`:
+the kernel had retired two physical pages. The error records say `UE ... Poison`
+(uncorrectable). Until this is fixed any run can lose its trainer, and corruption
+the hardware does not catch is possible too.
+
+Steps:
+
+1. **Record the memory configuration:**
+   `sudo dmidecode -t memory | grep -E "Locator|Size|Speed|Part Number"`
+   (number of modules, rated vs configured speed, part numbers).
+2. **Check the BIOS memory settings.** With 4 DDR5 modules on AM5 (7950X3D),
+   EXPO/XMP overclocks are a common cause of exactly this. Try EXPO off, or a lower
+   speed (e.g. 4800 MT/s), before suspecting a module.
+3. **Run MemTest86+** (Ubuntu's boot menu, or a USB stick from memtest.org): at
+   least one full pass at the current settings, to confirm the fault, then again
+   after any change.
+4. **If one module shows errors:** reseat it, retest; test modules one at a time
+   to find the bad one; replace it (the kit may be under warranty).
+5. **After a fix, watch for recurrence** during the next runs:
+   `journalctl -k | grep -iE "MCE|Hardware Error|Memory failure"` and
+   `grep HardwareCorrupted /proc/meminfo` (should stay 0 kB after a reboot).
+6. Since 2026-10-11 a run stops itself with an error when its trainer dies, rather
+   than playing on for hours; resume from the last 2-hour checkpoint (the main
+   weights file may be cut off: D020's `_policy` file was 1.5 MB instead of 9.2 MB).
+
 ## Starting token placement (added 2026-10-07)
 
 Training actors place tokens uniformly at random, and from the run after D010 each
@@ -76,9 +107,24 @@ All strength gains so far (D007, D010) came through the value head. The policy
 trains on MCTS visit counts, and at uct_c 2.0 those are nearly flat (~90% of
 uniform), so there is nothing sharp to learn.
 
-- Keep heuristic guidance at 0.30 until the policy carries real preferences
-  (probe entropy clearly below ~90%, top-1 clearly above ~36%); then test lower
-  guidance with a head-to-head (needs a per-agent --heuristic_weight in ab_eval).
+- **2026-10-11 finding:** most of the policy loss was not about move choice.
+  Policy loss ~2.78 = target entropy ~1.75 (the search's own indecision, ~91% of
+  flat) + a ~1.0 gap, and ~0.67 of that gap was the network putting ~52% of its
+  probability on illegal actions (624-way softmax, never masked). The same flaw
+  inflated guidance: the heuristic's real share was ~0.38 at setting 0.20, ~0.50
+  at 0.30, ~0.55 at ab_eval's 0.35. Fixed in 1411db0: `policy_legal_mask = true`
+  (loss over legal moves only), `guidance_blend_normalized = true` with the weight
+  at 0.38 (same real share as before). Judge D021 on by the "gap" in analyze_log's
+  POLICY FIT section, not the loss.
+- **First masked step (smoke test, D020 checkpoint):** gap over legal moves only
+  0.11 (target entropy 1.59, CE over legal 1.70). The network already matches its
+  targets over the legal moves; **the flatness is in the search targets.** Next
+  levers, roughly in order: a better value head (bigger Q differences between
+  moves), more simulations on recorded full-search moves, Gumbel-style policy
+  targets (prior + searched values instead of visit counts), per-node Q
+  normalization (test head to head; lower uct_c was null).
+- Guidance results so far (real shares): 0.27 vs 0.50 at play time lost (D017);
+  training at ~0.38 vs ~0.50 (D018) did not help by itself.
 - Options, roughly in order: sharpen policy targets (visit counts raised to a
   power, or temperature); KataGo-style forced playouts with policy-target pruning;
   revisit uct_c once the value head is stronger (0.5 and 1.0 vs 2.0 were null on
