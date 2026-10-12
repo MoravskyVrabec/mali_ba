@@ -1980,8 +1980,20 @@ def main(args):
            "  [gamma<1: targets depend on moves remaining, which the observation "
            "does not encode -- see mali_ba.ini]"))
 
+    trainer_died = False
     while total_games_processed < args.num_episodes:
-
+        # The trainer can die without this loop noticing: on 2026-10-11 a hardware
+        # memory error killed D020's trainer mid-save, and actors played on for 2.5
+        # hours with nothing training on their games or saving. Stop the run instead.
+        if trainer is not None and not trainer.is_alive():
+            trainer_died = True
+            log(LogLevel.ERROR,
+                f"Trainer process exited unexpectedly (exit code {trainer.exitcode}) after "
+                f"{total_games_processed} games. Stopping the run: games played from here on "
+                f"would be neither trained on nor saved. Weights and buffer are as of the "
+                f"trainer's last save, and a save cut off by the failure may be incomplete: "
+                f"resume from the last 2-hour checkpoint.")
+            break
 
         if total_games_processed % 10 == 0:
             log(LogLevel.DEBUG, f"Queue sizes - Jobs: {job_queue.qsize()}, "
@@ -2443,7 +2455,12 @@ def main(args):
     log(LogLevel.INFO, "All processes terminated.")
     end_time = time.time()
     log(LogLevel.INFO, f"Total time: {end_time - start_time:.2f} seconds")
-    log(LogLevel.INFO, f"Training complete. Final model saved to {args.save_model_path}")
+    if trainer_died:
+        log(LogLevel.ERROR, f"Run stopped early: the trainer died (see above). "
+                            f"{args.save_model_path} may be stale or incomplete; resume from "
+                            f"the last 2-hour checkpoint.")
+    else:
+        log(LogLevel.INFO, f"Training complete. Final model saved to {args.save_model_path}")
     # Everything is saved and every child process has been joined or terminated.
     # Exit now rather than let interpreter shutdown wait on queue feeder threads or
     # queue-server connections that remote workers may still hold open.
