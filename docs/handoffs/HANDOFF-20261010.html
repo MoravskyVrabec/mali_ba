@@ -131,19 +131,19 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
 </style>
 
 <main>
-  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 10 October 2026, updated 11 October (night)</div>
+  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 10 October 2026, updated 11 October (late night)</div>
   <h1>Where we are, how we got here, what's next</h1>
-  <p class="sub">Runs D005 through D018, 2–10 October. Written so either of us can pick this up cold. It continues <a href="HANDOFF-20261002.html">the 2 October handoff</a>; read that for the earlier history (memorization, the axis fix, pretraining). The source of truth is the <code>mali_ba</code> repo (branch <code>main</code>); <code>open_spiel</code> only holds symlinks.</p>
+  <p class="sub">Runs D005 through D021, 2–11 October. Written so either of us can pick this up cold. It continues <a href="HANDOFF-20261002.html">the 2 October handoff</a>; read that for the earlier history (memorization, the axis fix, pretraining). The source of truth is the <code>mali_ba</code> repo (branch <code>main</code>); <code>open_spiel</code> only holds symlinks.</p>
 
   <div class="status">
-    <h3>Status on 11 October (night)</h3>
+    <h3>Status on 11 October (late night)</h3>
     <ul>
       <li><strong>D019 is the strongest model.</strong> It beat D013 0.412 (95% CI [0.366, 0.460]; an even match is 0.333), the first clear win over D013. It added the route-distance aux head (<a href="#route">section 4b</a>) and trained every 12 s instead of 8.</li>
       <li><strong>The desktop has a hardware memory fault</strong> (<a href="#hardware">section 3</a>). It killed D020's trainer at 19:41 mid-save, and 68 Python processes that day. Fix it before the next long run: steps are first in <code>TODO.md</code>.</li>
-      <li><strong>Run D020 ended early</strong> (trainer killed at 19:41; stopped by hand at about 22:15). Its usable result is the 19:41 checkpoint, <code>mali_ba_agent_vD020_ckpt_20261011_1941.weights.h5</code>. The main <code>mali_ba_agent_vD020</code> files are not usable: the policy file was cut off at 1.5 MB.</li>
-      <li><strong>Ready for D021</strong> (merged as <code>1411db0</code>): the policy loss now covers legal moves only, and guidance mixes in the heuristic at its true share (<a href="#policyloss">section 3</a>).</li>
+      <li><strong>Run D020 ended early</strong> (trainer killed at 19:41; stopped by hand at about 22:15). The cut-off main files were replaced by the intact 19:41 checkpoint, renamed, so <code>mali_ba_agent_vD020.weights.h5</code> is now D020's result.</li>
+      <li><strong>D021 is running</strong> (started 22:43 on 11 October from <code>mali_ba_agent_vD020.weights.h5</code> and D020's buffer saved at 19:22), with the policy fixes merged as <code>1411db0</code>: the policy loss now covers legal moves only, and guidance mixes in the heuristic at its true share (<a href="#policyloss">section 3</a>). The memory fault is not fixed yet; if the trainer dies, the run stops itself and the last 2-hour checkpoint is intact.</li>
       <li><strong>Learning is measurable now.</strong> Since 2 October, head-to-head play has shown real gains five times: D007 over D005, D010 over D007, D013 over D011, D019 over D017 and D018 (three-way), and D019 over D013.</li>
-      <li><strong>Watch seat 2:</strong> in strong play it wins far less than the other seats (<a href="#seat2">section 3</a>).</li>
+      <li><strong>Watch seat 2:</strong> in strong play it wins far less than the other seats, and the gap has grown (<a href="#seat2">section 3</a>).</li>
       <li><strong>Main open problem, unchanged:</strong> the policy is still nearly flat (92–93% of uniform entropy). The gains so far come from more games, better data and a better value head.</li>
     </ul>
   </div>
@@ -170,7 +170,7 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
     <li><strong>The rewards changed, and games got longer.</strong> A loss now costs −0.7 however the game ends (D015), and games run to 500 moves instead of 420 (D016). D015 alone was weaker. With 500-move games, D016 matched D013 and D017 may have passed it.</li>
     <li><strong>The route-distance aux head plus a 12 s training interval made D019 the strongest model</strong> (0.412 against D013). Lower guidance alone (D018) didn't help.</li>
     <li><strong>Most of the policy loss was wasted on illegal moves,</strong> and the same flaw made the guidance settings mean more than they said. Both are fixed for D021.</li>
-    <li><strong>Next:</strong> fix the desktop's memory fault, then D021 from D020's 19:41 checkpoint with the policy fixes; look into seat 2's weakness in strong play.</li>
+    <li><strong>Next:</strong> D021 (from D020, with the policy fixes) is running. Then: the desktop's memory tests, D020 vs D019, and D021 against the winner. Look into seat 2's weakness in strong play.</li>
   </ol>
 
   <h2 id="runs">2. Every run since D005</h2>
@@ -188,9 +188,10 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
       <tr><td>D015</td><td>D014</td><td>New rewards: a loss is −0.7 however the game ends</td><td class="n">7,000</td><td>Lost to D013 0.283 [0.241, 0.330]; three-way D013 0.390, D014 0.323, D015 0.287</td></tr>
       <tr><td>D016</td><td>D013</td><td><code>max_play_moves</code> 420 → 500 (new rewards kept)</td><td class="n">5,382</td><td>Even with D013, 0.329 [0.286, 0.376]</td></tr>
       <tr class="hl"><td>D017</td><td>D016</td><td>No change, longer clean run</td><td class="n">9,067</td><td>0.375 [0.330, 0.422] vs D013: leaning stronger, not significant</td></tr>
-      <tr><td>D018</td><td>D017</td><td>Training guidance 0.30 → 0.20</td><td class="n">6,996</td><td>Three-way with D017 and D019: 0.294, level with D017's 0.313. No gain from lower guidance alone.</td></tr>
+      <tr><td>D018</td><td>D017</td><td>Training guidance 0.30 → 0.20 (real heuristic share about 0.50 → 0.38; see <a href="#policyloss">section 3</a>)</td><td class="n">6,996</td><td>Three-way with D017 and D019: 0.294, level with D017's 0.313. No gain from lower guidance alone.</td></tr>
       <tr class="hl"><td>D019</td><td>D018</td><td>Route-distance aux head; <code>train_interval_seconds</code> 8 → 12 (two changes)</td><td class="n">10,000</td><td><strong>Three-way: D019 0.392</strong> [0.350, 0.437], D017 0.313, D018 0.294. <strong>Beat D013</strong> 0.412 [0.366, 0.460].</td></tr>
-      <tr><td>D020</td><td>D019</td><td>No change, longer run</td><td class="n">~7,400</td><td>Trainer killed by a memory fault at 19:41 (about 5,500 games trained on). Not yet played; use the 19:41 checkpoint.</td></tr>
+      <tr><td>D020</td><td>D019</td><td>No change, longer run</td><td class="n">~7,400</td><td>Trainer killed by a memory fault at 19:41 (about 5,500 games trained on). Not yet played. The 19:41 checkpoint is now the main <code>vD020</code> files.</td></tr>
+      <tr><td>D021</td><td>D020</td><td>Policy loss over legal moves only; normalized guidance blend at 0.38 (same real share)</td><td class="n"></td><td>Running since 22:43, 11 October.</td></tr>
     </tbody>
   </table></div>
   <p>Tests on a single checkpoint, playing it against itself with one setting changed:</p>
@@ -208,7 +209,7 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
   <p>Three value networks trained from scratch on the same buffer, scored on held-out games: the current size reached 54.1% top-pick, a wider head 53.9%, and a network twice as deep and wide 52.0%. Bigger networks overfit sooner. D011's production head, trained on about 30,000 games, scored 57.6% on the same positions. More and more varied games remain the lever.</p>
 
   <h3>Training too often brings back memorization</h3>
-  <p>D008 trained every 4 seconds; each position was trained on 5.5 times and the model got weaker. At 8 seconds D007 had reuse of 2.4×. With <code>buffer_keep_every = 32</code>, which halves the positions each game adds, reuse is now about <strong>4.35×</strong>, close to D008's level (see the plan).</p>
+  <p>D008 trained every 4 seconds; each position was trained on 5.5 times and the model got weaker. At 8 seconds D007 had reuse of 2.4×. With <code>buffer_keep_every = 32</code>, which halves the positions each game adds, reuse rose to about <strong>4.35×</strong>, close to D008's level. D019 moved training to every 12 s, which brought it down to 2.97×.</p>
 
   <h3>Culling discarded useful data</h3>
   <p>Culling threw away about 16% of the compute. With it off, would-be-culled games ended in a win only 5.2% of the time (17/326), so the cull rules are about 95% right that a game won't produce a win. But keeping those games' data made D013 stronger. When the score lead is large, the current leader is the final timeout leader at least 96% of the time: a lead of 125 points or more at moves 320–359, 75 or more at moves 360–399, 50 or more from move 400. A safer future option is to end such games early while keeping their data.</p>
@@ -280,11 +281,9 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
   <ul>
     <li>D019 vs D013 (two-way): seat 0 209, seat 1 140, seat 2 73 decided games (17% for seat 2).</li>
     <li>D019 / D018 / D017 three-way: 212 / 228 / 39 (8% for seat 2), and every agent was weak from seat 2.</li>
-    <li>Earlier evals had seat 2 at about 23%. Games are getting shorter (three-way median 258 moves), which may finish them before seat 2's extra starting goods pay off. Not yet investigated.</li>
+    <li>Earlier evals had seat 0 at about 45% and seat 2 at about 23%, so seat 2's share has fallen as the models got stronger. Games are getting shorter (three-way median 258 moves), which may finish them before seat 2's extra starting goods pay off. Not yet investigated.</li>
   </ul>
-
-  <h3>Seat 0 wins most often at full strength</h3>
-  <p>In self-play the seats are now balanced (about 33/34/33% of wins) thanks to the setup rules: starting common goods 0/1/2 by seat, and serpentine token placement. In head-to-heads at 300 simulations, seat 0 still takes about 45% of decided games and seat 2 about 23%.</p>
+  <p>The self-play balance comes from the setup rules: starting common goods 0/1/2 by seat, and serpentine token placement. They were tuned on self-play, so they may not hold at full strength.</p>
 
   <h2 id="built">4. What was built or fixed</h2>
   <h3>Training</h3>
@@ -301,7 +300,7 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
       <ul>
         <li>Dispatch now continues until <code>num_episodes</code> games are <em>received</em>.</li>
         <li>The value step was skipped on batches without aux rows.</li>
-        <li>Shutdown hangs on both machines: the trainer exits cleanly, and remote workers stop on the trainer's stop signal instead of respawning. Untested at the end of a full run.</li>
+        <li>Shutdown hangs on both machines: the trainer exits cleanly, and remote workers stop on the trainer's stop signal instead of respawning. Confirmed at the end of D019.</li>
       </ul>
     </li>
   </ul>
@@ -349,19 +348,20 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
   <h2 id="plan">5. The plan</h2>
   <ol class="steps">
     <li>
-      <h3>Fix the memory fault, then D021</h3>
+      <h3>D021, the memory fault, and the next evaluations</h3>
       <ul>
-        <li><strong>First, the hardware:</strong> work through the memory steps in <code>TODO.md</code>.</li>
-        <li><strong>D020 vs D019 head-to-head</strong>, using the 19:41 checkpoint. It's worth knowing whether the plain continuation helped before building on it.</li>
-        <li><strong>D021:</strong> start from the stronger of D019 and D020's 19:41 checkpoint, with the merged policy fixes. They're already set in the ini: masked loss on, normalized blend on, guidance 0.38. Watch the POLICY FIT gap falling and the probe's entropy. Expect the policy loss to drop by about 0.7 at once; that's the masking, not progress.</li>
-        <li><strong>Evaluating D021:</strong> use <code>--guidance_blend_normalized</code> with <code>--heuristic_weight 0.55</code>, the old default's real share, for both agents, so results compare with earlier ones.</li>
+        <li><strong>D021 is running</strong> from <code>mali_ba_agent_vD020.weights.h5</code> (the renamed 19:41 checkpoint) with the merged policy fixes: masked loss on, normalized blend on, guidance 0.38. Watch the POLICY FIT gap falling. Expect the policy loss to drop by about 0.7 at once; that's the masking, not progress.</li>
+        <li><strong>The hardware:</strong> work through the memory steps in <code>TODO.md</code>. Until then the run can lose its trainer; it stops itself if so, and the last 2-hour checkpoint is intact.</li>
+        <li><strong>D020 vs D019 head-to-head.</strong> It shows whether the plain continuation helped. The bad memory could in principle have damaged D020's weights without being caught, so this game also checks them.</li>
+        <li><strong>D021 against the winner:</strong> use <code>--guidance_blend_normalized</code> with <code>--heuristic_weight 0.55</code>, the old default's real share, for both agents, so results compare with earlier ones. Add <code>--record_positions</code> to one of these evals to create the value-probe set (none exists yet).</li>
+        <li><strong>Policy probe baseline:</strong> the entropy figures (92–93%) are from D007 and D012. Probe D019 or D020 too, so D021's probe has a recent model to compare against.</li>
       </ul>
     </li>
     <li>
       <h3>Building on D019</h3>
       <p>D019 took both prepared changes at once, the route-distance aux target and the 12 s interval, and won. Next options, one per run:</p>
       <ul>
-        <li><strong>Guidance back to 0.30:</strong> lowering it to 0.20 didn't help by itself (D018). Worth testing on the D019 line, since 0.30 gives more win positions.</li>
+        <li><strong>Guidance back to the old 0.30:</strong> lowering it to 0.20 didn't help by itself (D018). Worth testing on this line, since the higher setting gives more win positions. The old 0.30 was a real share of about 0.50, so with the normalized blend the setting is <code>0.50</code>, not 0.30.</li>
         <li><strong>If the route head learns but Timbuktu prediction stays weak,</strong> add landmark planes: Timbuktu, the desert cities and the coast. Give the network's first layer zero weights for the new channels, so it starts exactly as before. Landmarks are constant, so they can be appended exactly to every stored position. Route-progress planes would need a fresh buffer. Both need C++ changes and a rebuild.</li>
         <li><strong>Optional:</strong> raise the Timbuktu pool share to 0.15, taken from near-win (0.35 → 0.30). Don't take it from rare goods: D012's swap lost.</li>
       </ul>
@@ -369,8 +369,9 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
     <li>
       <h3>Get the policy learning</h3>
       <ul>
-        <li><strong>A larger effective policy batch:</strong> a bigger batch, or extra full-search rows per step. The policy currently sees about 36 rows per step.</li>
+        <li><strong>Sharper search targets come first.</strong> The network already matches its targets over legal moves (gap 0.11, <a href="#policyloss">section 3</a>), so the policy is flat because the targets are. Options: more simulations on recorded (full-search) moves, Gumbel-style targets, and a better value head, which makes the differences between moves larger.</li>
         <li><strong>Per-node Q normalization</strong> (MuZero-style) is still a candidate. Lowering <code>uct_c</code> didn't help, so treat it with care, and test it head to head.</li>
+        <li><strong>A larger effective policy batch</strong> (a bigger batch, or extra full-search rows per step; the policy sees about 36 rows per step) is now a low priority: the network already fits its targets, so more rows of flat targets won't sharpen it.</li>
       </ul>
     </li>
     <li>
@@ -380,7 +381,7 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
     <li>
       <h3>Later</h3>
       <ul>
-        <li>Seat balance in strong play: seat 0 has about a 45% share of decided games at 300 simulations.</li>
+        <li>Seat balance in strong play: seat 2 has fallen to 8–17% of decided games at 300 simulations (<a href="#seat2">section 3</a>).</li>
         <li>End settled games early while keeping their data, using the lead thresholds in section 3.</li>
         <li>Human play: follow the migration steps in <code>ENGINE_UI_SEPARATION.md</code>, starting with GameSession and the bots, headless and tested.</li>
         <li>Rules document: update the rare-goods end condition to five regions. The question of whether the Timbuktu route ends the game too easily is parked in <code>TODO.md</code>.</li>
@@ -398,14 +399,14 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
             <li><code>mali_ba_buffer.D014-oldrewards.pkl.gz</code>: old rewards</li>
             <li><code>mali_ba_buffer.D015-newrewards.pkl.gz</code>: new rewards, still at 420 moves</li>
           </ul>
-          The live buffer is D017's, saved at 500 moves.</li>
+          The live buffer was last saved by D020 at 19:22 on 11 October (500 moves); D021 loaded it and now saves over it.</li>
       </ul>
     </li>
   </ol>
 
   <h2 id="settings">6. Settings in effect (for D021)</h2>
   <dl class="kv">
-    <dt>Started from</dt><dd>D021 (planned): the stronger of <code>mali_ba_agent_vD019.weights.h5</code> and <code>mali_ba_agent_vD020_ckpt_20261011_1941.weights.h5</code> (line: D013 → D016 → D017 → D018 → D019 → D020)</dd>
+    <dt>Started from</dt><dd>D021 (running): <code>mali_ba_agent_vD020.weights.h5</code>, D020's renamed 19:41 checkpoint (line: D013 → D016 → D017 → D018 → D019 → D020 → D021)</dd>
     <dt>Rewards</dt><dd>win +1.0; loss −0.7 however the game ends; timeout leader +0.1; time penalty −0.0005 per move; gamma 1.0</dd>
     <dt>Game length</dt><dd><code>max_play_moves = 500</code></dd>
     <dt>Guidance</dt><dd>0.38 constant with <code>guidance_blend_normalized = true</code>: the true heuristic share, the same as D018–D020's 0.20 under the old blend</dd>

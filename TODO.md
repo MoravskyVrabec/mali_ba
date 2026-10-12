@@ -29,7 +29,8 @@ Steps:
    `grep HardwareCorrupted /proc/meminfo` (should stay 0 kB after a reboot).
 6. Since 2026-10-11 a run stops itself with an error when its trainer dies, rather
    than playing on for hours; resume from the last 2-hour checkpoint (the main
-   weights file may be cut off: D020's `_policy` file was 1.5 MB instead of 9.2 MB).
+   weights file may be cut off: D020's `_policy` file was 1.5 MB instead of 9.2 MB, and its 19:41
+   checkpoint was renamed to replace the main `vD020` files).
 
 ## Starting token placement (added 2026-10-07)
 
