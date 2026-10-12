@@ -215,7 +215,7 @@ class SimpleAgent:
     # ** Accept num_players in constructor **
     def __init__(self, observation_shape, num_actions, num_players, learning_rate=0.001,
                  aux_targets=False, aux_win_type_weight=0.5, aux_moves_left_weight=1.0,
-                 aux_route_target=False, aux_route_weight=1.0):
+                 aux_route_target=False, aux_route_weight=1.0, policy_legal_mask=False):
         # Create two separate models
         self.policy_model = create_mali_ba_policy_network(observation_shape, num_actions)
         # With aux_targets the value network also predicts how the game ends (see
@@ -234,6 +234,8 @@ class SimpleAgent:
         self.aux_win_type_weight = aux_win_type_weight
         self.aux_moves_left_weight = aux_moves_left_weight
         self.aux_route_weight = aux_route_weight
+        # Train the policy over each position's legal moves only (see train()).
+        self.policy_legal_mask = policy_legal_mask
         self._obs_shape = observation_shape
         
         # Create two separate optimizers
@@ -445,9 +447,24 @@ class SimpleAgent:
                                    "skipping policy step.")
                 policy_loss = tf.constant(0.0)
             else:
+                _t = policy_targets[policy_mask].astype(np.float32)
+                # A target entry above zero marks a legal move: visited moves carry their
+                # visit share, and the actor marks unvisited legal moves with
+                # POLICY_LEGAL_MARK. Entries recorded before the mark existed only show
+                # their visited moves, nearly the same set at our search sizes.
+                _legal = (_t > 0).astype(np.float32)
                 with tf.GradientTape() as tape:
                     predicted_policy = self.policy_model(observations_reshaped[policy_mask], training=True)
-                    policy_loss = tf.keras.losses.CategoricalCrossentropy()(policy_targets[policy_mask], predicted_policy)
+                    if self.policy_legal_mask:
+                        # Softmax restricted to the legal moves: probability the network
+                        # puts on illegal actions no longer counts, so learning goes into
+                        # ranking legal moves. Play is unaffected: the search already
+                        # rescales the prior over the legal moves.
+                        _pm = predicted_policy * _legal
+                        _pm = _pm / (tf.reduce_sum(_pm, axis=1, keepdims=True) + 1e-12)
+                        policy_loss = tf.keras.losses.CategoricalCrossentropy()(_t, _pm)
+                    else:
+                        policy_loss = tf.keras.losses.CategoricalCrossentropy()(_t, predicted_policy)
 
                 if tf.math.is_nan(policy_loss) or tf.math.is_inf(policy_loss):
                     log(LogLevel.ERROR, f"Trainer: Invalid policy loss detected: {policy_loss}. Skipping batch.")
@@ -458,6 +475,24 @@ class SimpleAgent:
                     log(LogLevel.ERROR, "Trainer: None gradients detected for policy model. Skipping batch.")
                     return None
                 self.policy_optimizer.apply_gradients(zip(policy_grads, self.policy_model.trainable_variables))
+
+                # How well the policy fits its targets, in terms that compare across runs.
+                # Cross-entropy can't fall below the targets' own entropy (how undecided
+                # the search was), so the GAP is the part training can still remove.
+                _p = predicted_policy.numpy().astype(np.float64)
+                _tt = _t.astype(np.float64)
+                _lm = _legal.astype(np.float64)
+                _on = (_p * _lm).sum(axis=1)
+                _pn = (_p * _lm) / np.maximum(_on, 1e-12)[:, None]
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    _h = -np.where(_tt > 0, _tt * np.log(np.where(_tt > 0, _tt, 1.0)), 0.0).sum(axis=1)
+                    _ce_legal = -(_tt * np.log(np.maximum(_pn, 1e-12))).sum(axis=1)
+                    _ce_all = -(_tt * np.log(np.maximum(_p, 1e-12))).sum(axis=1)
+                log(LogLevel.INFO,
+                    f"Training: Policy fit: target entropy {_h.mean():.3f}, CE over legal moves "
+                    f"{_ce_legal.mean():.3f} (gap {(_ce_legal - _h).mean():.3f}), CE over all actions "
+                    f"{_ce_all.mean():.3f}, probability off the legal moves {100 * (1 - _on.mean()):.1f}%, "
+                    f"masked loss {'on' if self.policy_legal_mask else 'off'}, rows {n_policy_rows}")
             
             # --- Value Model Training Step ---
             value_net = self.value_full if self.value_full is not None else self.value_model
@@ -607,8 +642,15 @@ class AlphaZeroEvaluator:
     """
 
     def __init__(self, game, policy_model, value_model, heuristic_guidance_weight=0.40,
-                 cache_size=8192, client=None):
+                 cache_size=8192, client=None, blend_normalized=False):
         self._game = game
+        # blend_normalized: rescale the network's policy over the legal moves BEFORE
+        # mixing in the heuristic. Off (the original behaviour), the mix happens over
+        # all actions and the result is rescaled afterwards; since the network puts
+        # much of its probability on illegal moves (~49% for D019, 2026-10-11), the
+        # heuristic's effective share is then well above heuristic_guidance_weight
+        # (0.20 acts like ~0.33, 0.35 like ~0.51) and drifts with that illegal share.
+        self.blend_normalized = blend_normalized
         self._policy_model = policy_model
         self._value_model = value_model
         self._shape = game.observation_tensor_shape()
@@ -719,6 +761,10 @@ class AlphaZeroEvaluator:
         # --- Mix the network policy with the C++ heuristic prior ---
         # final_policy = (1 - w) * P_nn + w * P_heuristic
         w = self.heuristic_guidance_weight
+        if self.blend_normalized:
+            _legal_sum = float(sum(policy_full[a] for a in legal_actions))
+            if _legal_sum > 0:
+                policy_full = policy_full / _legal_sum
         if w > 0.0:
             mali_ba_state = pyspiel.mali_ba.downcast_state(state)
             action_weights_map = mali_ba_state.get_heuristic_action_weights()
@@ -790,6 +836,11 @@ def create_mali_ba_policy_network(observation_shape, num_actions):
 # many moves remain. Predicting them pushes the shared trunk to recognise positions
 # heading for an early finish. Search, actors and evaluation never see them.
 AUX_WIN_TYPES = ('timeout', 'timbuktu', 'rare_goods')
+
+# Value the actor stores in a recorded policy target for a legal move the search
+# never visited, so the trainer can tell legal from illegal (target > 0). Small enough
+# to leave the target's cross-entropy and entropy unchanged to ~1e-5.
+POLICY_LEGAL_MARK = 1e-6
 
 
 def create_mali_ba_value_network(observation_shape, num_players, aux_heads=False,

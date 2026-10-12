@@ -171,7 +171,8 @@ def _wilson(k, n, z=1.96):
     return (p, max(0.0, centre - half), min(1.0, centre + half))
 
 
-def _build_agent(spec, game, shape, sims, uct_c, cache_size, heur_w, client=None):
+def _build_agent(spec, game, shape, sims, uct_c, cache_size, heur_w, client=None,
+                 blend_normalized=False):
     """Returns a callable state -> action, or None for the heuristic player.
 
     With an InferenceClient, forward passes go to the batched GPU server and the
@@ -198,7 +199,8 @@ def _build_agent(spec, game, shape, sims, uct_c, cache_size, heur_w, client=None
     # two agents, and at 0 the agents are weak enough that most games hit the move cap
     # and the comparison yields no decided games.
     ev = AlphaZeroEvaluator(game, pm, vm, heuristic_guidance_weight=heur_w,
-                            cache_size=cache_size, client=client)
+                            cache_size=cache_size, client=client,
+                            blend_normalized=blend_normalized)
     bot = mcts.MCTSBot(game=game, uct_c=uct_c, max_simulations=sims, evaluator=ev,
                        solve=False, dirichlet_noise=None,
                        child_selection_fn=mcts.SearchNode.puct_value, verbose=False)
@@ -322,6 +324,7 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
     cfg = dict(record_every=args.record_every if recorder else 0,
                agent_a=specs["a"], agent_b=specs["b"], agent_c=specs["c"], sims=args.sims,
                uct_c_a=uct_a, uct_c_b=uct_b, uct_c_c=uct_c, cache_size=args.cache_size,
+               blend_normalized=args.guidance_blend_normalized,
                heur_w=args.heuristic_weight, heur_w_a=args._hw["a"], heur_w_b=args._hw["b"],
                heur_w_c=args._hw["c"], config_file=args.config_file, gpu=args.gpu)
     progress = _Progress(total)   # shown from the start, before servers load
@@ -531,7 +534,8 @@ def _worker(jobs, cfg, out_q, slot=None, arenas=None):
         acts[side], _ = _build_agent(cfg["agent_" + side], game, shape, cfg["sims"],
                                      cfg["uct_c_" + side], cfg["cache_size"],
                                      cfg.get("heur_w_" + side, cfg["heur_w"]),
-                                     _client(side))
+                                     _client(side),
+                                     blend_normalized=cfg.get("blend_normalized", False))
     # A job's seating names the agent in each seat, e.g. ('a', 'b', 'b') or ('c', 'a', 'b').
     for key, seating, seed in jobs:
         actors = [acts[side] for side in seating]
@@ -599,6 +603,12 @@ def main():
                     help="heuristic guidance for agent B only")
     ap.add_argument("--heuristic_weight_c", type=float, default=None,
                     help="heuristic guidance for agent C only (three-way mode)")
+    ap.add_argument("--guidance_blend_normalized", action="store_true",
+                    help="rescale each network's policy over the legal moves before mixing "
+                         "in the heuristic, so the guidance weight is the heuristic's true "
+                         "share (training's guidance_blend_normalized). Off by default, as "
+                         "in every eval before 2026-10-11, where the heuristic's real share "
+                         "was well above the weight given.")
     ap.add_argument("--inference_server", action=argparse.BooleanOptionalAction,
                     default=True,
                     help="serve every worker's forward passes from a batched GPU "
@@ -722,6 +732,7 @@ def main():
     cfg = dict(record_every=args.record_every if recorder else 0,
                agent_a=args.agent_a, agent_b=args.agent_b, agent_c=None, sims=args.sims,
                uct_c_a=uct_a, uct_c_b=uct_b, cache_size=args.cache_size,
+               blend_normalized=args.guidance_blend_normalized,
                heur_w=args.heuristic_weight, heur_w_a=hw["a"], heur_w_b=hw["b"],
                config_file=args.config_file,
                gpu=args.gpu)

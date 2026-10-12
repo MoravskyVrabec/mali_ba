@@ -35,6 +35,11 @@ RE_AUX_ROUTE = re.compile(
     r'(\d{8}-\d{6}) \[INFO\] \[Python:0\] Training: Aux route: MSE=([\d.]+) '
     r'\(always-mean ([\d.]+)\), mean abs error ([\d.]+) build steps, rows (\d+)/(\d+)'
 )
+RE_POLICY_FIT = re.compile(
+    r'Training: Policy fit: target entropy ([\d.]+), CE over legal moves ([\d.]+) '
+    r'\(gap (-?[\d.]+)\), CE over all actions ([\d.]+), probability off the legal moves '
+    r'([\d.]+)%, masked loss (on|off), rows (\d+)'
+)
 RE_PASS_ONLY = re.compile(
     r"MCTS top visits: \['Pass: \d+ visits'\]"
 )
@@ -123,6 +128,7 @@ def parse_log(path):
     trainer_losses = [] # (timestamp, loss) from "Training successful" lines
     aux_losses = []     # (ce, acc, majority_acc, moves_mse, rows, batch) per training step
     aux_route = []      # (mse, always_mean_mse, abs_err_steps, rows, batch) per training step
+    policy_fit = []     # (target_entropy, ce_legal, gap, ce_all, pct_off_legal, masked, rows) per step
     pass_only_count = 0
     near_win_retained_count = 0
     near_win_bootstrap_count = 0
@@ -262,6 +268,14 @@ def parse_log(path):
                 ts, loss = m.groups()
                 trainer_losses.append((parse_time(ts), float(loss)))
                 continue
+
+            if 'Policy fit:' in line:
+                m = RE_POLICY_FIT.search(line)
+                if m:
+                    h, cel, gap, cea, off, masked, rows = m.groups()
+                    policy_fit.append((float(h), float(cel), float(gap), float(cea), float(off),
+                                       masked == 'on', int(rows)))
+                    continue
 
             if 'Aux route:' in line:
                 m = RE_AUX_ROUTE.search(line)
@@ -415,6 +429,7 @@ def parse_log(path):
         'trainer_losses': trainer_losses,
         'aux_losses': aux_losses,
         'aux_route': aux_route,
+        'policy_fit': policy_fit,
         'value_checks': value_checks,
         'no_kill_games': no_kill_games,
         'oversample_threshold': oversample_threshold,
@@ -1275,6 +1290,30 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
             rows = sum(c[4] / c[5] for c in ch) / k
             print(f'  steps {lo:4d}-{hi-1:4d}  {acc:12.2f}  {maj:8.2f}  {acc-maj:+6.2f}  '
                   f'{ce:7.3f}  {mse:9.4f}  {rows:5.0%}')
+
+    pfit = data.get('policy_fit', [])
+    if pfit:
+        section('POLICY FIT (how far the policy is from its search targets)')
+        print('  Target entropy: how undecided the search was (e^entropy ~ the number of')
+        print('  moves it spread its visits over evenly); the policy loss cannot go below it.')
+        print('  Gap = cross-entropy over the legal moves minus that entropy: the part')
+        print('  training can remove. WANT: the gap falling. "Off legal" = probability the')
+        print('  network puts on illegal moves (ignored in play; with the masked loss on it')
+        print('  is no longer trained down, so it may stay high or drift).')
+        print()
+        n = len(pfit)
+        nb = min(10, n)
+        size = n // nb or 1
+        print(f'  {"Steps":>14}  {"target H":>8}  {"CE legal":>8}  {"gap":>6}  '
+              f'{"CE all":>7}  {"off legal":>9}  {"masked":>6}')
+        for b in range(nb):
+            lo = b * size
+            hi = lo + size if b < nb - 1 else n
+            ch = pfit[lo:hi]
+            k = len(ch)
+            avg = lambda i: sum(c[i] for c in ch) / k
+            print(f'  steps {lo:4d}-{hi-1:4d}  {avg(0):8.3f}  {avg(1):8.3f}  {avg(2):6.3f}  '
+                  f'{avg(3):7.3f}  {avg(4):8.1f}%  {"on" if ch[-1][5] else "off":>6}')
 
     route = data.get('aux_route', [])
     if route:
