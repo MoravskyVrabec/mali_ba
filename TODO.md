@@ -126,14 +126,57 @@ uniform), so there is nothing sharp to learn.
   normalization (test head to head; lower uct_c was null).
 - Guidance results so far (real shares): 0.27 vs 0.50 at play time lost (D017);
   training at ~0.38 vs ~0.50 (D018) did not help by itself.
-- Options, roughly in order: sharpen policy targets (visit counts raised to a
-  power, or temperature); KataGo-style forced playouts with policy-target pruning;
-  revisit uct_c once the value head is stronger (0.5 and 1.0 vs 2.0 were null on
-  D005 and D007).
+- **2026-10-12 (D021 done):** the POLICY FIT gap stayed at ~0.09 for the whole
+  run and target entropy rose slightly (1.74 -> 1.79). D021 / D020 / D019 were
+  even three-way (0.350 / 0.327 / 0.323), and the value probe puts D017-D021 level.
+  Legal moves per position: median 5, p90 7; only ~5% have 20+ (mostly route
+  decisions). Self-play looked nothing like strong play: D021 games ~465 moves, 70%
+  timeouts; greedy 300-sim head-to-heads median 246 moves, 2% timeouts. Every
+  self-play move, including 40-sim fast moves, was sampled at temperature 1.0 for
+  150 moves, then 0.5, over near-flat visits.
+- **D022 (in progress):** self-play move selection only. `selfplay_temp_moves = 30`,
+  `selfplay_temp_late = 0.25`, `playout_cap_fast_greedy = true` (fast moves play
+  the most-visited move). Check: win-condition share and natural game length in
+  analyze_log, POLICY FIT target entropy over the run, head-to-head vs D021. Watch
+  for lost game variety (value checks worse, near-identical games).
+- **Candidates for later runs, one per run:**
+  1. **Policy-target pruning (KataGo).** Before recording a target, cut each
+     non-best child's visits down to what its PUCT score justifies against the
+     best child, removing visits caused by Dirichlet noise and forced exploration.
+     Changes recorded targets only, not play. Python only, ~30 lines in the actor.
+  2. **First-play urgency (FPU).** OpenSpiel's `puct_value` values unvisited
+     children at 0, while the average value is ~-0.47, so the search visits every
+     legal move once first. Negligible for the typical 5-7 legal moves; it matters
+     for large route decisions (up to 300 candidates). Fix: value an unvisited
+     child at its visited siblings' mean Q minus `fpu_reduction` (default off), in
+     a small `MCTSBot` subclass in mali_ba (the selection function can't see
+     siblings). Add to ab_eval per agent; test with search_sharpness.py and a
+     same-network head-to-head before training with it.
+  3. **Larger fast budget** (`playout_cap_fast_sims` 40 -> 80): ~7 visits per legal
+     move is thin. Costs compute.
+  4. **Gumbel-style completed-Q targets.** A bigger change, and with Q spreads of
+     0.04-0.08 they would come out nearly flat until the value head improves.
+  5. **More simulations on recorded moves.** Costly; at uct_c 2.0 the gain is
+     modest (search_sharpness: 89% vs 93% of uniform entropy).
+  - Revisit uct_c once the value head is stronger (0.5 and 1.0 vs 2.0 were null
+    on D005 and D007, measured with FPU at 0).
+  - Not recommended: sharpening targets with a temperature (visits^(1/T)). It adds
+    no information and amplifies search noise.
 - Judge any change by probe entropy/top-1 AND head-to-head (sharper targets can
   just make flat preferences look confident).
 - Consider recording a new probe set under the current rules (the v2 set needs
   probe_data/mali_ba_oldrules.ini).
+
+## Seat 2 is getting weaker (added 2026-10-12)
+
+Seat 2's share of self-play wins: D017 30.4%, D019 29.4%, D021 26.0%; of
+rare-goods wins 19.5% -> 12.8% -> 8.5% (Timbuktu 29.1% -> 23.6% -> 19.5%). In the
+D021/D020/D019 three-way it won 30 of 492 decided games (6%), and every agent was
+weak from that seat. Candidate causes: the last seat's starting goods or serpentine
+placement backfiring in stronger play; rare goods running out before seat 2 gets
+to them; games ending (median 246 moves at 300 sims) before seat 2's advantages
+pay off. First checks: analyze_placements.py by seat, per-seat goods over the game
+in the eval logs. Re-check after D022, whose self-play is closer to strong play.
 
 ## Smaller items (carried over from the 2026-09-30 list, 2026-10-08)
 

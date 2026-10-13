@@ -1068,7 +1068,18 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                 bot._dirichlet_noise = _saved_dirichlet
                 _t_search += time.perf_counter() - _t0
             
-            temperature = 1.0 if move_count < 150 else 0.5
+            # Move-selection temperature (2026-10-12). Self-play sampled every move at
+            # 1.0 for 150 moves, then 0.5; with near-flat visits over ~6 legal moves that
+            # made much of the game close to random (D021: ~465 moves, 70% timeouts,
+            # against a median of 246 and 2% timeouts in greedy 300-sim head-to-heads).
+            # Defaults reproduce the old schedule; a temperature <= 0 plays greedily.
+            temperature = (getattr(args, 'selfplay_temp_early', 1.0)
+                           if move_count < getattr(args, 'selfplay_temp_moves', 150)
+                           else getattr(args, 'selfplay_temp_late', 0.5))
+            # A fast (playout-capped) move is never recorded, so sampling it only adds
+            # noise to the game; KataGo plays these greedily.
+            if _fast_search and getattr(args, 'playout_cap_fast_greedy', False):
+                temperature = 0.0
 
             # ** Create the action map for this state **
             legal_actions = state.legal_actions()
@@ -1164,7 +1175,11 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                 if child.action in action_map:
                     visit_counts[action_map[child.action]] = child.explore_count
 
-            if np.sum(visit_counts) > 0:
+            if np.sum(visit_counts) > 0 and temperature <= 0:
+                # Greedy: most visits, ties broken at random.
+                _best = np.flatnonzero(visit_counts == visit_counts.max())
+                action = legal_actions[int(np.random.choice(_best))]
+            elif np.sum(visit_counts) > 0:
                 powered_policy = np.power(visit_counts, 1.0 / temperature)
                 mcts_policy_compact = powered_policy / np.sum(powered_policy)
                 # Choose an action from the *compact* index space
@@ -1896,6 +1911,10 @@ def main(args):
             'playout_cap_full_prob':               getattr(args, 'playout_cap_full_prob', 0.25),
             'playout_cap_fast_sims':               getattr(args, 'playout_cap_fast_sims', 40),
             'playout_cap_exempt_route_decisions':  getattr(args, 'playout_cap_exempt_route_decisions', True),
+            'playout_cap_fast_greedy':             getattr(args, 'playout_cap_fast_greedy', False),
+            'selfplay_temp_moves':                 getattr(args, 'selfplay_temp_moves', 150),
+            'selfplay_temp_early':                 getattr(args, 'selfplay_temp_early', 1.0),
+            'selfplay_temp_late':                  getattr(args, 'selfplay_temp_late', 0.5),
             'sim_route_decision_sims':              getattr(args, 'sim_route_decision_sims', 500),
             'sim_route_decision_min_candidates':    getattr(args, 'sim_route_decision_min_candidates', 20),
             'base_max_play_moves':                 getattr(args, 'base_max_play_moves', 430),
@@ -2762,6 +2781,11 @@ if __name__ == "__main__":
         parsed_args.playout_cap_exempt_route_decisions = _ini_bool('playout_cap_exempt_route_decisions', True)
     else:
         parsed_args.playout_cap_exempt_route_decisions = bool(parsed_args.playout_cap_exempt_route_decisions)
+    # Self-play move selection (ini only). Defaults are the pre-2026-10-12 behaviour.
+    parsed_args.playout_cap_fast_greedy = _ini_bool('playout_cap_fast_greedy', False)
+    parsed_args.selfplay_temp_moves = _ini_int('selfplay_temp_moves', 150)
+    parsed_args.selfplay_temp_early = _ini_float('selfplay_temp_early', 1.0)
+    parsed_args.selfplay_temp_late = _ini_float('selfplay_temp_late', 0.5)
     if parsed_args.aux_targets is None:
         parsed_args.aux_targets = _ini_bool('aux_targets', False)
     else:
@@ -2853,6 +2877,10 @@ if __name__ == "__main__":
               f'decisions {"exempt" if parsed_args.playout_cap_exempt_route_decisions else "capped"}')
     else:
         print(f'  playout cap                 : off')
+    print(f'  self-play move choice       : temperature {parsed_args.selfplay_temp_early:g} for '
+          f'{parsed_args.selfplay_temp_moves} moves, then {parsed_args.selfplay_temp_late:g} '
+          f'(<= 0 = greedy); fast moves '
+          f'{"greedy" if parsed_args.playout_cap_fast_greedy else "sampled at that temperature"}')
     if parsed_args.placement_mode == 'heuristic':
         print(f'  token placement             : heuristic (temperature {parsed_args.placement_temperature:g}), '
               f'{parsed_args.placement_random_fraction:.0%} of games random')
