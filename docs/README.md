@@ -33,6 +33,9 @@ older ones are history.
 - [HANDOFF-20261010.html](handoffs/HANDOFF-20261010.html): runs D005-D018 (playout
   cap, aux targets, culling off, new rewards, 500-move games), D018 in progress, and
   the plan from there.
+- [HANDOFF-20261013.html](handoffs/HANDOFF-20261013.html): runs D020-D023 (the
+  D019-D021 plateau, the self-play move-selection fix, D023 beating D021, seat 0
+  dominance), and the D024 plan (guidance 0.10, rare-goods actors off).
 
 ## notes/ (past design notes and write-ups)
 Records of specific changes, investigations and plans, kept for context:

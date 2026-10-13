@@ -1,0 +1,336 @@
+<title>Mali-Ba Training Handoff</title>
+<meta name="description" content="Runs D020 to D023: the D019-D021 plateau, the self-play move-selection fix, D023 results, seat imbalance, and the D024 plan.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #f5f4ef;
+  --surface: #ffffff;
+  --ink: #1c2130;
+  --muted: #586073;
+  --rule: #dad8cf;
+  --accent: #2c3c8c;
+  --accent-soft: #e5e8f5;
+  --ochre: #9a5a0e;
+  --ochre-soft: #f6ead8;
+  --good: #2a7349;
+  --good-soft: #e1f0e6;
+  --bad: #a23626;
+  --code-bg: #eeede6;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11131a;
+    --surface: #191c26;
+    --ink: #e5e6eb;
+    --muted: #9aa0b1;
+    --rule: #2c3041;
+    --accent: #a5b4ff;
+    --accent-soft: #222949;
+    --ochre: #e3a54e;
+    --ochre-soft: #33281a;
+    --good: #72c695;
+    --good-soft: #1b3326;
+    --bad: #e7846f;
+    --code-bg: #20232f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11131a;
+  --surface: #191c26;
+  --ink: #e5e6eb;
+  --muted: #9aa0b1;
+  --rule: #2c3041;
+  --accent: #a5b4ff;
+  --accent-soft: #222949;
+  --ochre: #e3a54e;
+  --ochre-soft: #33281a;
+  --good: #72c695;
+  --good-soft: #1b3326;
+  --bad: #e7846f;
+  --code-bg: #20232f;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.6 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding-inline: 16px;
+}
+main { max-width: 880px; margin: 0 auto; padding-block: 40px 80px; }
+h1, h2, h3 { line-height: 1.25; text-wrap: balance; font-weight: 600; }
+h1 { font-size: 2rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+h2 { font-size: 1.4rem; margin: 56px 0 14px; padding-top: 18px; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.08rem; margin: 30px 0 8px; }
+p, li { max-width: 68ch; }
+p { margin: 0 0 14px; }
+ul, ol { padding-left: 22px; margin: 0 0 14px; }
+li { margin-bottom: 6px; }
+a { color: var(--accent); }
+code, .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre {
+  background: var(--code-bg); padding: 12px 14px; border-radius: 6px; overflow-x: auto;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.82rem; line-height: 1.5; margin: 0 0 16px;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+.eyebrow { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.sub { color: var(--muted); margin: 0 0 24px; }
+.status {
+  background: var(--surface); border: 1px solid var(--rule); border-left: 4px solid var(--good);
+  border-radius: 6px; padding: 16px 18px; margin: 24px 0;
+}
+.status h3 { margin: 0 0 8px; }
+.status p:last-child, .status ul:last-child { margin-bottom: 0; }
+.note {
+  background: var(--ochre-soft); border-left: 4px solid var(--ochre); border-radius: 6px;
+  padding: 12px 16px; margin: 18px 0;
+}
+.note p:last-child { margin-bottom: 0; }
+nav.toc { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 18px; }
+nav.toc ol { margin: 0; columns: 2; column-gap: 32px; }
+nav.toc li { margin-bottom: 4px; break-inside: avoid; }
+.table-wrap { overflow-x: auto; margin: 0 0 18px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; background: var(--surface); }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 0.8rem; letter-spacing: 0.03em; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.hl td { background: var(--accent-soft); }
+.timeline { list-style: none; padding: 0; margin: 0; border-left: 2px solid var(--rule); }
+.timeline > li { position: relative; padding: 0 0 22px 22px; max-width: none; }
+.timeline > li::before {
+  content: ""; position: absolute; left: -7px; top: 6px; width: 12px; height: 12px;
+  border-radius: 50%; background: var(--surface); border: 2px solid var(--accent);
+}
+.timeline .when { font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; color: var(--muted); }
+.timeline h3 { margin: 2px 0 6px; }
+.tag { display: inline-block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 10px; margin-left: 6px; vertical-align: 2px; }
+.tag.good { background: var(--good-soft); color: var(--good); }
+.tag.bad { background: var(--ochre-soft); color: var(--ochre); }
+.steps { counter-reset: step; list-style: none; padding: 0; }
+.steps > li { counter-increment: step; position: relative; padding: 14px 16px 6px 54px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; max-width: none; }
+.steps > li::before {
+  content: counter(step); position: absolute; left: 16px; top: 14px; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent); color: var(--surface); font-weight: 600; font-size: 0.85rem; display: grid; place-items: center;
+}
+.steps h3 { margin: 0 0 6px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 0.92rem; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
+@media (max-width: 560px) {
+  nav.toc ol { columns: 1; }
+  h1 { font-size: 1.6rem; }
+  .kv { grid-template-columns: 1fr; }
+  .kv dt { margin-top: 6px; }
+}
+</style>
+
+<main>
+  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 13 October 2026</div>
+  <h1>The plateau, the self-play fix, and D023</h1>
+  <p class="sub">Runs D020 through D023, 11–13 October. Written so either of us can pick this up cold. It continues <a href="HANDOFF-20261010.html">the 10 October handoff</a>; read that for D005–D019, the policy-loss fixes and the memory fault. The source of truth is the <code>mali_ba</code> repo (branch <code>main</code>); <code>open_spiel</code> only holds symlinks.</p>
+
+  <div class="status">
+    <h3>Status on 13 October</h3>
+    <ul>
+      <li><strong>D023 is the strongest model.</strong> It beat D021 0.453 (95% CI [0.409, 0.497]; an even match is 0.333) at the standard eval guidance of 0.55, the second-largest head-to-head gain in the project. Its value head is significantly better on held-out positions, and its search targets got sharper for the first time.</li>
+      <li><strong>What changed:</strong> self-play move selection (<a href="#fix">section 3</a>) and the buffer pool shares. Before D023, self-play was close to random play: ~465-move games, 70% timeouts. D023's self-play ended 85% of games with a natural win at a median of ~285 moves.</li>
+      <li><strong>D019, D020 and D021 were level</strong> (three-way 0.323 / 0.327 / 0.350). The policy fixes in D021 cost nothing but gained nothing measurable on their own.</li>
+      <li><strong>The guidance is still needed at play time.</strong> At guidance 0, D023 and D021 were even (0.347) and a quarter of the games timed out.</li>
+      <li><strong>Seat 0 dominates, more so as play gets stronger.</strong> D023 self-play wins by seat: 55 / 34 / 11%. In the head-to-heads seat 2 won 19 of 495 decided games. This is now a game-design question (<a href="#seats">section 3</a>).</li>
+      <li><strong>Next run, D024:</strong> from D023, with training guidance lowered to a steady 0.10 (was 0.38) and the special rare-goods games turned off. Check the first 30 minutes (<a href="#plan">section 5</a>).</li>
+      <li>No memory errors since the desktop rebooted on 11 October at 22:34 (D021 and D023 ran clean), but the MemTest steps in <code>TODO.md</code> are still not done.</li>
+    </ul>
+  </div>
+
+  <nav class="toc" aria-label="Contents">
+    <ol>
+      <li><a href="#short">The short version</a></li>
+      <li><a href="#runs">Runs D020 to D023</a></li>
+      <li><a href="#learned">What we learned</a></li>
+      <li><a href="#built">What was built or changed</a></li>
+      <li><a href="#plan">The plan</a></li>
+      <li><a href="#settings">Settings in effect (D024)</a></li>
+      <li><a href="#tools">Tools, files and commands</a></li>
+      <li><a href="#misled">Things that misled us</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="short">1. The short version</h2>
+  <ul>
+    <li>D021 (the policy-loss fixes) showed the network already matches its search targets: the gap stayed at ~0.09 all run. The policy is flat because the targets are flat.</li>
+    <li>The targets were flat partly because self-play was nearly random. Every move, even the unrecorded 40-simulation ones, was sampled from near-flat visit counts at temperature 1.0 for 150 moves and 0.5 after. Games bore little resemblance to strong play, so the value head learned from long timeout games.</li>
+    <li>D023 changed how self-play picks moves (greedy fast moves, temperature 1.0 for only 30 moves, then 0.25) and rebalanced the buffer pools toward win positions. Self-play became decisive, the value head improved on held-out positions, target entropy fell, and D023 beat D021 0.453.</li>
+    <li>The heuristic is still needed: without it neither network can finish most games.</li>
+    <li>Turn order matters more as play improves; seat 2 is close to hopeless in strong play.</li>
+  </ul>
+
+  <h2 id="runs">2. Runs D020 to D023</h2>
+  <p>Head-to-head: 300 simulations per move, normalized guidance blend, A in one seat and B in two unless three-way. The share is A's wins out of decided games; 0.333 means equal strength.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Run</th><th>From</th><th>The change</th><th class="n">Games</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>D020</td><td>D019</td><td>No change, longer run. Trainer killed by the memory fault at 19:41 on 11 October; the 19:41 checkpoint was renamed to the main <code>vD020</code> files.</td><td class="n">~5,500 trained</td><td>Three-way 0.327, level with D019 and D021</td></tr>
+        <tr><td>D021</td><td>D020</td><td>Policy loss over legal moves only; normalized guidance blend at 0.38 (same real share as before)</td><td class="n">10,000</td><td>Three-way D021 0.350 [0.309, 0.393], D020 0.327, D019 0.323: all level</td></tr>
+        <tr><td>D022</td><td>D021</td><td>New self-play move selection only. Stopped after ~20 minutes to add the pool change.</td><td class="n">~330</td><td>Not evaluated</td></tr>
+        <tr class="hl"><td>D023 / D023a</td><td>D021</td><td>Move selection plus rebalanced pools. D023 ran 14 minutes, then was restarted from its weights as D023a for 15,000 games (log <code>train_runD023a.log</code>).</td><td class="n">15,000</td><td><strong>Beat D021 0.453</strong> [0.409, 0.497] at guidance 0.55; even (0.347 [0.300, 0.396]) at guidance 0</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>D023 combines two changes, so the head-to-head can't separate their effects.</p>
+
+  <h2 id="learned">3. What we learned</h2>
+
+  <h3>The D019–D021 plateau</h3>
+  <ul>
+    <li>Value probe on a new held-out set (17,038 positions from the D021/D020/D019 three-way): D017 through D021 all scored 62–63% top-pick, all ~5 points above D013. No value-head progress after D017.</li>
+    <li>D021's POLICY FIT gap stayed at ~0.09 for the whole run, and target entropy rose slightly (1.74 → 1.79). The network fits its targets; the targets weren't getting sharper.</li>
+    <li>Legal moves per position (20 random games, 10,180 positions): median 5, 90th percentile 7. Only ~5% of positions have 20 or more, mostly large route decisions. A target entropy of ~1.75 nats is close to uniform over the typical ~6 moves.</li>
+  </ul>
+
+  <h3 id="fix">Self-play was nearly random, and fixing it worked</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th class="n">D021 self-play</th><th class="n">D023 self-play</th><th class="n">Head-to-head (300 sims, greedy, 0.55)</th></tr></thead>
+      <tbody>
+        <tr><td>Natural wins</td><td class="n">30.5%</td><td class="n">85.0%</td><td class="n">~99%</td></tr>
+        <tr><td>Typical game length</td><td class="n">~465 moves</td><td class="n">median win 285</td><td class="n">median 214–246</td></tr>
+        <tr><td>Games per hour</td><td class="n">883</td><td class="n">1,661</td><td class="n"></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li>The cause: move selection. Self-play sampled every move from visit counts at temperature 1.0 for 150 moves, then 0.5, including the 74% of moves searched with only 40 simulations and never recorded. With near-flat visits, many moves were close to a weighted random choice. ab_eval plays the most-visited move.</li>
+    <li>D023's self-play: fast moves greedy; full-search moves at temperature 1.0 for 30 moves, then 0.25. Dirichlet noise, random layouts and random token placement are unchanged, so games still vary.</li>
+    <li>Results over D023a: target entropy fell from 1.71 to 1.61, the first fall ever (gap steady at ~0.095). In-run value calibration improved steadily (top-pick 75 → 80%, error 0.355 → 0.328, average prediction on target). Natural wins got faster (median ~305 → 272 moves).</li>
+    <li>Game variety held up: Timbuktu's share of wins rose late in the run, rare goods held steady, and the spread of win lengths (p25–p75: 230–359) stayed as wide as at the start.</li>
+    <li>Value probe on the held-out set: <strong>D023 65.6% top-pick against D021 62.8%</strong> (+2.8 [0.7, 4.8]) and D019 62.2%; MSE 0.424 against 0.490 and 0.500; Timbuktu positions 68.2% against 60.3%. The first significant value-head gain since D017.</li>
+  </ul>
+
+  <h3>The pools had to follow the new data</h3>
+  <ul>
+    <li>Each pool is a first-in-first-out queue, and its fraction sets both its size and its share of every batch. Under the old shares (timeout + near-win 0.70) and D022's ~77% win rate, the timeout pools would have stayed mostly D021 data for ~16 hours, with new timeout positions trained ~5.8× and win positions ~1×.</li>
+    <li>D023's shares: near-win 0.20, rare goods 0.35, Timbuktu 0.30, timeout 0.15. That gives each pool ~2–3× reuse, with Timbuktu favoured. On restart the trainer keeps the newest entries of any pool that shrinks.</li>
+    <li><code>train_interval_seconds</code> stayed at 12: reuse averaged 2.1–2.6×, and more frequent training would have raised the over-used pools further.</li>
+  </ul>
+
+  <h3>The heuristic is still needed at play time</h3>
+  <ul>
+    <li>D023 vs D021 at guidance 0: even (0.347), 123 of 501 games timed out, median 294 moves. At 0.55: D023 clearly stronger, 6 timeouts, median 214.</li>
+    <li>Without the heuristic's focus, a 300-simulation search over a flat policy spreads too thinly to finish games, and the networks' differences disappear. D023's gain shows through the value head working with the heuristic.</li>
+    <li>D024 tests lower training guidance (0.10). The risk: self-play drifts back toward long timeout games, which is what held D019–D021 back.</li>
+  </ul>
+
+  <h3 id="seats">Seat 0 dominates, more so with stronger play</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th class="n">Seat 0</th><th class="n">Seat 1</th><th class="n">Seat 2</th></tr></thead>
+      <tbody>
+        <tr><td>D017 self-play, share of wins</td><td class="n">33.3%</td><td class="n">36.1%</td><td class="n">30.4%</td></tr>
+        <tr><td>D021 self-play</td><td class="n">37.4%</td><td class="n">36.5%</td><td class="n">26.0%</td></tr>
+        <tr><td>D023 self-play</td><td class="n">55.2%</td><td class="n">33.6%</td><td class="n">11.1%</td></tr>
+        <tr><td>D023 vs D021, 0.55 (decided games)</td><td class="n">284</td><td class="n">192</td><td class="n">19</td></tr>
+        <tr><td>D023 vs D021, 0 (decided games)</td><td class="n">221</td><td class="n">148</td><td class="n">9</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li>Seat 2's share of rare-goods wins in self-play: 19.5% (D017), 12.8% (D019), 8.5% (D021), 5.5% (D023). Seat 0 took 59% of D023's rare-goods wins.</li>
+    <li>The setup rules (starting common goods 0/1/2 by seat, serpentine token placement) balanced near-random self-play. They don't hold up in decisive play. This is a rules question as much as a training one; first checks are in <code>TODO.md</code>.</li>
+    <li>It doesn't distort head-to-heads, because seats rotate evenly, and the value head should simply learn it.</li>
+  </ul>
+
+  <h2 id="built">4. What was built or changed</h2>
+  <ul>
+    <li><strong>Self-play move selection</strong> (<code>df16f5d</code>): <code>selfplay_temp_moves</code>, <code>selfplay_temp_early</code>, <code>selfplay_temp_late</code> (a temperature ≤ 0 plays the most-visited move) and <code>playout_cap_fast_greedy</code>. Code defaults reproduce the old behaviour (150 / 1.0 / 0.5 / false); the ini sets 30 / 1.0 / 0.25 / true. Sent to remote workers. The trainer prints a "self-play move choice" line at startup.</li>
+    <li><strong>Pool shares</strong> (<code>074ce4a</code>): near-win 0.20, rare goods 0.35, Timbuktu 0.30, timeout 0.15 (was 0.35 / 0.20 / 0.10 / 0.35).</li>
+    <li><strong>Value-probe set</strong>: <code>/media/robp/UD/Projects/open_spiel/value_probe_set.npz</code>, 17,038 positions from the D021/D020/D019 three-way (recorded with <code>--record_positions</code>). Use it for every value-head comparison from now on.</li>
+    <li><code>TODO.md</code>: D021 findings, D022/D023 plans, the later target-sharpening candidates, and a new seat 2 section.</li>
+  </ul>
+
+  <h2 id="plan">5. The plan</h2>
+  <ol class="steps">
+    <li>
+      <h3>D024: from D023, training guidance a steady 0.10, rare-goods actors off</h3>
+      <ul>
+        <li>Both <code>heuristic_guidance_weight</code> and <code>heuristic_guidance_weight_final</code> are set to 0.10, so the decay schedule doesn't move it.</li>
+        <li><strong>Rare-goods actors off</strong> (<code>rare_goods_actor_fraction</code> 0.30 → 0): rare-goods wins are now 65% of D023's wins, so the special games (+0.05 guidance, +100 early simulations) aren't needed. D024 therefore changes two things, and a result can't be split between them.</li>
+        <li><strong>First 30 minutes:</strong> natural wins should stay near D023's 85% and games near 300 moves. If wins drop sharply or timeouts climb past ~30%, go back to 0.38.</li>
+        <li>Over the run: target entropy (D023 ended at 1.61), the in-run value calibration, the win-type mix and the seat split.</li>
+        <li>Evaluate D024 vs D023 at 0.55 (comparable with everything so far), plus a guidance-0 game to see whether the networks need the heuristic less. Then <code>value_probe.py</code>.</li>
+      </ul>
+    </li>
+    <li>
+      <h3>Sharpening the search targets, one change per run</h3>
+      <ul>
+        <li><strong>Policy-target pruning</strong> (KataGo): strip visits caused by noise and forced exploration from recorded targets. Changes targets only, not play.</li>
+        <li><strong>First-play urgency</strong> for large route decisions: OpenSpiel values unvisited children at 0 while the average value is about −0.3 to −0.5, so the search visits every legal move once. Negligible for 5–7 legal moves; it matters for route decisions with up to 300 candidates.</li>
+        <li>Larger fast budget (40 → 80), Gumbel-style targets, more simulations on recorded moves: see <code>TODO.md</code> for details and ordering.</li>
+      </ul>
+    </li>
+    <li>
+      <h3>Seat balance</h3>
+      <p>Find out why seat 0 wins rare goods so much faster: per-seat goods over the game in the eval logs, and <code>analyze_placements.py</code> by seat. Starting goods and placement order are the likely levers. Any rules change resets comparability, so plan it between run series.</p>
+    </li>
+    <li>
+      <h3>Still open from earlier</h3>
+      <ul>
+        <li>The desktop's memory tests (<code>TODO.md</code>, first section).</li>
+        <li>Landmark planes (Timbuktu, desert cities, coast) if Timbuktu prediction stays weak; heuristic token placement as a run; human play (<code>ENGINE_UI_SEPARATION.md</code>).</li>
+      </ul>
+    </li>
+  </ol>
+
+  <h2 id="settings">6. Settings in effect (D024)</h2>
+  <dl class="kv">
+    <dt>Started from</dt><dd><code>mali_ba_agent_vD023.weights.h5</code> (line: D019 → D020 → D021 → D023 → D024)</dd>
+    <dt>Rewards</dt><dd>win +1.0; loss −0.7 however the game ends; timeout leader +0.1; time penalty −0.0005 per move; gamma 1.0</dd>
+    <dt>Game length</dt><dd><code>max_play_moves = 500</code></dd>
+    <dt>Guidance</dt><dd>0.10 steady (was 0.38), normalized blend, so it's the heuristic's real share; rare-goods actors off (<code>rare_goods_actor_fraction = 0.0</code>, was 0.30)</dd>
+    <dt>Policy loss</dt><dd>over legal moves only</dd>
+    <dt>Search</dt><dd>uct_c 2.0; playout cap on (25% full search, otherwise 40 simulations; large route decisions exempt)</dd>
+    <dt>Move selection</dt><dd>full-search moves at temperature 1.0 for 30 moves, then 0.25; fast moves greedy</dd>
+    <dt>Buffer</dt><dd>100k positions; pools near-win 0.20, rare goods 0.35, Timbuktu 0.30, timeout 0.15; 1 position in 32 kept</dd>
+    <dt>Training</dt><dd>every 12 s, batch 128; aux targets on (win type, moves left, route distance)</dd>
+    <dt>Setup</dt><dd>starting common goods by seat; serpentine token placement; bots place tokens at random</dd>
+    <dt>Machines</dt><dd>desktop, 68 actors (D021–D023 ran without the laptop)</dd>
+  </dl>
+
+  <h2 id="tools">7. Tools, files and commands</h2>
+  <p>Run from <code>mali_ba/open_spiel/python/games/mali_ba</code> with the <code>mali_ba</code> conda environment.</p>
+  <pre><code># standard head-to-head (comparable with earlier results)
+python ab_eval.py --agent_a mali_ba_agent_vD024.weights.h5 --agent_b mali_ba_agent_vD023.weights.h5 \
+    --sims 300 --games 501 --workers 64 --guidance_blend_normalized --heuristic_weight 0.55 \
+    --config_file $PWD/mali_ba.ini 2>&1 | tee ab_D024_vs_D023.log
+# the same at guidance 0 (networks alone): --heuristic_weight 0.0, log ab_D024_vs_D023_h0.log
+
+# value probe on the held-out set
+python value_probe.py --positions /media/robp/UD/Projects/open_spiel/value_probe_set.npz \
+    --agents mali_ba_agent_vD024.weights.h5 mali_ba_agent_vD023.weights.h5 mali_ba_agent_vD021.weights.h5
+
+# training log summary, no charts
+python analyze_log.py /media/robp/UD/Projects/open_spiel/train_runD024.log --no-plot</code></pre>
+  <ul>
+    <li><strong>Always pass <code>--guidance_blend_normalized</code></strong> for D021 and later. With the masked loss, their probability on illegal moves has drifted to ~90%, so the old blend would give them an unpredictable heuristic share.</li>
+    <li>For <code>value_probe.py</code> and scripts run outside the trainer, <code>PYTHONPATH</code> needs the build's <code>python</code> directory and <code>open_spiel/python/games</code> (for the <code>mali_ba</code> package), run from the <code>open_spiel</code> tree.</li>
+    <li>A restarted run with a new log name (D023a) starts analyze_log's counts and "over the run" thirds from zero.</li>
+  </ul>
+
+  <h2 id="misled">8. Things that misled us (don't repeat)</h2>
+  <ul>
+    <li><strong>Mixing up which eval was which.</strong> The D023 head-to-heads were reported back without their guidance setting, and Claude assumed the first was the guidance-0 game. It was the 0.55 one, and the conclusions came out backwards until the log headers were checked. Every ab_eval log starts with the agents and their guidance: read it from there, and put the setting in the log name.</li>
+    <li><strong>In-run value checks look better in decisive games.</strong> D023's winner top-pick of 80–83% isn't comparable with D021's 71%: decisive games are easier to call. Compare runs only by head-to-head or the value probe.</li>
+    <li><strong>"First-play urgency explains the flat targets"</strong> was wrong for typical positions. With 5–7 legal moves, visiting each once costs ~5 of 100–600 simulations. It matters only for large route decisions.</li>
+    <li><strong>Head-to-heads at guidance 0 lose many games to timeouts</strong> (123 of 501), which leaves fewer decided games and wider intervals.</li>
+    <li><strong>Pool fractions set batch shares as well as sizes.</strong> When the mix of game endings changes, the pools keep old data and over-train new positions in the scarce pools. Re-check pool reuse whenever the win rate moves a lot.</li>
+    <li><strong>Seat balance tuned on weak play doesn't hold in strong play.</strong> Re-measure it whenever self-play gets more decisive.</li>
+  </ul>
+
+  <footer>Prepared 13 October 2026. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest code commit <code>074ce4a</code>.</footer>
+</main>
