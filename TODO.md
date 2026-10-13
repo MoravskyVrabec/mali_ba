@@ -134,11 +134,19 @@ uniform), so there is nothing sharp to learn.
   timeouts; greedy 300-sim head-to-heads median 246 moves, 2% timeouts. Every
   self-play move, including 40-sim fast moves, was sampled at temperature 1.0 for
   150 moves, then 0.5, over near-flat visits.
-- **D022 (in progress):** self-play move selection only. `selfplay_temp_moves = 30`,
+- **D022 (stopped after ~20 min, 2026-10-12):** self-play move selection only. `selfplay_temp_moves = 30`,
   `selfplay_temp_late = 0.25`, `playout_cap_fast_greedy = true` (fast moves play
   the most-visited move). Check: win-condition share and natural game length in
   analyze_log, POLICY FIT target entropy over the run, head-to-head vs D021. Watch
   for lost game variety (value checks worse, near-identical games).
+- **D023 (from D021):** D022's move selection **plus rebalanced buffer pools**:
+  near-win 0.20, rare goods 0.35, Timbuktu 0.30, timeout 0.15 (was 0.35 / 0.20 /
+  0.10 / 0.35). D022's first 326 games: 77% natural wins (49% of games rare goods,
+  28% Timbuktu, 23% timeouts), median win 322 moves, 1,222 games/hr. At the old
+  shares the timeout pools (70% of every batch) would have stayed mostly D021 data
+  for ~16 h, with new timeout positions trained ~5.8x and win positions ~1x.
+  train_interval_seconds stays 12 (reuse 2.6x average). Two changes in one run:
+  a D023-vs-D021 result can't separate them.
 - **Candidates for later runs, one per run:**
   1. **Policy-target pruning (KataGo).** Before recording a target, cut each
      non-best child's visits down to what its PUCT score justifies against the
