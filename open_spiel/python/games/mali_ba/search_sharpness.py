@@ -84,7 +84,7 @@ def worker(items, cfg, out_q):
         row = {'idx': idx, 'n_legal': len(state.legal_actions())}
         for c in cfg['uct_c']:
             ev = AlphaZeroEvaluator(game, pm, vm, heuristic_guidance_weight=cfg['heur_w'],
-                                    cache_size=20000)
+                                    cache_size=20000, blend_normalized=cfg['blend_normalized'])
             bot = mcts.MCTSBot(game=game, uct_c=c, max_simulations=cfg['sims'], evaluator=ev,
                                solve=False, dirichlet_noise=None,
                                child_selection_fn=mcts.SearchNode.puct_value,
@@ -111,11 +111,17 @@ def main():
     ap.add_argument('--uct_c', type=float, nargs='+', default=[2.0, 1.0, 0.5, 0.25])
     ap.add_argument('--sims', type=int, default=300)
     ap.add_argument('--heur_w', type=float, default=0.30, help="Heuristic guidance weight in the prior")
+    ap.add_argument('--guidance_blend_normalized', action='store_true',
+                    help="Rescale the network policy over the legal moves before mixing in the "
+                         "heuristic, so --heur_w is the heuristic's true share (training's "
+                         "guidance_blend_normalized). Needed for D021 and later, whose policies "
+                         "put most of their probability on illegal moves.")
     ap.add_argument('--every', type=int, default=5, help="Use every Nth probe position")
     ap.add_argument('--workers', type=int, default=4)
     args = ap.parse_args()
     cfg = dict(agent=os.path.abspath(args.agent), config_file=args.config_file,
-               uct_c=args.uct_c, sims=args.sims, heur_w=args.heur_w)
+               uct_c=args.uct_c, sims=args.sims, heur_w=args.heur_w,
+               blend_normalized=args.guidance_blend_normalized)
 
     pos = json.load(open(args.positions))['positions']
     items = [(i, p['history']) for i, p in enumerate(pos) if i % args.every == 0]
@@ -151,7 +157,8 @@ def main():
 
     ref = args.uct_c[0]
     print(f"{os.path.basename(args.agent)}: {len(rows)} positions, mean legal moves "
-          f"{np.mean([r['n_legal'] for r in rows]):.1f}, {args.sims} sims, heuristic {args.heur_w}")
+          f"{np.mean([r['n_legal'] for r in rows]):.1f}, {args.sims} sims, heuristic {args.heur_w}"
+          f"{' (normalized blend)' if args.guidance_blend_normalized else ''}")
     print(f"{'uct_c':>6} {'visit entropy':>14} {'prior entropy':>14} {'top move share':>15} "
           f"{'child Q spread':>15} {'same best move as c=' + str(ref):>24}")
     for c in args.uct_c:
