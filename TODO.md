@@ -168,6 +168,14 @@ uniform), so there is nothing sharp to learn.
      modest (search_sharpness: 89% vs 93% of uniform entropy).
   - Revisit uct_c once the value head is stronger (0.5 and 1.0 vs 2.0 were null
     on D005 and D007, measured with FPU at 0).
+  - **2026-10-13 search_sharpness on D023** (120 old-rules probe positions, 300
+    sims, normalized blend). Guidance barely changes target sharpness: visit
+    entropy 91 / 90 / 90 / 87% of uniform at guidance 0 / 0.10 / 0.38 / 1.0
+    (prior 95% for the network, 89% for the heuristic alone). uct_c does, at
+    guidance 0.10: 2.0 / 1.0 / 0.5 / 0.25 -> 90 / 86 / 79 / 70%, same best move as
+    at 2.0 in 100 / 88 / 74 / 68% of positions; median child Q spread only 0.022.
+    Next: same-network head-to-head D023 uct_c 1.0 vs 2.0 at guidance 0.55; if 1.0
+    wins or ties, train a run at 1.0.
   - Not recommended: sharpening targets with a temperature (visits^(1/T)). It adds
     no information and amplifies search noise.
 - Judge any change by probe entropy/top-1 AND head-to-head (sharper targets can
@@ -187,6 +195,18 @@ pay off. First checks: analyze_placements.py by seat, per-seat goods over the ga
 in the eval logs. Re-check after D022, whose self-play is closer to strong play.
 
 ## Smaller items (carried over from the 2026-09-30 list, 2026-10-08)
+
+- **Make the normalized guidance blend the default (added 2026-10-13; not while a
+  run is active, actors import training_utils.py live).** `AlphaZeroEvaluator`
+  defaults to `blend_normalized=False`, the old blend. Since the masked loss,
+  D021+ policies put ~90% of their probability on illegal moves, so any tool that
+  builds an evaluator without the option gives the heuristic a much larger real
+  share than its weight (0.10 acts like ~0.5). Training and ab_eval pass it;
+  search_sharpness.py got `--guidance_blend_normalized` in f9f8444;
+  **policy_probe.py still uses the old blend**. Fix: default to normalized, keep the
+  old blend as an opt-in for reproducing pre-D021 results; optionally mask the
+  network output to legal moves inside the evaluator. policy_probe's entropy also
+  needs to be over legal moves only.
 
 - **Trainer busy-waits.** The idle sleep at the end of `trainer_process`'s loop
   only fires when the buffer holds fewer than `batch_size` positions, which never
