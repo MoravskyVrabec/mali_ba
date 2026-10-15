@@ -642,8 +642,17 @@ class AlphaZeroEvaluator:
     """
 
     def __init__(self, game, policy_model, value_model, heuristic_guidance_weight=0.40,
-                 cache_size=8192, client=None, blend_normalized=False):
+                 cache_size=8192, client=None, blend_normalized=False, seat_relabel=False):
         self._game = game
+        # seat_relabel (2026-10-15, diagnostic): show the network every position as if
+        # the player to move were player 0 (the next player 1, ...; turn order kept) and
+        # map its value outputs back. The observation is absolute (per-seat planes and
+        # seat-to-move planes), so a network can learn seat-specific play; this asks
+        # how it would play each seat using what it learned as player 0.
+        self._seat_relabel = None
+        if seat_relabel:
+            self._seat_relabel = _seat_relabel_plane_maps(
+                game.observation_tensor_shape()[0], game.num_players())
         # blend_normalized: rescale the network's policy over the legal moves BEFORE
         # mixing in the heuristic. Off (the original behaviour), the mix happens over
         # all actions and the result is rescaled afterwards; since the network puts
@@ -708,6 +717,7 @@ class AlphaZeroEvaluator:
 
         self.cache_misses += 1
         _cp = state.current_player()
+        _relabel = self._seat_relabel is not None and _cp > 0
         if self._client is not None:
             # Server path: hand the flat observation straight over shared memory.
             if self._obs_helper is not None and _cp >= 0:
@@ -715,7 +725,11 @@ class AlphaZeroEvaluator:
                 flat = self._obs_helper.tensor
             else:
                 flat = np.asarray(state.observation_tensor(), dtype=np.float32)
+            if _relabel:
+                flat = self._relabel_obs(flat, _cp)
             pol, val = self._client.infer(flat)
+            if _relabel:
+                val = self._unlabel_value(val, _cp)
             entry = [val, pol, None]
             self._cache[key] = entry
             if len(self._cache) > self._cache_size:
@@ -729,13 +743,29 @@ class AlphaZeroEvaluator:
             obs = np.asarray(self._obs_helper.tensor, dtype=np.float32)
         else:
             obs = np.asarray(state.observation_tensor(), dtype=np.float32)
+        if _relabel:
+            obs = self._relabel_obs(obs, _cp)
         policy_t, value_t = self._infer(obs.reshape((1, *self._shape)))
-        entry = [value_t[0].numpy(), policy_t[0].numpy(), None]
+        val = value_t[0].numpy()
+        if _relabel:
+            val = self._unlabel_value(val, _cp)
+        entry = [val, policy_t[0].numpy(), None]
 
         self._cache[key] = entry
         if len(self._cache) > self._cache_size:
             self._cache.popitem(last=False)
         return entry
+
+    def _relabel_obs(self, flat, cp):
+        """Observation with player cp shown as player 0 (see seat_relabel)."""
+        planes = np.asarray(flat, dtype=np.float32).reshape(self._shape[0], -1)
+        return planes[self._seat_relabel[cp]].reshape(-1)
+
+    def _unlabel_value(self, val, cp):
+        """Value outputs in relabelled slots -> real players: player p is slot (p - cp) % n."""
+        val = np.asarray(val)
+        n = len(val)
+        return val[[(p - cp) % n for p in range(n)]]
 
     def evaluate(self, state):
         if state.is_terminal():
@@ -892,6 +922,42 @@ def prune_policy_target(root, uct_c, priors=None):
         k = min(n, int(np.floor(uct_c * prior(c) * sqrt_n / gap)))
         kept[c.action] = 0 if k <= 1 else k
     return kept
+
+
+def _seat_relabel_plane_maps(num_planes, num_players):
+    """For each player to move cp, src[cp][new_plane] = old_plane, so that
+    obs[src[cp]] shows player p in slot (p - cp) % n. Mirrors the plane layout in
+    mali_ba_observer.cc (WriteTensor) with the move-count, score, seat and all-goods
+    planes on, solving for the number of regions; raises if the plane count does not
+    fit that layout."""
+    goods = 15
+    n = num_players
+    fixed = 77 + 1  # planes before the region block, plus the move-count plane
+    rest = num_planes - fixed - 2 * n - n * 2 * goods
+    if rest <= 0 or rest % n:
+        raise ValueError(f"seat_relabel: {num_planes} planes does not fit the expected layout "
+                         f"(move-count, score, seat and all-goods planes on)")
+    n_regions = rest // n
+    region_base = 77
+    score_base = region_base + n * n_regions + 1
+    seat_base = score_base + n
+    goods_base = seat_base + n
+    assert goods_base + n * 2 * goods == num_planes
+    # (base, planes per player, spacing between players) for every per-seat block.
+    blocks = [(b, 1, 1) for b in (0, 15, 20, 27, 32, 37, 42)]   # tokens, posts, centers,
+    blocks += [(region_base, n_regions, n_regions),               # goods totals, routes
+               (score_base, 1, 1), (seat_base, 1, 1),
+               (goods_base, 2 * goods, 2 * goods)]
+    maps = []
+    for cp in range(n):
+        src = np.arange(num_planes)
+        for base, size, spacing in blocks:
+            for k in range(n):               # slot k shows player (k + cp) % n
+                p = (k + cp) % n
+                src[base + k * spacing: base + k * spacing + size] = \
+                    np.arange(base + p * spacing, base + p * spacing + size)
+        maps.append(src)
+    return maps
 
 
 def create_mali_ba_value_network(observation_shape, num_players, aux_heads=False,
