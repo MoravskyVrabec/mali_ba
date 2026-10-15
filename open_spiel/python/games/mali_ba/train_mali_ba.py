@@ -138,6 +138,12 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
     last_checkpoint_time = time.time()
     last_train_time = time.time()
     TRAIN_INTERVAL_SECONDS = getattr(args, 'train_interval_seconds', 10)
+    # Positions the buffer must hold before the first training step (2026-10-15), so a
+    # run started with an empty buffer doesn't train repeatedly on its first few games.
+    # Never below one batch; with a restored full buffer training starts at once.
+    MIN_BUFFER_TO_TRAIN = max(args.batch_size, getattr(args, 'min_buffer_to_train', 0))
+    _waiting_logged = False
+    _training_started = False
     # Moving windows of game lengths (last 20 games) for adaptive fraction tuning.
     bootstrap_lengths = collections.deque(maxlen=20)
     mcts_lengths = collections.deque(maxlen=20)
@@ -327,7 +333,18 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                 + "/".join(f"{x:.2f}" for x in local_replay_buffer.effective_pool_shares))
 
         # Train in batches
-        if len(local_replay_buffer) >= args.batch_size:
+        if len(local_replay_buffer) < MIN_BUFFER_TO_TRAIN:
+            if not _waiting_logged and MIN_BUFFER_TO_TRAIN > args.batch_size:
+                log(LogLevel.INFO, f"Trainer: waiting for {MIN_BUFFER_TO_TRAIN:,} positions in the "
+                                   f"buffer before training (min_buffer_to_train); "
+                                   f"{len(local_replay_buffer):,} so far.")
+                _waiting_logged = True
+        else:
+            if not _training_started:
+                _training_started = True
+                if MIN_BUFFER_TO_TRAIN > args.batch_size:
+                    log(LogLevel.INFO, f"Trainer: buffer holds {len(local_replay_buffer):,} positions "
+                                       f"(min_buffer_to_train {MIN_BUFFER_TO_TRAIN:,}); training starts.")
             # Train when we have a large batch of new data, or on a regular time interval
             time_since_train = time.time() - last_train_time
             if experiences_processed > args.batch_size // 2 or time_since_train >= TRAIN_INTERVAL_SECONDS:
@@ -425,7 +442,7 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                 log(LogLevel.ERROR, f"Trainer: 2-hour checkpoint save failed: {e}")
 
         # If there's nothing to do, sleep briefly to prevent busy-waiting
-        if experiences_processed == 0 and len(local_replay_buffer) < args.batch_size:
+        if experiences_processed == 0 and len(local_replay_buffer) < MIN_BUFFER_TO_TRAIN:
             time.sleep(0.1)
 
 
@@ -2758,6 +2775,7 @@ if __name__ == "__main__":
     parsed_args.near_win_extension_moves = _ini_training_int('near_win_extension_moves', 20)
     parsed_args.near_win_extension_value_thresh = _ini_float('near_win_extension_value_thresh', 0.2)
     parsed_args.train_interval_seconds = _ini_int('train_interval_seconds', 10)
+    parsed_args.min_buffer_to_train = _ini_int('min_buffer_to_train', 0)
     parsed_args.early_termination_move = _ini_int('early_termination_move', 380)
     parsed_args.hopeless_move1   = _ini_int('hopeless_move1', 200)
     parsed_args.hopeless_thresh1 = _ini_float('hopeless_thresh1', 0.10)
@@ -2905,6 +2923,8 @@ if __name__ == "__main__":
     else:
         print(f'  playout cap                 : off')
     print(f'  uct_c                       : {parsed_args.uct_c:g}')
+    print(f'  min_buffer_to_train         : {parsed_args.min_buffer_to_train:,}'
+          f'{" (train from the first batch)" if parsed_args.min_buffer_to_train <= 0 else ""}')
     print(f'  policy-target pruning       : {"on" if parsed_args.policy_target_pruning else "off"}')
     print(f'  self-play move choice       : temperature {parsed_args.selfplay_temp_early:g} for '
           f'{parsed_args.selfplay_temp_moves} moves, then {parsed_args.selfplay_temp_late:g} '
