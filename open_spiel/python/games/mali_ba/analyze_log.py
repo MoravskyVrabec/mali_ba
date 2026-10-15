@@ -1707,8 +1707,11 @@ _REMOTE_LOG_DIR  = '/media/robp/UD/Projects/open_spiel'
 
 def plot_search_cost(search_costs, window=25, run_start=None):
     """Two stacked panels sharing the win-rate chart's x-axis (hours since run start):
-    simulations and NN evaluations per game on top, cache hit rate and full-search
-    share below. Makes it obvious when self-play cost creeps up as games lengthen.
+    simulations per move and game length on top, cache hit rate and full-search share
+    below. Simulations, NN evaluations and moves per game used to share the top panel,
+    but all three just tracked game length; simulations per move stays flat unless the
+    search budget really changes (tier mix, playout cap, fast budget). NN evaluations
+    per simulation is 1 - the cache hit rate, shown below.
     """
     try:
         import matplotlib.pyplot as plt
@@ -1741,14 +1744,17 @@ def plot_search_cost(search_costs, window=25, run_start=None):
         2, 1, sharex=True, figsize=(13, 7), dpi=100,
         gridspec_kw={'height_ratios': [3, 2]})
 
-    xs, sims = moving('sims')
-    _, nn = moving('nn_evals')
-    _, moves = moving('moves')
-    ax_top.plot(xs, sims, linewidth=1.5, color='darkorange',
-                label=f'Simulations / game ({window}-game avg)')
-    ax_top.plot(xs, nn, linewidth=1.5, color='seagreen',
-                label=f'NN evaluations / game ({window}-game avg)')
-    ax_top.set_ylabel('Per game')
+    xs, moves = moving('moves')
+    # Ratio of sums over the window, so long games weigh in by their move count.
+    sims_per_move = []
+    for i in range(window - 1, len(search_costs)):
+        chunk = search_costs[i - window + 1:i + 1]
+        tm = sum(c['moves'] for c in chunk)
+        sims_per_move.append(sum(c['sims'] for c in chunk) / tm if tm else 0.0)
+    ax_top.plot(xs, sims_per_move, linewidth=1.5, color='darkorange',
+                label=f'Simulations / move ({window}-game avg)')
+    ax_top.set_ylabel('Simulations / move')
+    ax_top.set_ylim(bottom=0)
     ax_top.grid(True, alpha=0.3)
     ax_top.legend(loc='upper left')
     ax_top.set_title('Self-play search cost')
