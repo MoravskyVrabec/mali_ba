@@ -1517,7 +1517,7 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
                   f'{len(flagged) - n_fw} timed out')
         print()
         # Only completed games, the most recent 100 (in-progress ones are left out).
-        shown = 100
+        shown = 40
         done_keys = sorted((k for k in no_kill_games if k in game_lookup),
                            key=lambda k: (game_lookup[k].get('time') or datetime.min, k[1]))[-shown:]
         print(f'  Last {len(done_keys)} completed no-kill games:')
@@ -1690,9 +1690,10 @@ def plot_win_rate(mcts_games, window=50, trainer_losses=None, run_start=None):
         # Combine legends
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+        # On ax2 so the loss lines (drawn on the twin axis) don't cover it.
+        ax2.legend(lines1 + lines2, labels1 + labels2, loc='lower left')
     else:
-        ax1.legend(loc='upper right')
+        ax1.legend(loc='lower left')
 
     ax1.set_title(f'Win Rate ({_long_window}-game avg) and Training Loss')
     plt.tight_layout(rect=[0, 0.06, 1, 1])
