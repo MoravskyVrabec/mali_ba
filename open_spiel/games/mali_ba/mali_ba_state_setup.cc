@@ -66,18 +66,37 @@ void Mali_BaState::ApplyChanceSetup(int setup_index) {
 
     }
 
-    // Starting common goods by seat: seat p gets p * per_seat randomly chosen common
-    // goods, each drawn independently (duplicates allowed, as in the physical game).
-    // Drawn from setup_rng AFTER the meeples, so each setup_index keeps exactly the
-    // meeple layout it had before this rule, and the goods are reproducible too.
-    const int per_seat = GetGame()->GetRules().starting_common_goods_per_seat;
-    if (per_seat > 0) {
-        const auto& goods_list = GoodsManager::GetInstance().GetCommonGoodsList();
+    // Starting goods by seat, each good drawn independently at random (duplicates
+    // allowed, as in the physical game). Either the per-seat lists
+    // (starting_common_goods_by_seat / starting_rare_goods_by_seat, missing entries 0)
+    // or, when neither is set, p * starting_common_goods_per_seat common goods for
+    // seat p. Drawn from setup_rng AFTER the meeples, so each setup_index keeps the
+    // meeple layout it had before these rules; all seats' common goods come before any
+    // rare goods, so the list "0,1,2" with no rare goods draws exactly what
+    // starting_common_goods_per_seat = 1 did.
+    const auto& rules = GetGame()->GetRules();
+    const bool by_seat = !rules.starting_common_goods_by_seat.empty() ||
+                         !rules.starting_rare_goods_by_seat.empty();
+    auto seat_count = [](const std::vector<int>& counts, int p) {
+        return p < static_cast<int>(counts.size()) ? counts[p] : 0;
+    };
+    auto draw = [&setup_rng](const std::vector<std::string>& goods_list, int n,
+                             std::map<std::string, int>& into) {
+        if (n <= 0 || goods_list.empty()) return;
         std::uniform_int_distribution<int> good_dist(0, static_cast<int>(goods_list.size()) - 1);
-        for (int p = 0; p < static_cast<int>(common_goods_.size()); ++p) {
-            for (int k = 0; k < p * per_seat; ++k) {
-                common_goods_[p][goods_list[good_dist(setup_rng)]] += 1;
-            }
+        for (int k = 0; k < n; ++k) into[goods_list[good_dist(setup_rng)]] += 1;
+    };
+    const auto& common_list = GoodsManager::GetInstance().GetCommonGoodsList();
+    const auto& rare_list = GoodsManager::GetInstance().GetRareGoodsList();
+    const int num_seats = static_cast<int>(common_goods_.size());
+    for (int p = 0; p < num_seats; ++p) {
+        const int n = by_seat ? seat_count(rules.starting_common_goods_by_seat, p)
+                              : p * rules.starting_common_goods_per_seat;
+        draw(common_list, n, common_goods_[p]);
+    }
+    if (by_seat) {
+        for (int p = 0; p < num_seats; ++p) {
+            draw(rare_list, seat_count(rules.starting_rare_goods_by_seat, p), rare_goods_[p]);
         }
     }
 

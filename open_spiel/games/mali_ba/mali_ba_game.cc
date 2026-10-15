@@ -22,6 +22,7 @@
 #include "open_spiel/abseil-cpp/absl/strings/str_join.h"
 #include "open_spiel/abseil-cpp/absl/strings/ascii.h"
 #include "open_spiel/abseil-cpp/absl/strings/str_cat.h"
+#include "open_spiel/abseil-cpp/absl/strings/numbers.h"
 #include "open_spiel/game_parameters.h"
 #include "open_spiel/spiel.h"
 #include "open_spiel/spiel_globals.h"
@@ -106,6 +107,29 @@ namespace open_spiel
                     try {
                         result.push_back(std::stoi(trim(part)));
                     } catch (...) { /* ignore parsing errors for robustness */ }
+                }
+                return result;
+            }
+
+            // --- Per-seat count list for setup rules, e.g. "0,2,1". Unlike ParseIntVector
+            // it rejects bad entries, negative counts and more than kMaxSeatList seats,
+            // since a typo here would silently change the game. ---
+            constexpr int kMaxSeatList = 5;  // player colours available
+            std::vector<int> ParseSeatCounts(const std::string& name, const std::string& s) {
+                std::vector<int> result;
+                if (trim(s).empty()) return result;
+                std::vector<std::string> parts = absl::StrSplit(s, ',');
+                for (const auto& part : parts) {
+                    int v = 0;
+                    if (!absl::SimpleAtoi(trim(part), &v) || v < 0) {
+                        SpielFatalError(absl::StrCat(name, ": '", part,
+                                                     "' is not a count (expected e.g. 0,2,1)"));
+                    }
+                    result.push_back(v);
+                }
+                if (static_cast<int>(result.size()) > kMaxSeatList) {
+                    SpielFatalError(absl::StrCat(name, " lists ", result.size(),
+                                                 " seats; at most ", kMaxSeatList, " are supported"));
                 }
                 return result;
             }
@@ -443,6 +467,20 @@ namespace open_spiel
             rules_.end_game_cond_rare_good_each_region = get_effective_param("end_game_cond_rare_good_each_region", false);
             rules_.end_game_cond_rare_good_num_regions = get_effective_param("end_game_cond_rare_good_num_regions", 5);
             rules_.starting_common_goods_per_seat = get_effective_param("starting_common_goods_per_seat", 0);
+            // The ini reader guesses value types, so a one-seat list such as "1" arrives
+            // as an int and "0,2,1" as a string; accept either.
+            auto seat_list_param = [&](const std::string& key) -> std::string {
+                auto it = effective_params.find(key);
+                if (it == effective_params.end()) return "";
+                const GameParameter& gp = it->second;
+                if (gp.type() == GameParameter::Type::kInt) return std::to_string(gp.int_value());
+                if (gp.type() == GameParameter::Type::kString) return gp.string_value();
+                SpielFatalError(absl::StrCat(key, " must be a comma-separated list of counts, e.g. 0,2,1"));
+            };
+            rules_.starting_common_goods_by_seat = ParseSeatCounts(
+                "starting_common_goods_by_seat", seat_list_param("starting_common_goods_by_seat"));
+            rules_.starting_rare_goods_by_seat = ParseSeatCounts(
+                "starting_rare_goods_by_seat", seat_list_param("starting_rare_goods_by_seat"));
             rules_.serpentine_token_placement = get_effective_param("serpentine_token_placement", false);
             // But if we found no coastal cities, switch to false
             if (coastal_hexes_.empty()) { rules_.end_game_cond_timbuktu_to_coast = false; }
@@ -467,7 +505,13 @@ namespace open_spiel
             LOG_DEBUG("  - Remove Meeple on Trade Route: ", rules_.remove_meeple_on_trade_route);
             LOG_DEBUG("  - City Free Upgrade on Route: ", rules_.city_free_upgrade);
             LOG_DEBUG("  - Posts Per Player: ", rules_.posts_per_player);
-            LOG_INFO("  starting_common_goods_per_seat: ", rules_.starting_common_goods_per_seat);
+            if (!rules_.starting_common_goods_by_seat.empty() || !rules_.starting_rare_goods_by_seat.empty()) {
+                LOG_INFO("  starting goods by seat (replaces starting_common_goods_per_seat): common ",
+                         absl::StrJoin(rules_.starting_common_goods_by_seat, ","), " | rare ",
+                         absl::StrJoin(rules_.starting_rare_goods_by_seat, ","));
+            } else {
+                LOG_INFO("  starting_common_goods_per_seat: ", rules_.starting_common_goods_per_seat);
+            }
             LOG_INFO("  serpentine_token_placement: ", rules_.serpentine_token_placement ? "true" : "false");
             LOG_DEBUG("  - Non-City Center Limit Divisor: ", rules_.non_city_center_limit_divisor);
             LOG_DEBUG("  - Min Hexes for Trade Route: ", rules_.min_hexes_for_trade_route);

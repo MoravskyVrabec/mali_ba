@@ -395,6 +395,13 @@ namespace open_spiel
       // chosen common goods, duplicates allowed (0 = off). Offsets the first-mover advantage:
       // seat 0 won 37-39% of self-play games and 54% of decided head-to-head games.
       int starting_common_goods_per_seat = 0;
+      // Setup: starting goods by seat, from ini lists such as "0,2,1" (one entry per
+      // seat from seat 0, up to 5 seats). Missing entries count as 0; entries for seats
+      // beyond the number of players are ignored. Each good is drawn at random,
+      // duplicates allowed. When either list is set, both replace
+      // starting_common_goods_per_seat.
+      std::vector<int> starting_common_goods_by_seat;
+      std::vector<int> starting_rare_goods_by_seat;
       // Setup: tokens are placed in serpentine order (0,1,2,2,1,0,0,1,2) instead of
       // round-robin (0,1,2,0,1,2,...), so seat 0 does not get first pick every round.
       bool serpentine_token_placement = false;
