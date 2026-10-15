@@ -843,6 +843,57 @@ AUX_WIN_TYPES = ('timeout', 'timbuktu', 'rare_goods')
 POLICY_LEGAL_MARK = 1e-6
 
 
+def prune_policy_target(root, uct_c, priors=None):
+    """Root visit counts with the unearned visits removed (KataGo policy-target pruning).
+
+    The most-visited child keeps its visits. Every other child keeps only as many as
+    its PUCT score justifies against the best child's: the largest count that still
+    leaves its score below the best's. The rest came from Dirichlet noise and the
+    exploration bonus; they were needed during the search but flatten the target. A
+    child left with a single visit is dropped, as in KataGo. Uses the priors the search
+    used (noise included) and OpenSpiel's PUCT, Q + c * P * sqrt(N) / (1 + n).
+
+    priors: optional {action: prior} to judge against instead of the children's own
+    (e.g. the prior before Dirichlet noise, so visits that only the noise justified are
+    removed too).
+
+    Returns {action: visits}. Only the recorded target changes; the move played
+    should still come from the raw visit counts.
+    """
+    children = root.children
+    raw = {c.action: c.explore_count for c in children}
+    if sum(1 for c in children if c.explore_count > 0) < 2:
+        return raw
+    best = max(children, key=lambda c: c.explore_count)
+
+    def q(c):
+        if c.outcome is not None:
+            return c.outcome[c.player]
+        return c.total_reward / c.explore_count
+
+    def prior(c):
+        return priors.get(c.action, c.prior) if priors is not None else c.prior
+
+    sqrt_n = np.sqrt(root.explore_count)
+    best_score = q(best) + uct_c * prior(best) * sqrt_n / (1 + best.explore_count)
+    kept = {}
+    for c in children:
+        n = c.explore_count
+        if c is best or n == 0 or c.outcome is not None:
+            kept[c.action] = n
+            continue
+        gap = best_score - q(c)
+        if gap <= 0:
+            # Its value alone matches the best child's score: every visit was earned.
+            kept[c.action] = n
+            continue
+        # Score stays below best_score while uct_c * P * sqrt(N) / (1 + k) < gap,
+        # i.e. for k >= floor(uct_c * P * sqrt(N) / gap).
+        k = min(n, int(np.floor(uct_c * prior(c) * sqrt_n / gap)))
+        kept[c.action] = 0 if k <= 1 else k
+    return kept
+
+
 def create_mali_ba_value_network(observation_shape, num_players, aux_heads=False,
                                  route_head=False):
     """Creates the value network.

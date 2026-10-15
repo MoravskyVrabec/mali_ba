@@ -554,7 +554,7 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
     os.environ.setdefault("TF_NUM_INTRAOP_THREADS", "1")
     os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
     import tensorflow as tf
-    from mali_ba.training_utils import AlphaZeroEvaluator, create_mali_ba_policy_network, create_mali_ba_value_network, POLICY_LEGAL_MARK
+    from mali_ba.training_utils import AlphaZeroEvaluator, create_mali_ba_policy_network, create_mali_ba_value_network, POLICY_LEGAL_MARK, prune_policy_target
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     tf.config.set_visible_devices([], 'GPU')
@@ -666,6 +666,8 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
         _n_fast_moves = 0
         _n_full_moves = 0
         _n_route_exempt = 0
+        _prune_raw = 0      # recorded-target visits before / after policy-target pruning
+        _prune_kept = 0
         _total_sims = 0
         # Wall-clock buckets. External sampling profilers disagreed with production
         # by more than an order of magnitude, so the actor now measures itself.
@@ -1217,9 +1219,24 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
             # as "value target only" and masks the row out of the policy loss.
             mcts_policy_full = np.zeros(game.num_distinct_actions())
             if record_policy:
-                for child in root.children:
-                     if 0 <= child.action < game.num_distinct_actions():
-                        mcts_policy_full[child.action] = child.explore_count
+                # Policy-target pruning (2026-10-14) strips visits the search spent on
+                # noise and exploration from the recorded target only; the move above
+                # was already chosen from the raw counts.
+                if getattr(args, 'policy_target_pruning', False):
+                    # Judge against the prior before Dirichlet noise: with the noised
+                    # prior PUCT visits are already in balance and almost nothing is
+                    # pruned (search_sharpness on D025: 99% kept, entropy unchanged);
+                    # the clean prior removes the visits only the noise justified
+                    # (96% kept, target entropy 91% -> 89% of uniform at uct_c 2.0).
+                    _clean_prior = dict(evaluator.prior(state)) if bot._dirichlet_noise else None
+                    _target_visits = prune_policy_target(root, bot.uct_c, priors=_clean_prior)
+                    _prune_raw += sum(c.explore_count for c in root.children)
+                    _prune_kept += sum(_target_visits.values())
+                else:
+                    _target_visits = {c.action: c.explore_count for c in root.children}
+                for _act, _n in _target_visits.items():
+                    if 0 <= _act < game.num_distinct_actions():
+                        mcts_policy_full[_act] = _n
                 if np.sum(mcts_policy_full) > 0:
                     mcts_policy_full /= np.sum(mcts_policy_full)
                 else: # Fallback for states with no visits (should be rare)
@@ -1289,6 +1306,10 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
             f"sims={_total_sims} "
             f"nn_evals={_cache_misses} cache_hits={_cache_hits} "
             f"hit_rate={_cache_rate:.3f} route_exempt={_n_route_exempt}")
+        if _prune_raw:
+            log(LogLevel.INFO,
+                f"Actor {actor_id}, Game {episode_num}: POLICY TARGET PRUNING — kept "
+                f"{_prune_kept}/{_prune_raw} recorded visits ({100.0 * _prune_kept / _prune_raw:.1f}%)")
 
         # Close replay file before classification (must be closed before rename on some OSes)
         if replay_file:
@@ -1912,6 +1933,7 @@ def main(args):
             'playout_cap_fast_sims':               getattr(args, 'playout_cap_fast_sims', 40),
             'playout_cap_exempt_route_decisions':  getattr(args, 'playout_cap_exempt_route_decisions', True),
             'playout_cap_fast_greedy':             getattr(args, 'playout_cap_fast_greedy', False),
+            'policy_target_pruning':               getattr(args, 'policy_target_pruning', False),
             'selfplay_temp_moves':                 getattr(args, 'selfplay_temp_moves', 150),
             'selfplay_temp_early':                 getattr(args, 'selfplay_temp_early', 1.0),
             'selfplay_temp_late':                  getattr(args, 'selfplay_temp_late', 0.5),
@@ -2787,6 +2809,7 @@ if __name__ == "__main__":
         parsed_args.uct_c = _ini_float('uct_c', 2.0)
     # Self-play move selection (ini only). Defaults are the pre-2026-10-12 behaviour.
     parsed_args.playout_cap_fast_greedy = _ini_bool('playout_cap_fast_greedy', False)
+    parsed_args.policy_target_pruning = _ini_bool('policy_target_pruning', False)
     parsed_args.selfplay_temp_moves = _ini_int('selfplay_temp_moves', 150)
     parsed_args.selfplay_temp_early = _ini_float('selfplay_temp_early', 1.0)
     parsed_args.selfplay_temp_late = _ini_float('selfplay_temp_late', 0.5)
@@ -2882,6 +2905,7 @@ if __name__ == "__main__":
     else:
         print(f'  playout cap                 : off')
     print(f'  uct_c                       : {parsed_args.uct_c:g}')
+    print(f'  policy-target pruning       : {"on" if parsed_args.policy_target_pruning else "off"}')
     print(f'  self-play move choice       : temperature {parsed_args.selfplay_temp_early:g} for '
           f'{parsed_args.selfplay_temp_moves} moves, then {parsed_args.selfplay_temp_late:g} '
           f'(<= 0 = greedy); fast moves '
