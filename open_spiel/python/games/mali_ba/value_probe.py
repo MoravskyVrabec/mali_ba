@@ -21,7 +21,16 @@ What it reports, per checkpoint
   MSE        mean squared error against the final returns (time penalties still to
              come are not included, identically for every checkpoint).
   calib      average prediction minus average final return, over all players.
-  vs first   top-pick difference from the first checkpoint listed, with a 95% interval
+  balanced   top-pick averaged over seats, each seat scored only on the positions it
+             went on to win. Counts seats that finish best in at least 5% of positions.
+             Plain top-pick rewards guessing the seat that usually wins: with seat 0
+             winning ~60% of strong-play games, a head that mostly backs seat 0 scores
+             well without judging positions any better (2026-10-15: D027 backed seat 0
+             in 82% of v2 positions; D028, trained on self-play where seats 0 and 1
+             were even, scored 4 points lower on top-pick but best on balanced).
+  seat picks how often each seat is rated best, against how often it finishes best.
+  vs first   top-pick and balanced differences from the first checkpoint listed, each
+             with a 95% interval
              from resampling whole GAMES (positions within a game are correlated, so
              treating them as independent would overstate the precision).
 
@@ -63,13 +72,16 @@ def main():
         X = X.reshape((-1, *meta.get("obs_shape", (192, 15, 15))))
     rets, game, to_end, ending = d["returns"], d["game"], d["moves_to_end"], d["ending"]
     leader = rets.argmax(1)
+    n_seats = rets.shape[1]
+    # Seats that finish best often enough for a per-seat score to mean something.
+    bal_seats = [s for s in range(n_seats) if np.mean(leader == s) >= 0.05]
     shape = X.shape[1:]
     n_games = len(np.unique(game))
     print(f"{len(X):,} positions from {n_games} games "
           f"(recorded {meta.get('created')}, agents {', '.join(os.path.basename(a) for a in meta.get('agents', []))}; "
           f"endings: " + ", ".join(f"{k} {int((ending == k).sum())}" for k in ("timeout", "timbuktu", "rare_goods")) + ")")
 
-    correct, rows = {}, []
+    correct, picks, rows = {}, {}, []
     for spec in args.agents:
         name = os.path.basename(spec).replace(".weights.h5", "")
         path = spec.replace("weights.h5", "_value.weights.h5")
@@ -82,7 +94,9 @@ def main():
                                for i in range(0, len(X), 512)])
         ok = pred.argmax(1) == leader
         correct[name] = ok
+        picks[name] = pred.argmax(1)
         r = {"name": name, "top": 100 * ok.mean(),
+             "bal": 100 * np.mean([ok[leader == s].mean() for s in bal_seats]),
              "mse": float(np.mean((pred - rets) ** 2)),
              "calib": float(pred.mean() - rets.mean())}
         for label, lo, hi in BUCKETS:
@@ -96,7 +110,7 @@ def main():
     if not rows:
         return
     hdr = (f"\n{'checkpoint':<28} {'top-pick':>8} " + " ".join(f"{b[0]:>18}" for b in BUCKETS)
-           + f" {'timeout':>8} {'Timbuktu':>9} {'rare':>6} {'MSE':>7} {'calib':>7}")
+           + f" {'timeout':>8} {'Timbuktu':>9} {'rare':>6} {'MSE':>7} {'calib':>7} {'balanced':>9}")
     print(hdr)
 
     def pct(v, w):
@@ -104,26 +118,43 @@ def main():
     for r in rows:
         print(f"{r['name']:<28} {r['top']:7.1f}% " + " ".join(pct(r[b[0]], 17) for b in BUCKETS)
               + f" {pct(r['timeout'], 7)} {pct(r['timbuktu'], 8)} {pct(r['rare_goods'], 5)}"
-              f" {r['mse']:7.4f} {r['calib']:+7.3f}")
+              f" {r['mse']:7.4f} {r['calib']:+7.3f} {r['bal']:8.1f}%")
+    print(f"\nSeat picks (balanced uses seats {', '.join(str(s) for s in bal_seats)}): "
+          + "finishes best " + "  ".join(f"seat {s} {np.mean(leader == s):5.1%}" for s in range(n_seats)))
+    for r in rows:
+        pk = picks[r['name']]
+        print(f"  {r['name']:<28} rated best   "
+              + "  ".join(f"seat {s} {np.mean(pk == s):5.1%}" for s in range(n_seats)))
 
     if len(rows) > 1:
         base = rows[0]["name"]
         games = np.unique(game)
         idx_by_game = [np.where(game == g)[0] for g in games]
         rng = np.random.RandomState(0)
-        print(f"\nTop-pick difference vs {base} (95% interval from resampling games):")
+        print(f"\nDifference vs {base} (95% interval from resampling games):")
+        print(f"  {'':<28} {'top-pick':^36} {'balanced':^36}")
+        per_n = np.array([len(ix) for ix in idx_by_game])
+        # Per game and seat: positions the seat went on to win (the balanced denominators).
+        seat_n = np.array([[np.sum(leader[ix] == s) for s in bal_seats] for ix in idx_by_game])
+        def verdict(lo, hi):
+            return "better" if lo > 0 else "worse" if hi < 0 else "no clear difference"
         for r in rows[1:]:
             diff = correct[r["name"]].astype(float) - correct[base].astype(float)
             per_game = np.array([diff[ix].sum() for ix in idx_by_game])
-            per_n = np.array([len(ix) for ix in idx_by_game])
-            boots = []
+            seat_d = np.array([[diff[ix][leader[ix] == s].sum() for s in bal_seats]
+                               for ix in idx_by_game])
+            boots, bboots = [], []
             for _ in range(args.bootstrap):
                 s = rng.randint(0, len(games), len(games))
                 boots.append(100 * per_game[s].sum() / per_n[s].sum())
+                n_s = seat_n[s].sum(0)
+                bboots.append(100 * np.mean(seat_d[s].sum(0) / np.maximum(n_s, 1)))
             lo, hi = np.percentile(boots, [2.5, 97.5])
+            blo, bhi = np.percentile(bboots, [2.5, 97.5])
             est = 100 * diff.mean()
-            verdict = "better" if lo > 0 else "worse" if hi < 0 else "no clear difference"
-            print(f"  {r['name']:<28} {est:+5.1f} points  [{lo:+.1f}, {hi:+.1f}]  {verdict}")
+            best = r["bal"] - rows[0]["bal"]
+            print(f"  {r['name']:<28} {est:+5.1f} [{lo:+5.1f}, {hi:+5.1f}] {verdict(lo, hi):<19}"
+                  f" {best:+5.1f} [{blo:+5.1f}, {bhi:+5.1f}] {verdict(blo, bhi)}")
     print("\nThe winner here is the best final return (the timeout leader counts). "
           "A probe measures judgement on positions, not play: head-to-head decides strength.")
 
