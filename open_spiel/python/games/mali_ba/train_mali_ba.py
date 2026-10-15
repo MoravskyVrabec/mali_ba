@@ -2524,7 +2524,9 @@ if __name__ == "__main__":
     parser.add_argument('--update_workers_every', type=int, default=50, help="This argument is now effectively unused as weights are updated via a queue.")
     parser.add_argument('--learning_rate', type=float, default=0.0002, help="Initial learning rate for the schedule.")
     parser.add_argument('--random_seed', type=int, default=None)
-    parser.add_argument('--uct_c', type=float, default=2.0)
+    parser.add_argument('--uct_c', type=float, default=None,
+                        help="PUCT exploration constant for self-play search. Overrides ini "
+                             "(uct_c, default 2.0).")
     parser.add_argument('--max_simulations', type=int, default=500)
     parser.add_argument('--sim_tier1_sims', type=int, default=None,
                         help="MCTS simulations for play-phase moves before sim_tier2_start. Overrides ini.")
@@ -2781,6 +2783,8 @@ if __name__ == "__main__":
         parsed_args.playout_cap_exempt_route_decisions = _ini_bool('playout_cap_exempt_route_decisions', True)
     else:
         parsed_args.playout_cap_exempt_route_decisions = bool(parsed_args.playout_cap_exempt_route_decisions)
+    if parsed_args.uct_c is None:
+        parsed_args.uct_c = _ini_float('uct_c', 2.0)
     # Self-play move selection (ini only). Defaults are the pre-2026-10-12 behaviour.
     parsed_args.playout_cap_fast_greedy = _ini_bool('playout_cap_fast_greedy', False)
     parsed_args.selfplay_temp_moves = _ini_int('selfplay_temp_moves', 150)
@@ -2877,6 +2881,7 @@ if __name__ == "__main__":
               f'decisions {"exempt" if parsed_args.playout_cap_exempt_route_decisions else "capped"}')
     else:
         print(f'  playout cap                 : off')
+    print(f'  uct_c                       : {parsed_args.uct_c:g}')
     print(f'  self-play move choice       : temperature {parsed_args.selfplay_temp_early:g} for '
           f'{parsed_args.selfplay_temp_moves} moves, then {parsed_args.selfplay_temp_late:g} '
           f'(<= 0 = greedy); fast moves '
