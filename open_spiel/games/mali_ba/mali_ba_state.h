@@ -67,6 +67,9 @@ namespace mali_ba
         std::vector<double> cumulative_returns_;
         bool is_terminal_;
         std::array<bool, 3> last_was_income_;
+        int final_round_end_seat_;
+        int game_end_triggered_by_player_;
+        std::string game_end_reason_;
     };
 
     class Mali_BaState : public State {
@@ -144,6 +147,10 @@ namespace mali_ba
         int GetWinningPlayer() const { return winning_player_; }
         bool IsNearWin(int rare_region_threshold) const;
         int GetGameEndTriggeringPlayer() const { return game_end_triggered_by_player_; }
+        // True while the round is being finished after a win condition was met.
+        bool IsFinalRound() const { return final_round_end_seat_ >= 0 && !is_terminal_; }
+        // Seat that makes the first main-play move (rules main_play_start_seat).
+        Player MainPlayStartSeat() const;
         std::string GetScoreBreakdownString() const;
         // Every player's current score, as the game would score it if it ended now.
         std::vector<double> ComputeScores(bool log_breakdown = false) const;
@@ -237,6 +244,10 @@ namespace mali_ba
         mutable absl::optional<LegalActionsResult> cached_legal_actions_result_;
         std::vector<StateSnapshot> undo_stack_;
         mutable int game_end_triggered_by_player_ = -1;  // -1 means not set
+        // end_game_finish_round: once a win condition is met, the seat whose turn
+        // ends the game when it comes round again (the round's start seat); -1 while
+        // no end has been triggered.
+        mutable int final_round_end_seat_ = -1;
         mutable int winning_player_ = -1;                // -1 means tie/not set
         mutable std::string game_end_reason_;            // Description of how game ended
 

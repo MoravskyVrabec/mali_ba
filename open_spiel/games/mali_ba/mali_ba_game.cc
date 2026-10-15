@@ -482,6 +482,12 @@ namespace open_spiel
             rules_.starting_rare_goods_by_seat = ParseSeatCounts(
                 "starting_rare_goods_by_seat", seat_list_param("starting_rare_goods_by_seat"));
             rules_.serpentine_token_placement = get_effective_param("serpentine_token_placement", false);
+            rules_.end_game_finish_round = get_effective_param("end_game_finish_round", false);
+            rules_.main_play_start_seat = get_effective_param("main_play_start_seat", 0);
+            if (rules_.main_play_start_seat < 0 || rules_.main_play_start_seat >= num_players_) {
+                SpielFatalError(absl::StrCat("main_play_start_seat = ", rules_.main_play_start_seat,
+                                             " but seats run from 0 to ", num_players_ - 1));
+            }
             // But if we found no coastal cities, switch to false
             if (coastal_hexes_.empty()) { rules_.end_game_cond_timbuktu_to_coast = false; }
             // rules_.timbuktu_city_id = get_effective_param("timbuktu_city_id", 15);
@@ -513,6 +519,8 @@ namespace open_spiel
                 LOG_INFO("  starting_common_goods_per_seat: ", rules_.starting_common_goods_per_seat);
             }
             LOG_INFO("  serpentine_token_placement: ", rules_.serpentine_token_placement ? "true" : "false");
+            LOG_INFO("  end_game_finish_round: ", rules_.end_game_finish_round ? "true" : "false",
+                     " | main_play_start_seat: ", rules_.main_play_start_seat);
             LOG_DEBUG("  - Non-City Center Limit Divisor: ", rules_.non_city_center_limit_divisor);
             LOG_DEBUG("  - Min Hexes for Trade Route: ", rules_.min_hexes_for_trade_route);
             LOG_DEBUG("  - Max Shared Centers Between Routes: ", rules_.max_shared_centers_between_routes);

@@ -110,6 +110,7 @@ void init_pyspiel_games_mali_ba(::pybind11::module &m) {
         .def("get_game_end_reason", &mali_ba::Mali_BaState::GetGameEndReason)
         .def("get_winning_player", &mali_ba::Mali_BaState::GetWinningPlayer)
         .def("get_game_end_triggering_player", &mali_ba::Mali_BaState::GetGameEndTriggeringPlayer)
+        .def("is_final_round", &mali_ba::Mali_BaState::IsFinalRound)
         .def("get_score_breakdown_string", &mali_ba::Mali_BaState::GetScoreBreakdownString)
         .def("current_phase", &mali_ba::Mali_BaState::CurrentPhase)
         .def("is_near_win", &mali_ba::Mali_BaState::IsNearWin,

@@ -402,6 +402,14 @@ namespace open_spiel
       // starting_common_goods_per_seat.
       std::vector<int> starting_common_goods_by_seat;
       std::vector<int> starting_rare_goods_by_seat;
+      // End of game (2026-10-15): when a player meets a win condition, finish the
+      // current round so every player has had the same number of turns, then score.
+      // The round starts at main_play_start_seat. Off = the game ends at once (the
+      // original rule).
+      bool end_game_finish_round = false;
+      // Which seat makes the first main-play move after token placement (0 = the
+      // first player, as before). Turn order continues from it: 2 gives 2,0,1,...
+      int main_play_start_seat = 0;
       // Setup: tokens are placed in serpentine order (0,1,2,2,1,0,0,1,2) instead of
       // round-robin (0,1,2,0,1,2,...), so seat 0 does not get first pick every round.
       bool serpentine_token_placement = false;

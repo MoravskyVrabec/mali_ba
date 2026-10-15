@@ -186,6 +186,7 @@ namespace open_spiel
               // on a state that has had actions applied to it directly (the GUI's state),
               // because that state pushes its own snapshots as normal.
               game_end_triggered_by_player_(other.game_end_triggered_by_player_),
+              final_round_end_seat_(other.final_round_end_seat_),
               winning_player_(other.winning_player_),
               game_end_reason_(other.game_end_reason_),
               meeples_in_hand_(other.meeples_in_hand_),
@@ -552,7 +553,7 @@ namespace open_spiel
             if (all_players_placed_tokens) {
                 LOG_INFO("✅ All tokens placed - transitioning to PLAY phase");
                 SetCurrentPhase(Phase::kPlay);
-                current_player_id_ = 0;
+                current_player_id_ = MainPlayStartSeat();
                 current_player_color_ = GetPlayerColor(current_player_id_);
             }
         }
@@ -939,7 +940,7 @@ namespace open_spiel
 
                     if (all_placed) {
                         current_phase_ = Phase::kPlay;
-                        current_player_id_ = 0;
+                        current_player_id_ = MainPlayStartSeat();
                         current_player_color_ = GetPlayerColor(current_player_id_);
                     } else if (GetGame()->GetRules().serpentine_token_placement) {
                         // Serpentine: rounds alternate direction, 0,1,2 then 2,1,0 ...
@@ -1188,7 +1189,10 @@ namespace open_spiel
                 moves_history_,
                 cumulative_returns_,
                 is_terminal_,
-                last_was_income_
+                last_was_income_,
+                final_round_end_seat_,
+                game_end_triggered_by_player_,
+                game_end_reason_
             });
         }
 
@@ -1209,6 +1213,9 @@ namespace open_spiel
             moves_history_ = last_state.moves_history_;
             cumulative_returns_ = last_state.cumulative_returns_;
             last_was_income_ = last_state.last_was_income_;
+            final_round_end_seat_ = last_state.final_round_end_seat_;
+            game_end_triggered_by_player_ = last_state.game_end_triggered_by_player_;
+            game_end_reason_ = last_state.game_end_reason_;
 
             undo_stack_.pop_back();
 
@@ -1251,11 +1258,33 @@ namespace open_spiel
             }
 
             // Player-driven win conditions.
-            if (MaybeFinalReturns().has_value()) {
+            if (!GetGame()->GetRules().end_game_finish_round) {
+                if (MaybeFinalReturns().has_value()) {
+                    const_cast<Mali_BaState*>(this)->is_terminal_ = true;
+                    return true;
+                }
+                return false;
+            }
+
+            // end_game_finish_round: a met win condition starts the final round (the
+            // first trigger, with its player and reason, is kept; MaybeFinalReturns is
+            // not called again, since it would overwrite them). The game ends when the
+            // round's start seat is due to begin a new turn, so every player has had the
+            // same number of turns; final scoring then decides the winner as before.
+            if (final_round_end_seat_ < 0) {
+                if (!MaybeFinalReturns().has_value()) return false;
+                final_round_end_seat_ = MainPlayStartSeat();
+            }
+            if (current_phase_ == Phase::kPlay && current_player_id_ == final_round_end_seat_) {
                 const_cast<Mali_BaState*>(this)->is_terminal_ = true;
                 return true;
             }
             return false;
+        }
+
+        Player Mali_BaState::MainPlayStartSeat() const {
+            const int seat = GetGame()->GetRules().main_play_start_seat;
+            return (seat >= 0 && seat < NumPlayers()) ? seat : 0;
         }
 
         absl::optional<std::vector<double>> Mali_BaState::MaybeFinalReturns() const {

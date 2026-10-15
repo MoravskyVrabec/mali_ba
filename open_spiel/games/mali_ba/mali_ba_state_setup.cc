@@ -476,7 +476,7 @@ void Mali_BaState::ResetToInitialState() {
     
     // Move to play phase after setup
     current_phase_ = Phase::kPlay;
-    current_player_id_ = 0;  // Start with player 0
+    current_player_id_ = MainPlayStartSeat();  // rules main_play_start_seat (default 0)
     current_player_color_ = GetPlayerColor(current_player_id_);
     
     ClearCaches();
@@ -501,6 +501,13 @@ void Mali_BaState::ClearAllState() {
     }
     
     next_route_id_ = 1;
+
+    // End-of-game bookkeeping, so a reset game can end again.
+    game_end_triggered_by_player_ = -1;
+    final_round_end_seat_ = -1;
+    winning_player_ = -1;
+    game_end_reason_.clear();
+    is_terminal_ = false;
     ClearCaches();
 }
 

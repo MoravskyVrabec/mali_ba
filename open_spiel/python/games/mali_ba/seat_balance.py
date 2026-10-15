@@ -11,13 +11,20 @@ is never touched. Every setup uses the same --seed, so all of them are played on
 same boards, which makes the comparisons tighter.
 
 Setups are given as COMMON/RARE count lists, one entry per seat from seat 0, or
-"base" for the ini as it is:
+"base" for the ini's own goods, optionally followed by other [Rules] settings after
+semicolons:
     base            the current rules (0,1,2 common, no rare as of 2026-10-15)
     0,2,1/0,0,1     seat 1 two common goods; seat 2 one common and one rare
+    "base;end_game_finish_round=true;main_play_start_seat=2"
+                    the ini's goods, finish the round, seat 2 moves first
+(Quote a setup that contains semicolons, or the shell splits it.) In file names
+end_game_finish_round becomes fr and main_play_start_seat ss, e.g. base_fr1_ss2.
 
-Needs the engine build with per-seat starting goods (commit 40449f0, 2026-10-15); an
-older build ignores the lists and silently plays the base game. Each run's ab_eval
-log shows "starting goods by seat ... common X | rare Y" when they are applied.
+Needs the engine build with per-seat starting goods (commit 40449f0) and, for the
+end-of-game and start-seat rules, the build after it (2026-10-15); an older build
+ignores them and silently plays the base game. Each run's ab_eval log shows
+"starting goods by seat ... common X | rare Y" and "end_game_finish_round: ... |
+main_play_start_seat: ..." as applied, and the summary warns on a mismatch.
 
 Usage (from this directory, with the trainer's environment):
     python seat_balance.py base 0,2,1/0,0,1 0,1,1/0,0,1
@@ -39,10 +46,25 @@ OUT_DIR = os.path.join(HERE, "seat_tests")
 RE_SEATS = re.compile(r"wins by seat \(turn-order effect\):\s+(.*)")
 RE_PLAYED = re.compile(r"games played\s*:\s*(\d+)\s+\(decided (\d+), timed out (\d+)\)")
 RE_APPLIED = re.compile(r"starting goods by seat .*?common ([\d,]*) \| rare ([\d,]*)")
+RE_RULES = re.compile(r"end_game_finish_round: (true|false) \| main_play_start_seat: (\d+)")
+SHORT = {"end_game_finish_round": "fr", "main_play_start_seat": "ss"}
+
+
+def split_setup(spec):
+    """'0,2,1/0,0,1;key=v;...' -> ('0,2,1/0,0,1', {'key': 'v', ...})."""
+    head, *rest = [p.strip() for p in spec.split(";") if p.strip()]
+    extras = {}
+    for kv in rest:
+        if "=" not in kv:
+            sys.exit(f"setup '{spec}': '{kv}' is not key=value")
+        k, v = (x.strip() for x in kv.split("=", 1))
+        extras[k] = v
+    return head, extras
 
 
 def parse_setup(spec):
-    """'base' -> None; '0,2,1/0,0,1' -> ('0,2,1', '0,0,1')."""
+    """Goods part: 'base' -> None; '0,2,1/0,0,1' -> ('0,2,1', '0,0,1')."""
+    spec, _ = split_setup(spec)
     if spec == "base":
         return None
     parts = spec.split("/")
@@ -55,17 +77,22 @@ def parse_setup(spec):
 
 
 def tag_for(spec):
-    if spec == "base":
-        return "base"
-    common, rare = parse_setup(spec)
-    return f"c{common.replace(',', '')}_r{rare.replace(',', '')}"
+    goods = parse_setup(spec)
+    tag = "base" if goods is None else f"c{goods[0].replace(',', '')}_r{goods[1].replace(',', '')}"
+    for k, v in split_setup(spec)[1].items():
+        short = SHORT.get(k, "".join(w[0] for w in k.split("_")))
+        val = {"true": "1", "false": "0"}.get(v.lower(), v.replace(",", ""))
+        tag += f"_{short}{val}"
+    return tag
 
 
 def write_ini(base_ini, spec, path):
-    """Copy base_ini with the two seat lists replaced (or appended to [Rules])."""
-    common, rare = parse_setup(spec)
+    """Copy base_ini with the setup's [Rules] settings replaced (or appended)."""
+    goods = parse_setup(spec)
     lines = open(base_ini).read().splitlines()
-    want = {"starting_common_goods_by_seat": common, "starting_rare_goods_by_seat": rare}
+    want = dict(split_setup(spec)[1])
+    if goods is not None:
+        want["starting_common_goods_by_seat"], want["starting_rare_goods_by_seat"] = goods
     seen = set()
     out, section, rules_end = [], None, None
     for line in lines:
@@ -104,12 +131,14 @@ def read_result(log_path):
         return None
     text = open(log_path, errors="replace").read()
     seats, played, applied = RE_SEATS.search(text), RE_PLAYED.search(text), RE_APPLIED.search(text)
+    rules = RE_RULES.search(text)
     if not (seats and played):
         return None
     wins = [int(v) for v in re.findall(r"seat \d+: (\d+)", seats.group(1))]
     return dict(wins=wins, games=int(played.group(1)), decided=int(played.group(2)),
                 timeouts=int(played.group(3)),
-                applied=(applied.group(1), applied.group(2)) if applied else None)
+                applied=(applied.group(1), applied.group(2)) if applied else None,
+                rules=(rules.group(1), rules.group(2)) if rules else None)
 
 
 def main():
@@ -146,7 +175,7 @@ def main():
             print(f"{spec}: already done ({os.path.relpath(log, HERE)}), skipping")
             continue
         ini = args.config_file
-        if spec != "base":
+        if tag != "base":
             ini = os.path.join(OUT_DIR, f"mali_ba_seats_{tag}.ini")
             write_ini(args.config_file, spec, ini)
         cmd = [sys.executable, os.path.join(HERE, "ab_eval.py"),
@@ -169,12 +198,13 @@ def main():
     print("\nSeat balance (share of decided games won by each seat, 95% interval; fair = 33.3% each)")
     print(f"agent {os.path.basename(args.agent)}, {args.sims} sims, uct_c {args.uct_c:g}, "
           f"guidance {args.heuristic_weight:g}, seed {args.seed}\n")
-    print(f"{'setup':<16} {'decided':>8} {'t/o':>4}   " + "   ".join(f"{'seat ' + str(s):^22}" for s in range(3))
+    w = max(16, max(len(spec) for spec, _, _ in runs))
+    print(f"{'setup':<{w}} {'decided':>8} {'t/o':>4}   " + "   ".join(f"{'seat ' + str(s):^22}" for s in range(3))
           + f"   {'spread':>6}")
     for spec, tag, log in runs:
         r = read_result(log)
         if r is None:
-            print(f"{spec:<16} (no result yet: {os.path.relpath(log, HERE)})")
+            print(f"{spec:<{w}} (no result yet: {os.path.relpath(log, HERE)})")
             continue
         n = r["decided"]
         cells, shares = [], []
@@ -182,15 +212,25 @@ def main():
             lo, hi = wilson(k, n)
             shares.append(k / n if n else float("nan"))
             cells.append(f"{100 * k / n:5.1f}% [{100 * lo:4.1f},{100 * hi:4.1f}]" if n else "n/a")
-        print(f"{spec:<16} {n:8d} {r['timeouts']:4d}   " + "   ".join(f"{c:^22}" for c in cells)
+        print(f"{spec:<{w}} {n:8d} {r['timeouts']:4d}   " + "   ".join(f"{c:^22}" for c in cells)
               + f"   {100 * (max(shares) - min(shares)):5.1f}")
-        if spec != "base":
+        extras = split_setup(spec)[1]
+        if extras.keys() & SHORT.keys():
+            if r["rules"] is None:
+                print(f"{'':<{w}} WARNING: the log has no 'end_game_finish_round' line; the engine "
+                      f"may be an older build that ignores the new rules")
+            else:
+                got = {"end_game_finish_round": r["rules"][0], "main_play_start_seat": r["rules"][1]}
+                for k in extras.keys() & SHORT.keys():
+                    if extras[k].lower() != got[k]:
+                        print(f"{'':<{w}} WARNING: the engine applied {k} = {got[k]}, not {extras[k]}")
+        if parse_setup(spec) is not None:
             want = parse_setup(spec)
             if r["applied"] is None:
-                print(f"{'':<16} WARNING: the log has no 'starting goods by seat' line; the engine "
+                print(f"{'':<{w}} WARNING: the log has no 'starting goods by seat' line; the engine "
                       f"may be an older build that ignores the lists")
             elif tuple(r["applied"]) != want:
-                print(f"{'':<16} WARNING: the engine applied {r['applied']}, not {want}")
+                print(f"{'':<{w}} WARNING: the engine applied {r['applied']}, not {want}")
     print("\nspread = largest minus smallest seat share, in points (0 = perfectly even).")
 
 
