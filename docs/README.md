@@ -36,6 +36,9 @@ older ones are history.
 - [HANDOFF-20261013.html](handoffs/HANDOFF-20261013.html): runs D020-D023 (the
   D019-D021 plateau, the self-play move-selection fix, D023 beating D021, seat 0
   dominance), and the D024 plan (guidance 0.10, rare-goods actors off).
+- [HANDOFF-20261016.html](handoffs/HANDOFF-20261016.html): runs D024-D030 (uct_c 1.0
+  and policy-target pruning, the seat 2 investigation and its cause, mover-relative
+  training, the laptop settings bug) and the D031 self-play teacher plan.
 
 ## notes/ (past design notes and write-ups)
 Records of specific changes, investigations and plans, kept for context:

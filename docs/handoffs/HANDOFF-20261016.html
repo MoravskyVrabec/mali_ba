@@ -1,0 +1,335 @@
+<title>Mali-Ba Training Handoff</title>
+<meta name="description" content="Runs D024 to D030: sharper search targets, the seat 2 investigation, mover-relative training, the laptop settings bug, and the D031 teacher plan.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #f5f4ef;
+  --surface: #ffffff;
+  --ink: #1c2130;
+  --muted: #586073;
+  --rule: #dad8cf;
+  --accent: #2c3c8c;
+  --accent-soft: #e5e8f5;
+  --ochre: #9a5a0e;
+  --ochre-soft: #f6ead8;
+  --good: #2a7349;
+  --good-soft: #e1f0e6;
+  --bad: #a23626;
+  --code-bg: #eeede6;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11131a;
+    --surface: #191c26;
+    --ink: #e5e6eb;
+    --muted: #9aa0b1;
+    --rule: #2c3041;
+    --accent: #a5b4ff;
+    --accent-soft: #222949;
+    --ochre: #e3a54e;
+    --ochre-soft: #33281a;
+    --good: #72c695;
+    --good-soft: #1b3326;
+    --bad: #e7846f;
+    --code-bg: #20232f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11131a;
+  --surface: #191c26;
+  --ink: #e5e6eb;
+  --muted: #9aa0b1;
+  --rule: #2c3041;
+  --accent: #a5b4ff;
+  --accent-soft: #222949;
+  --ochre: #e3a54e;
+  --ochre-soft: #33281a;
+  --good: #72c695;
+  --good-soft: #1b3326;
+  --bad: #e7846f;
+  --code-bg: #20232f;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.6 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding-inline: 16px;
+}
+main { max-width: 880px; margin: 0 auto; padding-block: 40px 80px; }
+h1, h2, h3 { line-height: 1.25; text-wrap: balance; font-weight: 600; }
+h1 { font-size: 2rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+h2 { font-size: 1.4rem; margin: 56px 0 14px; padding-top: 18px; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.08rem; margin: 30px 0 8px; }
+p, li { max-width: 68ch; }
+p { margin: 0 0 14px; }
+ul, ol { padding-left: 22px; margin: 0 0 14px; }
+li { margin-bottom: 6px; }
+a { color: var(--accent); }
+code, .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre {
+  background: var(--code-bg); padding: 12px 14px; border-radius: 6px; overflow-x: auto;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.82rem; line-height: 1.5; margin: 0 0 16px;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+.eyebrow { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.sub { color: var(--muted); margin: 0 0 24px; }
+.status {
+  background: var(--surface); border: 1px solid var(--rule); border-left: 4px solid var(--good);
+  border-radius: 6px; padding: 16px 18px; margin: 24px 0;
+}
+.status h3 { margin: 0 0 8px; }
+.status p:last-child, .status ul:last-child { margin-bottom: 0; }
+.note {
+  background: var(--ochre-soft); border-left: 4px solid var(--ochre); border-radius: 6px;
+  padding: 12px 16px; margin: 18px 0;
+}
+.note p:last-child { margin-bottom: 0; }
+nav.toc { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 18px; }
+nav.toc ol { margin: 0; columns: 2; column-gap: 32px; }
+nav.toc li { margin-bottom: 4px; break-inside: avoid; }
+.table-wrap { overflow-x: auto; margin: 0 0 18px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; background: var(--surface); }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 0.8rem; letter-spacing: 0.03em; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.hl td { background: var(--accent-soft); }
+.timeline { list-style: none; padding: 0; margin: 0; border-left: 2px solid var(--rule); }
+.timeline > li { position: relative; padding: 0 0 22px 22px; max-width: none; }
+.timeline > li::before {
+  content: ""; position: absolute; left: -7px; top: 6px; width: 12px; height: 12px;
+  border-radius: 50%; background: var(--surface); border: 2px solid var(--accent);
+}
+.timeline .when { font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; color: var(--muted); }
+.timeline h3 { margin: 2px 0 6px; }
+.tag { display: inline-block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 10px; margin-left: 6px; vertical-align: 2px; }
+.tag.good { background: var(--good-soft); color: var(--good); }
+.tag.bad { background: var(--ochre-soft); color: var(--ochre); }
+.steps { counter-reset: step; list-style: none; padding: 0; }
+.steps > li { counter-increment: step; position: relative; padding: 14px 16px 6px 54px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; max-width: none; }
+.steps > li::before {
+  content: counter(step); position: absolute; left: 16px; top: 14px; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent); color: var(--surface); font-weight: 600; font-size: 0.85rem; display: grid; place-items: center;
+}
+.steps h3 { margin: 0 0 6px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 0.92rem; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
+@media (max-width: 560px) {
+  nav.toc ol { columns: 1; }
+  h1 { font-size: 1.6rem; }
+  .kv { grid-template-columns: 1fr; }
+  .kv dt { margin-top: 6px; }
+}
+</style>
+
+<main>
+  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 16 October 2026</div>
+  <h1>Sharper targets, the seat 2 investigation, and mover-relative training</h1>
+  <p class="sub">Runs D024 through D030 and the plan for D031, 13–16 October. Written so either of us can pick this up cold. It continues <a href="HANDOFF-20261013.html">the 13 October handoff</a> (the D019–D021 plateau, the self-play fix, D023). The source of truth is the <code>mali_ba</code> repo (branch <code>main</code>); <code>open_spiel</code> only holds symlinks.</p>
+
+  <div class="status">
+    <h3>Status on 16 October</h3>
+    <ul>
+      <li><strong>Strongest model in head-to-head play: D028</strong> (absolute seats). It beat D027 0.380 [0.338, 0.423] at guidance 0.10. D027 beat D025 0.406 after uct_c 1.0 and policy-target pruning sharpened the search targets.</li>
+      <li><strong>Seat 2's collapse was learned, not a property of the game.</strong> Under every rule change tried, seat 2 won about 2% of network-guided games; with the heuristic alone it won its share. The network's input and value outputs are per absolute seat, so it learned separate play per seat, and seat 2 fell into a loop where its positions taught nothing (<a href="#seat2">section 3</a>).</li>
+      <li><strong>Mover-relative training fixed the seat balance</strong> (ini <code>mover_relative_obs</code>): D029–D030 self-play wins by seat were 33.5 / 32.6 / 33.8% over 16,000 games. <strong>But D030 is much weaker than D028</strong>: 0.105 against it. The runs started from D028 in a view where its search falls apart, and spent ~21,000 games climbing out (<a href="#mover">section 4</a>).</li>
+      <li><strong>Next run, D031: a self-play teacher.</strong> D028, searched with its own seat shown as player 0 (which plays every seat well), plays the self-play games; a mover-relative network learns from them (ini <code>selfplay_teacher_weights</code>, <a href="#plan">section 6</a>).</li>
+      <li><strong>Fixed: the laptop never received <code>guidance_blend_normalized</code></strong> (D021–D029), so it played with about half heuristic instead of the configured 10%. The desktop now sends every simple setting, and the laptop prints the important ones at startup.</li>
+    </ul>
+  </div>
+
+  <nav class="toc" aria-label="Contents">
+    <ol>
+      <li><a href="#runs">Runs D024 to D030</a></li>
+      <li><a href="#targets">Sharper search targets</a></li>
+      <li><a href="#seat2">The seat 2 investigation</a></li>
+      <li><a href="#mover">Mover-relative training</a></li>
+      <li><a href="#built">What was built or changed</a></li>
+      <li><a href="#plan">The plan: D031 with a teacher</a></li>
+      <li><a href="#settings">Settings in effect (D031)</a></li>
+      <li><a href="#tools">Tools and commands</a></li>
+      <li><a href="#misled">Things that misled us</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="runs">1. Runs D024 to D030</h2>
+  <p>Head-to-head: 300 simulations per move, normalized guidance blend, A in one seat and B in two. The share is A's wins out of decided games; 0.333 is equal strength. "rel" marks an agent evaluated mover-relative.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Run</th><th>From</th><th>The change</th><th class="n">Games</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>D024</td><td>D023</td><td>Guidance a steady 0.10 (was 0.38); rare-goods actors off</td><td class="n">15,000</td><td>Even with D023 at guidance 0.10 (0.320); value probe level</td></tr>
+        <tr><td>D025</td><td>D024</td><td>No change</td><td class="n">10,000</td><td>Beat D024 0.376 [0.334, 0.420], borderline</td></tr>
+        <tr><td>D026</td><td>D025</td><td>uct_c 1.0 (halted to add pruning)</td><td class="n">partial</td><td>Not evaluated</td></tr>
+        <tr class="hl"><td>D027</td><td>D026</td><td>uct_c 1.0, policy-target pruning (clean prior), interval 10 s</td><td class="n">7,000</td><td><strong>Beat D025 0.406</strong> [0.364, 0.450]</td></tr>
+        <tr class="hl"><td>D028</td><td>D027</td><td>No change, 20,000 games</td><td class="n">20,000</td><td><strong>Beat D027</strong> 0.380 [0.338, 0.423] at 0.10; 0.368 (lean) at 0.55</td></tr>
+        <tr><td>D029</td><td>D028</td><td>Mover-relative, fresh buffer (min 10,000), interval 8 s; laptop on the old blend</td><td class="n">5,300</td><td>Halted to fix the laptop; seats 32.9 / 32.3 / 34.7%</td></tr>
+        <tr><td>D030</td><td>D029</td><td>Mover-relative, D029's buffer, interval 10 s; laptop fixed</td><td class="n">16,000</td><td>Seats 33.5 / 32.6 / 33.8%; <strong>lost to D028 0.105</strong> [0.080, 0.135]</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="targets">2. Sharper search targets</h2>
+  <ul>
+    <li><strong>Guidance doesn't control target sharpness.</strong> <code>search_sharpness.py</code> on D023: visit entropy 91 / 90 / 90 / 87% of uniform at guidance 0 / 0.10 / 0.38 / 1.0. The heuristic alone is barely sharper than the network (prior 89% vs 95%).</li>
+    <li><strong>uct_c does.</strong> At guidance 0.10: uct_c 2.0 / 1.0 / 0.5 / 0.25 gives 90 / 86 / 79 / 70%. The median Q gap between moves is only ~0.02, so the exploration term dominates at 2.0.</li>
+    <li><strong>uct_c 1.0 plays as well as 2.0</strong> (D024 against itself: 0.335), so it became the default (ini <code>uct_c</code>).</li>
+    <li><strong>Policy-target pruning (KataGo) did nothing in its standard form</strong>: plain PUCT is already in balance, so 99% of visits counted as earned. Judged against the prior <em>before</em> Dirichlet noise it removes the noise-only visits: ~96% kept, target entropy 91 → 89% (uct_c 2.0) and 87 → 85% (1.0).</li>
+    <li>Together (D027): target H fell from ~1.57 to 1.43 within the run; D028 continued to 1.27. D027 beat D025 0.406, the third-largest gain in the project.</li>
+    <li>The value probe gained a <strong>balanced</strong> score (top-pick averaged over seats). Plain top-pick rewards backing the seat that usually wins: D027 rated seat 0 best in 82% of v2 positions and beat D028 on top-pick, while D028 was level or better on balanced.</li>
+  </ul>
+
+  <h2 id="seat2">3. The seat 2 investigation</h2>
+  <p>In self-play and head-to-heads seat 2's share fell run by run: 30% (D017) → 26% (D021) → 11% (D023) → 3% (D027). Every test below plays the same model in all three seats (<code>seat_balance.py</code>, 504 games, same boards) unless noted.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Test</th><th class="n">Seat 0</th><th class="n">Seat 1</th><th class="n">Seat 2</th></tr></thead>
+      <tbody>
+        <tr><td>D028, current rules (goods 0 / 1 / 2 common)</td><td class="n">40.3%</td><td class="n">58.1%</td><td class="n">1.6%</td></tr>
+        <tr><td>Goods 0 / 2 common / 1 common + 1 rare</td><td class="n">37.6%</td><td class="n">61.2%</td><td class="n">1.2%</td></tr>
+        <tr><td>Goods 0 / 2 common / 2 common + 2 rare</td><td class="n">32.0%</td><td class="n">63.3%</td><td class="n">4.7%</td></tr>
+        <tr><td>Goods 0 / 1 common / 6 common + 3 rare</td><td class="n">39.3%</td><td class="n">43.6%</td><td class="n">17.1%</td></tr>
+        <tr><td>Finish the round + seat 2 moves first</td><td class="n">28.3%</td><td class="n">69.5%</td><td class="n">2.3%</td></tr>
+        <tr><td>Heuristic only, no network (71 decided of 504)</td><td class="n">23</td><td class="n">19</td><td class="n">29</td></tr>
+        <tr><td>D017 (old network) vs D028: D017's wins from seat 0 / 1 / 2</td><td class="n">20 / 167</td><td class="n">14 / 167</td><td class="n">1 / 167</td></tr>
+        <tr class="hl"><td>D028 shown its seat as player 0 for the whole search, vs plain D028</td><td class="n">76 / 167</td><td class="n">58 / 167</td><td class="n">40 / 167</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li><strong>Log analysis (D025):</strong> seat 2 kept pace for ~8 turns, then fell 4–5 of its own turns behind by its second route; its share of centers built in cities was 43% against 70% for seat 0. Starting goods help only a little (17% with a huge head start), and turn order or end timing not at all.</li>
+    <li><strong>The heuristic alone is fair</strong>, so the mechanics are symmetric enough. The observation layout, value outputs and value targets were checked: all symmetric by seat.</li>
+    <li><strong>The relabel test settled it.</strong> Shown seat-2 positions as player 0 (one fixed relabel per search), unchanged D028 won 24% from seat 2 instead of 1.6%. The network can play the game; it never learned to play it <em>as player 2</em>. It also plays seat 1 better natively (58%) than with its seat-0 skill (35%): separate skills per seat.</li>
+    <li><strong>Cause:</strong> the observation has per-seat plane blocks and seat-to-move planes, and the value head outputs per seat. Once seat 2 fell behind, its positions' values were all ~−0.7, its search targets carried no information, and its play stopped improving while seats 0 and 1 kept learning.</li>
+    <li>The rule options built for this (<code>starting_*_goods_by_seat</code>, <code>end_game_finish_round</code>, <code>main_play_start_seat</code>) stay available, off. Revisit them only after a seat-neutral network shows a real imbalance.</li>
+  </ul>
+
+  <h2 id="mover">4. Mover-relative training</h2>
+  <ul>
+    <li><strong>What it is</strong> (ini <code>mover_relative_obs</code>): every position is shown from its player to move's point of view: that player in slot 0, the next player in slot 1, the one after in slot 2 (turn order kept), with value outputs in the same slots. Search, stored positions, training targets (value and route) and the actors' value checks all use it. Positions where player 0 moves are unchanged. One skill serves every seat, and every game trains it from all three viewpoints.</li>
+    <li><strong>It works for balance:</strong> D029–D030 self-play seats 33.5 / 32.6 / 33.8% over 16,000 games; seat 2 takes a full share of both win types.</li>
+    <li><strong>It cost strength, because of the starting point.</strong> D029 began from D028's weights. Searched per position, D028's seat-specific value head reads the searching player from a different slot at different nodes, and the search falls apart (the first relabel test: 11 of 476 games). So D029's self-play started near 2% strength, and D030 had climbed only to 10.5% against D028 (12 / 30 / 9 of 167 from seats 0 / 1 / 2).</li>
+    <li>Self-play under mover-relative training was also less decisive: ~54% natural wins and ~410-move games, against D028's 91% and ~233.</li>
+    <li><strong>D030 was trained correctly</strong> (checked): stored positions all have the seat-to-move marker in slot 0, and each slot's score correlates with the same slot's value target. D030 scores about the same on the value probe in either view (60.5 vs 59.4% balanced) because it learned to ignore the now-constant seat marker and judge each slot by its own data.</li>
+    <li><strong>The v2 value probe is biased against mover-relative models</strong>: its positions come from D028 vs D027 games, where seat 2 finishes best in 2.5% of positions. A fair probe needs positions from games involving the new models (record a v3 set).</li>
+  </ul>
+
+  <h2 id="built">5. What was built or changed</h2>
+  <h3>Training</h3>
+  <ul>
+    <li><code>uct_c</code> in the ini, 1.0 (cb1b608). <code>--uct_c</code> still overrides.</li>
+    <li>Policy-target pruning against the clean prior, ini <code>policy_target_pruning</code> (8ac1645). Each game logs "POLICY TARGET PRUNING - kept X/Y".</li>
+    <li><code>min_buffer_to_train</code>: positions the buffer must hold before training starts, for runs that begin with an empty buffer (b716449). 10,000 ≈ 30 minutes.</li>
+    <li>Mover-relative training, ini <code>mover_relative_obs</code> (68fe1e4): <code>training_utils.MoverRelative</code>, evaluator <code>mover_relative</code>, buffers tagged with their <code>obs_frame</code>; a run refuses a buffer in the other frame and moves it aside.</li>
+    <li>Self-play teacher, ini <code>selfplay_teacher_weights</code> (0f60b7b). See <a href="#plan">section 6</a>.</li>
+    <li><strong>Remote workers now receive every simple setting</strong> (3db7433), except paths, hosts and ports, and machine-local ones (actor counts, inference, GPU, replay collection). The desktop logs the count; the laptop prints the guidance weight and blend, the observation frame, pruning, temperatures and aux targets at startup.</li>
+  </ul>
+  <h3>Engine (C++, rebuilt on both machines)</h3>
+  <ul>
+    <li><code>[Rules] starting_common_goods_by_seat</code> / <code>starting_rare_goods_by_seat</code>: per-seat lists, up to 5 seats (40449f0). The ini sets 0,1,2 / 0,0,0, today's game draw for draw.</li>
+    <li><code>end_game_finish_round</code> (finish the round after a win trigger; final score decides) and <code>main_play_start_seat</code> (06c8dd7). Both off. Python binding <code>is_final_round()</code>.</li>
+  </ul>
+  <h3>Evaluation and analysis</h3>
+  <ul>
+    <li><code>seat_balance.py</code>: compare rule setups with one model in every seat; setups like <code>0,2,1/0,0,1</code> or <code>"base;end_game_finish_round=true"</code>; <code>--mover_relative</code>.</li>
+    <li>ab_eval: <code>--seat_relabel_a/b/c</code> (diagnostic: the agent's own seat as player 0 for the whole search) and <code>--mover_relative_a/b/c</code> (for mover-relative networks).</li>
+    <li>value_probe: <strong>balanced</strong> score and seat picks; <code>agent.weights.h5:rel</code> for mover-relative networks.</li>
+    <li>search_sharpness: <code>--guidance_blend_normalized</code>, <code>--dirichlet</code>, <code>--mover_relative</code>, pruned-target columns.</li>
+    <li>analyze_log: column widths follow the largest number (5-digit game counts); the win-rate chart legend at lower left; the search-cost chart shows simulations per move.</li>
+  </ul>
+
+  <h2 id="plan">6. The plan: D031 with a teacher</h2>
+  <ol class="steps">
+    <li>
+      <h3>How the teacher run works</h3>
+      <ul>
+        <li><code>selfplay_teacher_weights = mali_ba_agent_vD028.weights.h5</code> (already set). The trainer loads D028, publishes its weights to the actors once and never sends its own; it still trains and saves the network given by <code>--load_model_path</code>.</li>
+        <li>Actors search with D028, with the searching player's seat shown as player 0 for the whole search (the mode that won 45 / 35 / 24% from seats 0 / 1 / 2 against D028). Positions are stored mover-relative, which at the root is exactly the teacher's frame, so the trainer side is unchanged.</li>
+        <li>Remote workers get the setting and the teacher's weights with every job. The startup printout says <code>self-play network : fixed teacher …</code>; the main log no longer shows "Learner updated to latest weights" (nothing is sent).</li>
+        <li>Smoke test: 8 teacher games, all natural wins at 152–369 moves; the trainer trained and saved weights that moved from its starting point, not the teacher's.</li>
+      </ul>
+    </li>
+    <li>
+      <h3>Starting D031</h3>
+      <ul>
+        <li><strong>Network to train:</strong> D028's weights are the better start. In the stored mover-relative frame, D028's outputs at the root are the teacher's own (its seat-0 skill), so it starts matched to its targets; its seat-specific value bias gets trained out by symmetric data. D030 is the alternative (already seat-neutral but much weaker).</li>
+        <li><strong>Buffer:</strong> start empty; D030's buffer holds weak self-play games. Rename it (e.g. <code>mali_ba_buffer.D030-weak.pkl.gz</code>); <code>min_buffer_to_train = 10000</code> waits ~30 minutes.</li>
+        <li>Desktop and laptop can both run: the laptop gets the teacher with its jobs. Rsync <code>train_mali_ba.py</code>, <code>training_utils.py</code>, <code>remote_actors.py</code>, <code>mali_ba.ini</code> first and check its printout.</li>
+        <li>Interval: 10 s desktop-only, 8 s with the laptop.</li>
+      </ul>
+    </li>
+    <li>
+      <h3>What to watch, and afterwards</h3>
+      <ul>
+        <li>Self-play should look like D028's: decisive (most games natural wins, ~200–300 moves), seats roughly even (teacher play with the relabel is much closer to fair than plain D028).</li>
+        <li>Training metrics: POLICY FIT gap falling (the network learning the teacher's targets), value calibration.</li>
+        <li>After the run: D031 (mover-relative) vs D028 and vs D030, and record a v3 probe set from one of them. If D031 is close to D028, set <code>selfplay_teacher_weights</code> back to empty and continue with normal self-play from D031.</li>
+      </ul>
+    </li>
+    <li>
+      <h3>Still open</h3>
+      <ul>
+        <li>Make the normalized blend the evaluator's default; <code>policy_probe.py</code> still uses the old blend (TODO).</li>
+        <li>Training interval with the laptop (8 s) vs desktop only (10 s); fast budget 40 → 80; FPU for big route decisions; Gumbel targets (TODO).</li>
+        <li>The desktop's memory tests are still not done; no memory errors since 11 October.</li>
+      </ul>
+    </li>
+  </ol>
+
+  <h2 id="settings">7. Settings in effect (D031)</h2>
+  <dl class="kv">
+    <dt>Self-play</dt><dd>fixed teacher <code>mali_ba_agent_vD028.weights.h5</code>, per-search seat relabel (<code>selfplay_teacher_weights</code>)</dd>
+    <dt>Network trained</dt><dd>from <code>--load_model_path</code> (D028 recommended), mover-relative (<code>mover_relative_obs = true</code>)</dd>
+    <dt>Buffer</dt><dd>fresh; <code>min_buffer_to_train = 10000</code>; 100k positions; pools near-win 0.20, rare goods 0.35, Timbuktu 0.30, timeout 0.15; 1 in 32 kept</dd>
+    <dt>Search</dt><dd>uct_c 1.0; playout cap (25% full, else 40 sims, fast moves greedy); policy-target pruning on</dd>
+    <dt>Guidance</dt><dd>0.10 steady, normalized blend</dd>
+    <dt>Move selection</dt><dd>temperature 1.0 for 30 moves, then 0.25</dd>
+    <dt>Training</dt><dd>every 10 s (8 s with the laptop), batch 128, aux targets on</dd>
+    <dt>Rules</dt><dd>original: goods 0,1,2 / 0,0,0; finish-the-round off; start seat 0; serpentine placement; random token placement</dd>
+  </dl>
+
+  <h2 id="tools">8. Tools and commands</h2>
+  <p>Run from <code>mali_ba/open_spiel/python/games/mali_ba</code> with the <code>mali_ba</code> environment. Name every log after its agents and settings (<code>_h010</code>, <code>_u10</code>, <code>rel</code>).</p>
+  <pre><code># D031 (mover-relative) vs D028 (absolute), recording a v3 probe set
+python ab_eval.py --agent_a mali_ba_agent_vD031.weights.h5 --agent_b mali_ba_agent_vD028.weights.h5 \
+    --mover_relative_a --uct_c 1.0 --guidance_blend_normalized --heuristic_weight 0.10 \
+    --sims 300 --games 501 --workers 64 \
+    --record_positions /media/robp/UD/Projects/open_spiel/value_probe_set_v3.npz \
+    --config_file $PWD/mali_ba.ini 2>&1 | tee ab_D031rel_vs_D028_h010.log
+
+# value probe (":rel" for mover-relative networks)
+python value_probe.py --positions /media/robp/UD/Projects/open_spiel/value_probe_set_v3.npz \
+    --agents mali_ba_agent_vD031.weights.h5:rel mali_ba_agent_vD028.weights.h5
+
+# seat balance, one model in all three seats
+python seat_balance.py --agent mali_ba_agent_vD031.weights.h5 --mover_relative base
+
+# diagnostic: an absolute-seat network with its own seat as player 0 for the whole search
+python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_agent_vD028.weights.h5 \
+    --seat_relabel_a --uct_c 1.0 --guidance_blend_normalized --heuristic_weight 0.10 ...</code></pre>
+  <ul>
+    <li><strong>Which flag for which network:</strong> D028 and earlier are absolute (no flag). D029, D030 and D031 on are mover-relative: <code>--mover_relative_X</code> in ab_eval, <code>:rel</code> in value_probe, <code>--mover_relative</code> in seat_balance and search_sharpness. The wrong mode silently gives a much weaker agent.</li>
+    <li>Scripts outside the trainer need <code>PYTHONPATH</code> with the build's <code>python</code> directory and <code>open_spiel/python/games</code>, run from the <code>open_spiel</code> tree.</li>
+  </ul>
+
+  <h2 id="misled">9. Things that misled us (don't repeat)</h2>
+  <ul>
+    <li><strong>ab_eval's progress line counts agents, not seats.</strong> <code>[A 167 B 172 C 149 …]</code> with the same model in all three seats is always near a third each. Seat shares are in the "wins by seat" line and the seat_balance summary. We briefly read "34 / 35 / 30%" as a seat fix that wasn't there.</li>
+    <li><strong>A setting the desktop didn't send fell back silently on the laptop.</strong> The laptop played D021–D029 with the old guidance blend (~half heuristic): its self-play won 62% vs 29% (D029), 99% vs 92% (D027). Check the laptop's startup printout against the desktop's every run.</li>
+    <li><strong>Per-position relabelling of an absolute-seat network breaks its search</strong> (the searching player sits in different slots at different nodes). Relabel once per search for diagnostics; train mover-relative networks per position.</li>
+    <li><strong>Starting a new input view from an old network's weights isn't a warm start</strong> if the old network searches badly in that view: its self-play games teach little. Use a teacher that plays well (D031).</li>
+    <li><strong>Plain value-probe top-pick rewards seat priors.</strong> Use balanced, with the seat picks; and probe with positions from games like the ones the model plays.</li>
+    <li><strong>Seat balance depends on the model and its strength</strong>, not only the rules. It looked fair in near-random play and collapsed as play improved; seat 0 vs 1 flipped between models.</li>
+    <li><strong>Overwriting a probe file:</strong> <code>--record_positions</code> to an existing name replaces it (v2 now holds the guidance-0.10 game's positions). Use a new name each time.</li>
+  </ul>
+
+  <footer>Prepared 16 October 2026. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest code commit <code>0f60b7b</code>.</footer>
+</main>

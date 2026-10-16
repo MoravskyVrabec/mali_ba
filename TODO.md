@@ -194,6 +194,24 @@ to them; games ending (median 246 moves at 300 sims) before seat 2's advantages
 pay off. First checks: analyze_placements.py by seat, per-seat goods over the game
 in the eval logs. Re-check after D022, whose self-play is closer to strong play.
 
+**Resolved 2026-10-15 (cause found; see docs/handoffs/HANDOFF-20261016.html):** the
+collapse was learned, not structural. Rule changes barely helped (seat 2 at 1-17%
+under extra starting goods, 2.3% with finish-the-round + seat 2 moving first); the
+heuristic alone gives seat 2 its share; and D028 shown seat-2 positions as player 0
+(once per search) won 24% from seat 2 instead of 1.6%. The absolute per-seat
+observation and value outputs let the network learn separate play per seat.
+Mover-relative training (mover_relative_obs) gives even seats (D030 self-play
+33.5 / 32.6 / 33.8%) but D029/D030 lost strength (D030 vs D028: 0.105) because they
+started from D028 searched per position. Next: **D031 with the self-play teacher**
+(selfplay_teacher_weights = D028, per-search relabel), training from D028's weights
+on a fresh buffer. Then:
+- Evaluate D031 mover-relative vs D028 and D030; record value_probe_set_v3.npz from
+  one of those games (v2 is biased against mover-relative models).
+- If D031 is near D028: teacher off, continue normal self-play from D031.
+- Once a seat-neutral network is strong, re-measure seat balance with
+  seat_balance.py --mover_relative; only then consider the rule options built for
+  this (starting_*_goods_by_seat, end_game_finish_round, main_play_start_seat).
+
 ## Smaller items (carried over from the 2026-09-30 list, 2026-10-08)
 
 - **Make the normalized guidance blend the default (added 2026-10-13; not while a
