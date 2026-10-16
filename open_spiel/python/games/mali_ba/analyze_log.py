@@ -452,6 +452,13 @@ def pct(n, d):
     return f'{100*n/d:.1f}%' if d > 0 else 'n/a'
 
 
+def num_width(*values, minimum=4):
+    """Print width for numbers up to max(values): at least `minimum` digits, more for
+    runs past 9,999 games or training steps, so ranges stay in columns."""
+    vals = [abs(int(v)) for v in values if v is not None]
+    return max(minimum, len(str(max(vals)))) if vals else minimum
+
+
 def section(title):
     print(f'\n{"─" * 60}')
     print(f'  {title}')
@@ -710,9 +717,10 @@ def print_search_cost(search_costs, window=25):
     remote = [c for c in search_costs if c['is_remote']]
     local  = [c for c in search_costs if not c['is_remote']]
     if remote and local:
-        print(f'  Local  : {len(local):4d} games, {sum(c["sims"] for c in local)/len(local):,.0f} sims/game, '
+        cw = num_width(len(local), len(remote))
+        print(f'  Local  : {len(local):{cw}d} games, {sum(c["sims"] for c in local)/len(local):,.0f} sims/game, '
               f'hit rate {sum(c["hit_rate"] for c in local)/len(local):.3f}')
-        print(f'  Remote : {len(remote):4d} games, {sum(c["sims"] for c in remote)/len(remote):,.0f} sims/game, '
+        print(f'  Remote : {len(remote):{cw}d} games, {sum(c["sims"] for c in remote)/len(remote):,.0f} sims/game, '
               f'hit rate {sum(c["hit_rate"] for c in remote)/len(remote):.3f}')
 
 
@@ -1030,7 +1038,8 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
                     b_player_wins[i] += 1
         for p in sorted(b_player_games):
             wr = b_player_wins[p] / b_player_games[p] if b_player_games[p] else 0
-            print(f'    Player {p}: {b_player_wins[p]:4d} wins / {b_player_games[p]:4d} games = '
+            bw = num_width(*b_player_games.values())
+            print(f'    Player {p}: {b_player_wins[p]:{bw}d} wins / {b_player_games[p]:{bw}d} games = '
                   f'{pct(b_player_wins[p], b_player_games[p]):6s}  {bar(wr, 0.5)}')
 
     # ── Self-play search cost ────────────────────────────────────────────
@@ -1049,13 +1058,14 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
     # Local vs remote breakdown
     local_mcts  = [g for g in mcts_games if not g['is_remote']]
     remote_mcts = [g for g in mcts_games if g['is_remote']]
+    lw = num_width(len(local_mcts), len(remote_mcts))
     for label, subset in [('Local', local_mcts), ('Remote', remote_mcts)]:
         if subset:
             s_wins = sum(1 for g in subset if g['is_win'])
             s_max  = sum(1 for g in subset if not g['is_win'])
             n = len(subset)
-            print(f'    {label:6s} actors:  win-condition {s_wins:4d} / {n:4d} = {pct(s_wins, n)}  '
-                  f'max-length {s_max:4d} / {n:4d} = {pct(s_max, n)}')
+            print(f'    {label:6s} actors:  win-condition {s_wins:{lw}d} / {n:{lw}d} = {pct(s_wins, n)}  '
+                  f'max-length {s_max:{lw}d} / {n:{lw}d} = {pct(s_max, n)}')
 
     reason_counts = Counter(g['reason'] for g in wins)
     if reason_counts:
@@ -1119,6 +1129,7 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
         n_buckets = min(10, len(wins))
         bucket_size = len(wins) / n_buckets
         max_len_val = max(g['moves'] for g in wins)
+        gw = num_width(max(g['game_n'] for g in wins))
         for b in range(n_buckets):
             lo = int(b * bucket_size)
             hi = int((b + 1) * bucket_size)
@@ -1128,7 +1139,7 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
             avg = sum(g['moves'] for g in chunk) / len(chunk)
             lo_g = wins[lo]['game_n']
             hi_g = wins[hi - 1]['game_n']
-            print(f'    games {lo_g:4d}-{hi_g:4d}: {avg:6.0f} moves  {bar(avg, max_len_val)}')
+            print(f'    games {lo_g:{gw}d}-{hi_g:{gw}d}: {avg:6.0f} moves  {bar(avg, max_len_val)}')
     elif wins:
         print(f'  (need 8+ natural-finish games for length trend; have {len(wins)})')
 
@@ -1163,8 +1174,9 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
                 reason_part = ''
             rows.append((i, wr, reason_part))
         max_reason_w = max(len(r[2]) for r in rows) if rows else 0
+        gw = num_width(max((r[0] for r in rows), default=0) + window)
         for i, wr, reason_part in rows:
-            print(f'    games {i+1:4d}-{i+window:4d}: {pct(wr*window, window):6s}  '
+            print(f'    games {i+1:{gw}d}-{i+window:{gw}d}: {pct(wr*window, window):6s}  '
                   f'{reason_part:{max_reason_w}s}  {bar(wr, 0.5)}')
 
     # ── Player win balance (MCTS) ─────────────────────────────────────────────
@@ -1180,7 +1192,8 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
                 player_wins[i] += 1
     for p in sorted(player_games):
         wr = player_wins[p] / player_games[p] if player_games[p] else 0
-        print(f'  Player {p}: {player_wins[p]:4d} wins / {player_games[p]:4d} games = '
+        print(f'  Player {p}: {player_wins[p]:{num_width(*player_games)}d} wins / '
+              f'{player_games[p]:{num_width(*player_games)}d} games = '
               f'{pct(player_wins[p], player_games[p]):6s}  {bar(wr, 0.5)}')
 
     # ── Actor contributions ───────────────────────────────────────────────────
@@ -1192,8 +1205,10 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
     n_remote_games = sum(actor_counts[a] for a in remote_actors)
     n_local_actors = len(local_actors)
     n_remote_actors = len(remote_actors)
-    print(f'  Local  actors: {n_local_actors:3d} actors   {n_local_games:4d} games')
-    print(f'  Remote actors: {n_remote_actors:3d} actors   {n_remote_games:4d} games')
+    aw = num_width(n_local_actors, n_remote_actors, minimum=3)
+    gw = num_width(n_local_games, n_remote_games)
+    print(f'  Local  actors: {n_local_actors:{aw}d} actors   {n_local_games:{gw}d} games')
+    print(f'  Remote actors: {n_remote_actors:{aw}d} actors   {n_remote_games:{gw}d} games')
 
     # ── Loss trend ────────────────────────────────────────────────────────────
     section('LOSS TREND')
@@ -1206,8 +1221,10 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
         print(f'  Training steps : {n}')
         print(f'  Loss range     : {min(all_vals):.4f} – {max(all_vals):.4f}')
         print()
-        print(f'  {"Steps":>12}  {"Avg loss":>8}  {"Min":>7}  {"Max":>7}')
-        print(f'  {"─"*12}  {"─"*8}  {"─"*7}  {"─"*7}  ')
+        sw = num_width(n)
+        hw = 6 + 2 * sw + 2          # width of "steps LO-HI:"
+        print(f'  {"Steps":>{hw}}  {"Avg loss":>8}  {"Min":>7}  {"Max":>7}')
+        print(f'  {"─"*hw}  {"─"*8}  {"─"*7}  {"─"*7}  ')
         first_bucket_avg = last_bucket_avg = None
         for b in range(n_buckets):
             lo = b * bucket_size
@@ -1218,7 +1235,7 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
                 first_bucket_avg = avg
             last_bucket_avg = avg
             trend = bar(1.0 / avg if avg > 0 else 0, 0.35, 20)
-            print(f'  steps {lo:4d}-{hi-1:4d}:  {avg:8.4f}  {min(bucket_vals):7.4f}  '
+            print(f'  steps {lo:{sw}d}-{hi-1:{sw}d}:  {avg:8.4f}  {min(bucket_vals):7.4f}  '
                   f'{max(bucket_vals):7.4f}  {trend}')
 
         # linear regression for slope
@@ -1243,7 +1260,8 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
         for game_n, total, policy, value in losses:
             bucket = min(int(game_n / (max_game + 1) * n_buckets), n_buckets - 1)
             buckets[bucket].append((total, policy, value))
-        print(f'  {"Game range":>14}  {"Total":>7}  {"Policy":>7}  {"Value":>7}')
+        gw = num_width(max_game)
+        print(f'  {"Game range":>{6 + 2 * gw + 2}}  {"Total":>7}  {"Policy":>7}  {"Value":>7}')
         bucket_size = (max_game + 1) // n_buckets or 1
         for b in range(n_buckets):
             if b not in buckets:
@@ -1255,7 +1273,7 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
             lo = b * bucket_size
             hi = (b + 1) * bucket_size - 1
             trend = bar(1.0 / avg_total if avg_total > 0 else 0, 0.4, 20)
-            print(f'  games {lo:4d}-{hi:4d}:  {avg_total:7.4f}   {avg_policy:7.4f}   '
+            print(f'  games {lo:{gw}d}-{hi:{gw}d}:  {avg_total:7.4f}   {avg_policy:7.4f}   '
                   f'{avg_value:7.4f}  {trend}')
         first_loss = losses[0][1]
         last_loss = losses[-1][1]
@@ -1276,7 +1294,8 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
         n = len(aux)
         nb = min(10, n)
         size = n // nb or 1
-        print(f'  {"Steps":>14}  {"win-type acc":>12}  {"majority":>8}  {"gain":>6}  '
+        sw = num_width(n)
+        print(f'  {"Steps":>{6 + 2 * sw + 1}}  {"win-type acc":>12}  {"majority":>8}  {"gain":>6}  '
               f'{"type CE":>7}  {"moves MSE":>9}  {"rows":>5}')
         for b in range(nb):
             lo = b * size
@@ -1288,7 +1307,7 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
             ce = sum(c[0] for c in ch) / k
             mse = sum(c[3] for c in ch) / k
             rows = sum(c[4] / c[5] for c in ch) / k
-            print(f'  steps {lo:4d}-{hi-1:4d}  {acc:12.2f}  {maj:8.2f}  {acc-maj:+6.2f}  '
+            print(f'  steps {lo:{sw}d}-{hi-1:{sw}d}  {acc:12.2f}  {maj:8.2f}  {acc-maj:+6.2f}  '
                   f'{ce:7.3f}  {mse:9.4f}  {rows:5.0%}')
 
     pfit = data.get('policy_fit', [])
@@ -1304,7 +1323,8 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
         n = len(pfit)
         nb = min(10, n)
         size = n // nb or 1
-        print(f'  {"Steps":>14}  {"target H":>8}  {"CE legal":>8}  {"gap":>6}  '
+        sw = num_width(n)
+        print(f'  {"Steps":>{6 + 2 * sw + 1}}  {"target H":>8}  {"CE legal":>8}  {"gap":>6}  '
               f'{"CE all":>7}  {"off legal":>9}  {"masked":>6}')
         for b in range(nb):
             lo = b * size
@@ -1312,7 +1332,7 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
             ch = pfit[lo:hi]
             k = len(ch)
             avg = lambda i: sum(c[i] for c in ch) / k
-            print(f'  steps {lo:4d}-{hi-1:4d}  {avg(0):8.3f}  {avg(1):8.3f}  {avg(2):6.3f}  '
+            print(f'  steps {lo:{sw}d}-{hi-1:{sw}d}  {avg(0):8.3f}  {avg(1):8.3f}  {avg(2):6.3f}  '
                   f'{avg(3):7.3f}  {avg(4):8.1f}%  {"on" if ch[-1][5] else "off":>6}')
 
     route = data.get('aux_route', [])
@@ -1326,7 +1346,8 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
         n = len(route)
         nb = min(10, n)
         size = n // nb or 1
-        print(f'  {"Steps":>14}  {"MSE":>7}  {"always-mean":>11}  {"ratio":>6}  '
+        sw = num_width(n)
+        print(f'  {"Steps":>{6 + 2 * sw + 1}}  {"MSE":>7}  {"always-mean":>11}  {"ratio":>6}  '
               f'{"abs err (steps)":>15}  {"rows":>5}')
         for b in range(nb):
             lo = b * size
@@ -1337,7 +1358,7 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
             base = sum(c[1] for c in ch) / k
             mae = sum(c[2] for c in ch) / k
             rows = sum(c[3] / c[4] for c in ch) / k
-            print(f'  steps {lo:4d}-{hi-1:4d}  {mse:7.4f}  {base:11.4f}  '
+            print(f'  steps {lo:{sw}d}-{hi-1:{sw}d}  {mse:7.4f}  {base:11.4f}  '
                   f'{(mse / base if base else float("nan")):6.2f}  {mae:15.2f}  {rows:5.0%}')
 
     # ── MCTS action preferences ───────────────────────────────────────────────
@@ -1430,7 +1451,8 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
                 hi_g = hi
                 # Bar: more negative = longer games; scale so -0.25 = empty, 0 = full
                 scaled = max(0.0, min(1.0, (avg + 0.25) / 0.25))
-                print(f'    games {lo_g:4d}-{hi_g:4d}: {avg:7.4f}  {bar(scaled, 1.0)}')
+                gw = num_width(len(games_with_rewards))
+                print(f'    games {lo_g:{gw}d}-{hi_g:{gw}d}: {avg:7.4f}  {bar(scaled, 1.0)}')
 
     # ── Early terminations ────────────────────────────────────────────────────
     early_terminations = data.get('early_terminations', [])
@@ -1521,8 +1543,9 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
         done_keys = sorted((k for k in no_kill_games if k in game_lookup),
                            key=lambda k: (game_lookup[k].get('time') or datetime.min, k[1]))[-shown:]
         print(f'  Last {len(done_keys)} completed no-kill games:')
-        print(f'  {"Game":>5}  {"":1}{"Actor":>6}  {"Moves":>5}  {"Outcome":<18}  Would-have-terminated events')
-        print(f'  {"─"*5}  {"─"*7}  {"─"*5}  {"─"*18}  {"─"*44}')
+        nw = num_width(*(k[1] for k in done_keys), minimum=5)
+        print(f'  {"Game":>{nw}}  {"":1}{"Actor":>6}  {"Moves":>5}  {"Outcome":<18}  Would-have-terminated events')
+        print(f'  {"─"*nw}  {"─"*7}  {"─"*5}  {"─"*18}  {"─"*44}')
         for key in done_keys:
             actor, game_n = key
             g = game_lookup[key]
@@ -1536,11 +1559,12 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
                 )
             else:
                 event_str = '(no kill rules fired)'
-            print(f'  {game_n:5d}  {remote_tag}{actor:6d}  {moves:>5}  {outcome:<18}  {event_str}')
+            print(f'  {game_n:{nw}d}  {remote_tag}{actor:6d}  {moves:>5}  {outcome:<18}  {event_str}')
 
     # ── Recent games summary ──────────────────────────────────────────────────
     recd_games = 45
     section(f'LAST {recd_games} RECEIVED GAMES')
+    gnw = num_width(*(g['game_num'] for g in received[-recd_games:]))
     for g in received[-recd_games:]:
         r = g['returns']
         max_r = max(r)
@@ -1557,7 +1581,7 @@ def report(data, window=50, show_early_terminations=False, batch_size_arg=None):
         remote_tag = 'R' if actor is not None and actor >= 100000 else ' '
         ir = g.get('inter_rewards')
         ir_str = f'  inter: [{",".join(f"{v:.3f}" for v in ir)}]' if ir else ''
-        print(f'{flag}{phase_tag}{remote_tag} Gm#{g["game_num"]:4d}  {g["length"]:3d} mvs  '
+        print(f'{flag}{phase_tag}{remote_tag} Gm#{g["game_num"]:{gnw}d}  {g["length"]:3d} mvs  '
               f'{actor_str:<8}  winner: {w_str}  returns: {[f"{v:.1f}" for v in r]}{ir_str}')
 
 
