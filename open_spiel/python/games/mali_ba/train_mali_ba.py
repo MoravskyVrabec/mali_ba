@@ -121,8 +121,31 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
     else:
         log(LogLevel.WARN, f"Can't find load model file. Starting from scratch.")
     
-    # ### <<< CORRECTION 1: Put a TUPLE of weights on the queue.
-    weights_queue.put((agent.policy_model.get_weights(), agent.value_model.get_weights()))
+    # Self-play teacher (2026-10-16, ini selfplay_teacher_weights): actors play with a
+    # fixed teacher network instead of the weights being trained. The trainer publishes
+    # the teacher's weights once and never its own; it still trains and saves its model
+    # as usual. Used to warm-start mover-relative training from D028 played with the
+    # per-search seat relabel (see actor_process), which plays every seat well, instead
+    # of from D028 in the per-position view, where its seat-specific value head made the
+    # search fall apart (D029 started near 2% against D028).
+    _teacher = getattr(args, 'selfplay_teacher_weights', '') or ''
+    if _teacher:
+        from mali_ba.training_utils import (create_mali_ba_policy_network,
+                                            create_mali_ba_value_network)
+        _tg = pyspiel.load_game(args.game_name, initial_game_params)
+        _tpm = create_mali_ba_policy_network(_tg.observation_tensor_shape(),
+                                             _tg.num_distinct_actions())
+        _tvm = create_mali_ba_value_network(_tg.observation_tensor_shape(), _tg.num_players())
+        _tpm.load_weights(_teacher.replace("weights.h5", "_policy.weights.h5"))
+        _tvm.load_weights(_teacher.replace("weights.h5", "_value.weights.h5"))
+        weights_queue.put((_tpm.get_weights(), _tvm.get_weights()))
+        log(LogLevel.INFO, f"Trainer: self-play uses the fixed teacher {_teacher} "
+                           f"(selfplay_teacher_weights); the weights being trained are "
+                           f"saved but not sent to actors.")
+        del _tg, _tpm, _tvm
+    else:
+        # ### <<< CORRECTION 1: Put a TUPLE of weights on the queue.
+        weights_queue.put((agent.policy_model.get_weights(), agent.value_model.get_weights()))
 
     # Use the two-pool ReplayBuffer from training_utils (not the old one in classes_other).
     from mali_ba.training_utils import ReplayBuffer
@@ -384,7 +407,7 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                 last_train_time = time.time()
 
                 # Update weights for actors after a successful training step
-                if weights_queue.empty():
+                if weights_queue.empty() and not _teacher:
                     # ### <<< CORRECTION 2: Put a TUPLE of weights on the queue here as well.
                     weights_queue.put((agent.policy_model.get_weights(), agent.value_model.get_weights()))
 
@@ -399,7 +422,8 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                     agent.save_model(bootstrap_path)
                     agent.save_model(args.save_model_path)  # also overwrite the main path
                     # Push fresh weights to actors immediately
-                    weights_queue.put((agent.policy_model.get_weights(), agent.value_model.get_weights()))
+                    if not _teacher:
+                        weights_queue.put((agent.policy_model.get_weights(), agent.value_model.get_weights()))
                     log(LogLevel.INFO, f"Trainer: Bootstrap checkpoint saved to {bootstrap_path}. Weights pushed to actors.")
                 except Exception as e:
                     log(LogLevel.ERROR, f"Trainer: Bootstrap checkpoint save failed: {e}")
@@ -732,12 +756,20 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
         # MCTS bot's own randomness (dirichlet noise, policy sampling) will
         # provide sufficient exploration.
 
+        # Self-play teacher (selfplay_teacher_weights): the weights received are a fixed
+        # absolute-seat teacher, searched with its own seat as player 0 for the whole
+        # search (seat_relabel; set before each search below). Its root positions are
+        # stored mover-relative like any other, which matches the teacher's frame at the
+        # root (the mover is the searching seat), so the actor's value checks still apply.
+        _teacher_mode = bool(getattr(args, 'selfplay_teacher_weights', '') or '')
         # Pass both models to the evaluator
         evaluator = AlphaZeroEvaluator(game, policy_model, value_model,
                                        heuristic_guidance_weight=job_heuristic_weight,
                                        client=_infer_client,
                                        blend_normalized=getattr(args, 'guidance_blend_normalized', False),
-                                       mover_relative=getattr(args, 'mover_relative_obs', False))
+                                       mover_relative=(getattr(args, 'mover_relative_obs', False)
+                                                       and not _teacher_mode),
+                                       seat_relabel=_teacher_mode)
         # mover_relative_obs: the stored observations and the actor's own value checks
         # use the same mover-relative view as the search (training_utils.MoverRelative).
         _mrel = (MoverRelative(game.observation_tensor_shape()[0], game.num_players())
@@ -1107,6 +1139,8 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                 bot._dirichlet_noise = None
             _t0 = time.perf_counter()
             try:
+                if _teacher_mode:
+                    evaluator.set_relabel_seat(player)   # the teacher's seat is player 0
                 root = bot.mcts_search(state)
             except Exception as e:
                 import traceback
@@ -2861,6 +2895,15 @@ if __name__ == "__main__":
     parsed_args.train_interval_seconds = _ini_int('train_interval_seconds', 10)
     parsed_args.min_buffer_to_train = _ini_int('min_buffer_to_train', 0)
     parsed_args.mover_relative_obs = _ini_bool('mover_relative_obs', False)
+    parsed_args.selfplay_teacher_weights = _ini.get('MLTraining', 'selfplay_teacher_weights',
+                                                    fallback='').strip()
+    if parsed_args.selfplay_teacher_weights:
+        if not parsed_args.mover_relative_obs:
+            sys.exit("selfplay_teacher_weights needs mover_relative_obs = true (the teacher's "
+                     "games are stored mover-relative)")
+        _tp = parsed_args.selfplay_teacher_weights.replace("weights.h5", "_policy.weights.h5")
+        if not os.path.exists(_tp):
+            sys.exit(f"selfplay_teacher_weights: {_tp} not found")
     parsed_args.early_termination_move = _ini_int('early_termination_move', 380)
     parsed_args.hopeless_move1   = _ini_int('hopeless_move1', 200)
     parsed_args.hopeless_thresh1 = _ini_float('hopeless_thresh1', 0.10)
@@ -3011,6 +3054,8 @@ if __name__ == "__main__":
     print(f'  min_buffer_to_train         : {parsed_args.min_buffer_to_train:,}'
           f'{" (train from the first batch)" if parsed_args.min_buffer_to_train <= 0 else ""}')
     print(f'  policy-target pruning       : {"on" if parsed_args.policy_target_pruning else "off"}')
+    print(f'  self-play network           : '
+          f'{"fixed teacher " + parsed_args.selfplay_teacher_weights + " (per-search seat relabel)" if parsed_args.selfplay_teacher_weights else "the weights being trained"}')
     print(f'  observation frame           : '
           f'{"mover-relative (mover_relative_obs)" if parsed_args.mover_relative_obs else "absolute seats"}')
     print(f'  self-play move choice       : temperature {parsed_args.selfplay_temp_early:g} for '
