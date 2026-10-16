@@ -154,13 +154,16 @@ def main():
                     help="Guidance share (normalized blend). 0.10 = training's")
     ap.add_argument("--workers", type=int, default=64)
     ap.add_argument("--seed", type=int, default=12345, help="Same for every setup: same boards")
+    ap.add_argument("--mover_relative", action="store_true",
+                    help="The agent was trained with mover_relative_obs (D029 on): evaluate it in "
+                         "that view (ab_eval --mover_relative_a/b/c)")
     ap.add_argument("--rerun", action="store_true", help="Rerun setups that already have a result")
     ap.add_argument("--summary_only", action="store_true", help="Only summarize existing logs")
     args = ap.parse_args()
 
     os.makedirs(OUT_DIR, exist_ok=True)
     agent_tag = os.path.basename(args.agent).replace("mali_ba_agent_v", "").replace(".weights.h5", "")
-    h_tag = f"h{int(round(args.heuristic_weight * 100)):03d}"
+    h_tag = f"h{int(round(args.heuristic_weight * 100)):03d}" + ("_rel" if args.mover_relative else "")
     runs = []
     for spec in args.setups:
         parse_setup(spec)  # validate before anything runs
@@ -184,6 +187,8 @@ def main():
                "--heuristic_weight", str(args.heuristic_weight), "--sims", str(args.sims),
                "--games", str(args.games), "--workers", str(args.workers),
                "--seed", str(args.seed), "--config_file", ini]
+        if args.mover_relative:
+            cmd += ["--mover_relative_a", "--mover_relative_b", "--mover_relative_c"]
         print(f"\n=== {spec}  ->  {os.path.relpath(log, HERE)}\n    {' '.join(cmd)}", flush=True)
         with open(log, "w") as f:
             proc = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -197,7 +202,8 @@ def main():
 
     print("\nSeat balance (share of decided games won by each seat, 95% interval; fair = 33.3% each)")
     print(f"agent {os.path.basename(args.agent)}, {args.sims} sims, uct_c {args.uct_c:g}, "
-          f"guidance {args.heuristic_weight:g}, seed {args.seed}\n")
+          f"guidance {args.heuristic_weight:g}, seed {args.seed}"
+          f"{', mover-relative' if args.mover_relative else ''}\n")
     w = max(16, max(len(spec) for spec, _, _ in runs))
     print(f"{'setup':<{w}} {'decided':>8} {'t/o':>4}   " + "   ".join(f"{'seat ' + str(s):^22}" for s in range(3))
           + f"   {'spread':>6}")
