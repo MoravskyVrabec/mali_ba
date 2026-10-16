@@ -644,12 +644,20 @@ class AlphaZeroEvaluator:
     def __init__(self, game, policy_model, value_model, heuristic_guidance_weight=0.40,
                  cache_size=8192, client=None, blend_normalized=False, seat_relabel=False):
         self._game = game
-        # seat_relabel (2026-10-15, diagnostic): show the network every position as if
-        # the player to move were player 0 (the next player 1, ...; turn order kept) and
-        # map its value outputs back. The observation is absolute (per-seat planes and
-        # seat-to-move planes), so a network can learn seat-specific play; this asks
-        # how it would play each seat using what it learned as player 0.
+        # seat_relabel (2026-10-15, diagnostic): show the network every position with the
+        # seat set by set_relabel_seat() (the searching agent's own seat, set at the root)
+        # as player 0, the next seat as player 1, ... (turn order kept), and map its value
+        # outputs back. One shift for the whole search keeps every evaluation in the tree
+        # in the same frame. The observation is absolute (per-seat planes and seat-to-move
+        # planes), so a network can learn seat-specific play; this asks how it would play
+        # a seat using what it learned as player 0.
+        #
+        # A first version shifted each position by its own player to move. Within one tree
+        # that put the searching agent in different slots at different nodes, and D028
+        # relabelled that way lost from every seat (11 of 476 decided games, 2026-10-15),
+        # including seat 0, where its own nodes were unchanged.
         self._seat_relabel = None
+        self._relabel_shift = 0
         if seat_relabel:
             self._seat_relabel = _seat_relabel_plane_maps(
                 game.observation_tensor_shape()[0], game.num_players())
@@ -709,6 +717,8 @@ class AlphaZeroEvaluator:
     def _entry(self, state):
         """Fetch or compute the cache entry for a state: [value, raw_policy, prior]."""
         key = tuple(state.history())
+        if self._relabel_shift:
+            key = (self._relabel_shift,) + key
         entry = self._cache.get(key)
         if entry is not None:
             self._cache.move_to_end(key)
@@ -717,7 +727,8 @@ class AlphaZeroEvaluator:
 
         self.cache_misses += 1
         _cp = state.current_player()
-        _relabel = self._seat_relabel is not None and _cp > 0
+        _shift = self._relabel_shift
+        _relabel = self._seat_relabel is not None and _shift > 0
         if self._client is not None:
             # Server path: hand the flat observation straight over shared memory.
             if self._obs_helper is not None and _cp >= 0:
@@ -726,10 +737,10 @@ class AlphaZeroEvaluator:
             else:
                 flat = np.asarray(state.observation_tensor(), dtype=np.float32)
             if _relabel:
-                flat = self._relabel_obs(flat, _cp)
+                flat = self._relabel_obs(flat, _shift)
             pol, val = self._client.infer(flat)
             if _relabel:
-                val = self._unlabel_value(val, _cp)
+                val = self._unlabel_value(val, _shift)
             entry = [val, pol, None]
             self._cache[key] = entry
             if len(self._cache) > self._cache_size:
@@ -744,11 +755,11 @@ class AlphaZeroEvaluator:
         else:
             obs = np.asarray(state.observation_tensor(), dtype=np.float32)
         if _relabel:
-            obs = self._relabel_obs(obs, _cp)
+            obs = self._relabel_obs(obs, _shift)
         policy_t, value_t = self._infer(obs.reshape((1, *self._shape)))
         val = value_t[0].numpy()
         if _relabel:
-            val = self._unlabel_value(val, _cp)
+            val = self._unlabel_value(val, _shift)
         entry = [val, policy_t[0].numpy(), None]
 
         self._cache[key] = entry
@@ -756,8 +767,14 @@ class AlphaZeroEvaluator:
             self._cache.popitem(last=False)
         return entry
 
+    def set_relabel_seat(self, seat):
+        """seat_relabel: the seat shown as player 0 for the coming search (the searching
+        agent's own seat). Call before each search; no effect without seat_relabel."""
+        if self._seat_relabel is not None and seat >= 0:
+            self._relabel_shift = int(seat)
+
     def _relabel_obs(self, flat, cp):
-        """Observation with player cp shown as player 0 (see seat_relabel)."""
+        """Observation with seat cp shown as player 0 (see seat_relabel)."""
         planes = np.asarray(flat, dtype=np.float32).reshape(self._shape[0], -1)
         return planes[self._seat_relabel[cp]].reshape(-1)
 
