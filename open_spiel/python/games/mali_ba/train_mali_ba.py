@@ -2000,6 +2000,35 @@ def main(args):
             'near_win_extension_value_thresh':     getattr(args, 'near_win_extension_value_thresh', 0.2),
             'debug':                               getattr(args, 'debug', False),
         }
+        # Send every other simple setting as well (2026-10-15). A setting missing from the
+        # list above silently fell back to its code default on remote workers: the laptop
+        # never received guidance_blend_normalized, so from D021 to D029 it mixed the
+        # heuristic in at roughly half its policy prior instead of the configured share
+        # (its self-play won far more often than the desktop's: 62% vs 29% natural wins
+        # in D029), and without aux_targets / aux_route_target it never produced route
+        # labels. Paths, hosts and ports, and settings that belong to each machine (actor
+        # counts, inference and GPU options) are not sent; the worker keeps its own.
+        _machine_local = {'num_actors', 'remote_actors', 'distributed', 'inference_server',
+                          'inference_cpus', 'inference_max_batch', 'workers', 'gpu',
+                          'gpu_memory_mb', 'bind_host', 'queue_port', 'authkey',
+                          # replay files are collected on this machine only (they need its
+                          # replay_dir and shared counters, which are not sent)
+                          'replay_game', 'replay_game_n', 'replay_short_threshold'}
+        _simple = (bool, int, float, str, type(None))
+        _n_extra = 0
+        for _k, _v in vars(args).items():
+            if _k in shared_config or _k in _machine_local or _k.startswith(('_', 'replay_')):
+                continue
+            if any(t in _k for t in ('path', '_dir', 'file', 'host', 'port')):
+                continue
+            if isinstance(_v, _simple) or (isinstance(_v, (list, tuple))
+                                           and all(isinstance(x, _simple) for x in _v)):
+                shared_config[_k] = _v
+                _n_extra += 1
+        log(LogLevel.INFO, f"Remote workers will receive {len(shared_config)} settings "
+                           f"({_n_extra} beyond the fixed list), e.g. guidance_blend_normalized="
+                           f"{shared_config.get('guidance_blend_normalized')}, mover_relative_obs="
+                           f"{shared_config.get('mover_relative_obs')}.")
         from queue_server import RemoteStatus
         remote_status = RemoteStatus()
         server_thread = threading.Thread(

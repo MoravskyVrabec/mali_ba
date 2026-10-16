@@ -212,6 +212,14 @@ def main():
     print(f"  max_simulations: {config['max_simulations']}")
     print(f"  uct_c:           {config['uct_c']}")
     print(f"  games_per_actor: {config['games_per_actor']}")
+    # The settings that change how self-play plays and what it records; compare with
+    # the desktop's startup printout. (A server older than 2026-10-15 sends no blend,
+    # frame or pruning setting, and they print as "not sent".)
+    for _k in ('heuristic_guidance_weight', 'guidance_blend_normalized', 'mover_relative_obs',
+               'policy_target_pruning', 'selfplay_temp_moves', 'selfplay_temp_late',
+               'playout_cap_fast_greedy', 'aux_targets', 'aux_route_target'):
+        print(f"  {_k + ':':<26} {config.get(_k, 'not sent')}")
+    print(f"  ({len(config)} settings received)")
 
     # Try to get the log relay queue (requires server running updated queue_server.py).
     try:
