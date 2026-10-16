@@ -148,6 +148,9 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
     bootstrap_lengths = collections.deque(maxlen=20)
     mcts_lengths = collections.deque(maxlen=20)
 
+    # Observation frame of this run's buffer entries (see MoverRelative); saved with the
+    # buffer and checked on restore.
+    _obs_frame = 'mover_relative' if getattr(args, 'mover_relative_obs', False) else 'absolute'
     # Restore buffer from a previous run if available.
     if args.save_buffer_path and os.path.exists(args.save_buffer_path):
         try:
@@ -182,6 +185,23 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                     f"saved observations have {_saved_obs_size} values but this game "
                     f"produces {expected_obs_size} (observation planes changed?). "
                     f"Starting with an EMPTY buffer; the old file was moved to {_aside}")
+            # Refuse a buffer stored in the other observation frame (absolute seats vs
+            # mover-relative, ini mover_relative_obs): its observations and value targets
+            # would be read in the wrong slots. Buffers saved before 2026-10-15 carry no
+            # tag and are absolute.
+            _saved_frame = saved.get('obs_frame', 'absolute')
+            if _saved_frame != _obs_frame:
+                del saved
+                _aside = f"{args.save_buffer_path}.{_saved_frame}"
+                _n = 1
+                while os.path.exists(_aside):
+                    _n += 1
+                    _aside = f"{args.save_buffer_path}.{_saved_frame}.{_n}"
+                os.replace(args.save_buffer_path, _aside)
+                raise ValueError(
+                    f"saved buffer is in the '{_saved_frame}' observation frame but this run "
+                    f"uses '{_obs_frame}' (mover_relative_obs). Starting with an EMPTY buffer; "
+                    f"the old file was moved to {_aside}")
             # Convert any older format (e.g. the pre-2026-10-01 "natural" pool of
             # Timbuktu wins + ordinary timeouts) through the shared helper, then copy
             # each pool into a deque sized for THIS run, so its maxlen is respected
@@ -264,6 +284,7 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                                     'mcts_raregoods_buffer': local_replay_buffer.mcts_raregoods_buffer,
                                     'mcts_timbuktu_buffer':  local_replay_buffer.mcts_timbuktu_buffer,
                                     'keep_every':            max(1, getattr(args, 'buffer_keep_every', 1)),
+                                    'obs_frame':             _obs_frame,
                                 }, f)
                             os.replace(tmp_path, args.save_buffer_path)
                             log(LogLevel.INFO, f"Trainer: Buffer saved on shutdown to {args.save_buffer_path}.")
@@ -412,6 +433,7 @@ def trainer_process(args, initial_game_params, replay_buffer_queue, weights_queu
                             'mcts_raregoods_buffer': local_replay_buffer.mcts_raregoods_buffer,
                             'mcts_timbuktu_buffer':  local_replay_buffer.mcts_timbuktu_buffer,
                             'keep_every':            max(1, getattr(args, 'buffer_keep_every', 1)),
+                            'obs_frame':             _obs_frame,
                         }, f)
                     os.replace(tmp_path, args.save_buffer_path)
                     _save_el = time.time() - _save_t0
@@ -571,7 +593,7 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
     os.environ.setdefault("TF_NUM_INTRAOP_THREADS", "1")
     os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
     import tensorflow as tf
-    from mali_ba.training_utils import AlphaZeroEvaluator, create_mali_ba_policy_network, create_mali_ba_value_network, POLICY_LEGAL_MARK, prune_policy_target
+    from mali_ba.training_utils import AlphaZeroEvaluator, create_mali_ba_policy_network, create_mali_ba_value_network, POLICY_LEGAL_MARK, prune_policy_target, MoverRelative
 
     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     tf.config.set_visible_devices([], 'GPU')
@@ -714,7 +736,12 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
         evaluator = AlphaZeroEvaluator(game, policy_model, value_model,
                                        heuristic_guidance_weight=job_heuristic_weight,
                                        client=_infer_client,
-                                       blend_normalized=getattr(args, 'guidance_blend_normalized', False))
+                                       blend_normalized=getattr(args, 'guidance_blend_normalized', False),
+                                       mover_relative=getattr(args, 'mover_relative_obs', False))
+        # mover_relative_obs: the stored observations and the actor's own value checks
+        # use the same mover-relative view as the search (training_utils.MoverRelative).
+        _mrel = (MoverRelative(game.observation_tensor_shape()[0], game.num_players())
+                 if getattr(args, 'mover_relative_obs', False) else None)
         
         bot = mcts.MCTSBot(
             game=game, uct_c=args.uct_c, max_simulations=args.max_simulations,
@@ -832,8 +859,10 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
             _t_iter0 = time.perf_counter()
             _t0 = time.perf_counter()
             observation = np.array(state.observation_tensor(), dtype=np.float32)
-            _t_obs += time.perf_counter() - _t0
             player = state.current_player()
+            if _mrel is not None:
+                observation = _mrel.obs(observation, player)
+            _t_obs += time.perf_counter() - _t0
 
             # --- Early termination checks (every 20 moves) ---
             if move_count > 0 and move_count % 20 == 0:
@@ -855,6 +884,8 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                         _obs_r = np.reshape(observation, game.observation_tensor_shape())
                         _obs_b = np.expand_dims(_obs_r, 0)
                         _val = value_model(_obs_b, training=False)[0].numpy()
+                        if _mrel is not None:
+                            _val = _mrel.to_abs(_val, player)   # back to real players
                         _clear_winner = any(v > _cwt for v in _val)
                     except Exception as _ve:
                         log(LogLevel.WARN,
@@ -976,6 +1007,8 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                     _obs_r = np.reshape(observation, game.observation_tensor_shape())
                     _obs_b = np.expand_dims(_obs_r, 0)
                     _ext_val = value_model(_obs_b, training=False)[0].numpy()
+                    if _mrel is not None:
+                        _ext_val = _mrel.to_abs(_ext_val, player)
                 except Exception as _ve:
                     log(LogLevel.WARN, f"Actor {actor_id}: Extension value check failed: {_ve}")
                 _ext_leader_val = max(_ext_val) if _ext_val is not None else None
@@ -1477,6 +1510,9 @@ def heuristic_actor_process(actor_id, game_params, args, job_queue, result_queue
     # --- Create ONE game object for the lifetime of the actor ---
     log(LogLevel.INFO, f"Heuristic Actor {actor_id}: Initializing its game instance.")
     game = pyspiel.load_game(args.game_name, game_params)
+    from mali_ba.training_utils import MoverRelative
+    _mrel_h = (MoverRelative(game.observation_tensor_shape()[0], game.num_players())
+               if getattr(args, 'mover_relative_obs', False) else None)
     # Get the max game length
     max_game_length = game.max_game_length()
     log(LogLevel.INFO, f"Using max game length: {max_game_length}")
@@ -1533,6 +1569,8 @@ def heuristic_actor_process(actor_id, game_params, args, job_queue, result_queue
         while not state.is_terminal():
             player = state.current_player()
             observation = np.array(state.observation_tensor(), dtype=np.float32)
+            if _mrel_h is not None:
+                observation = _mrel_h.obs(observation, player)
             # # DEBUG ======================================================================
             # log(LogLevel.INFO, f"Raw observation shape: {observation.shape}")
             # log(LogLevel.INFO, f"Raw observation range: min={np.min(observation)}, max={np.max(observation)}")
@@ -1951,6 +1989,7 @@ def main(args):
             'playout_cap_exempt_route_decisions':  getattr(args, 'playout_cap_exempt_route_decisions', True),
             'playout_cap_fast_greedy':             getattr(args, 'playout_cap_fast_greedy', False),
             'policy_target_pruning':               getattr(args, 'policy_target_pruning', False),
+            'mover_relative_obs':                  getattr(args, 'mover_relative_obs', False),
             'selfplay_temp_moves':                 getattr(args, 'selfplay_temp_moves', 150),
             'selfplay_temp_early':                 getattr(args, 'selfplay_temp_early', 1.0),
             'selfplay_temp_late':                  getattr(args, 'selfplay_temp_late', 0.5),
@@ -1990,6 +2029,14 @@ def main(args):
     actor_pool = {}
     next_actor_id = 0
     total_games_processed = 0
+    # mover_relative_obs: value and route targets are rotated into the same mover-relative
+    # slots as the stored observations before they are queued (training_utils.MoverRelative).
+    _mrel_q = None
+    if getattr(args, 'mover_relative_obs', False):
+        from mali_ba.training_utils import MoverRelative
+        _g = pyspiel.load_game(args.game_name, initial_game_params)
+        _mrel_q = MoverRelative(_g.observation_tensor_shape()[0], _g.num_players())
+        del _g
     # Value-target range tracking. tanh caps the value head at [-1, +1], so any
     # target outside that range is unreachable and its gradient vanishes -- worth
     # knowing about rather than discovering it in a buffer dump months later.
@@ -2316,7 +2363,15 @@ def main(args):
             for _ in range(oversample_factor):
                 for step_idx, _kept in kept_steps:
                     observation, player, policy_target, value_target_vector, _route = _kept
-                    player_value = value_target_vector[player]
+                    if _mrel_q is not None:
+                        # Value and route targets in the same mover-relative slots as the
+                        # observation (slot 0 = the player to move); see MoverRelative.
+                        value_target_vector = _mrel_q.to_rel(value_target_vector, player)
+                        if _route is not None:
+                            _route = _mrel_q.to_rel(list(_route), player)
+                        player_value = value_target_vector[0]
+                    else:
+                        player_value = value_target_vector[player]
                     if _aux_type is None:
                         value_data = (player, player_value, value_target_vector)
                     else:
@@ -2776,6 +2831,7 @@ if __name__ == "__main__":
     parsed_args.near_win_extension_value_thresh = _ini_float('near_win_extension_value_thresh', 0.2)
     parsed_args.train_interval_seconds = _ini_int('train_interval_seconds', 10)
     parsed_args.min_buffer_to_train = _ini_int('min_buffer_to_train', 0)
+    parsed_args.mover_relative_obs = _ini_bool('mover_relative_obs', False)
     parsed_args.early_termination_move = _ini_int('early_termination_move', 380)
     parsed_args.hopeless_move1   = _ini_int('hopeless_move1', 200)
     parsed_args.hopeless_thresh1 = _ini_float('hopeless_thresh1', 0.10)
@@ -2926,6 +2982,8 @@ if __name__ == "__main__":
     print(f'  min_buffer_to_train         : {parsed_args.min_buffer_to_train:,}'
           f'{" (train from the first batch)" if parsed_args.min_buffer_to_train <= 0 else ""}')
     print(f'  policy-target pruning       : {"on" if parsed_args.policy_target_pruning else "off"}')
+    print(f'  observation frame           : '
+          f'{"mover-relative (mover_relative_obs)" if parsed_args.mover_relative_obs else "absolute seats"}')
     print(f'  self-play move choice       : temperature {parsed_args.selfplay_temp_early:g} for '
           f'{parsed_args.selfplay_temp_moves} moves, then {parsed_args.selfplay_temp_late:g} '
           f'(<= 0 = greedy); fast moves '

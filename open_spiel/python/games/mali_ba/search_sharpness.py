@@ -86,7 +86,8 @@ def worker(items, cfg, out_q):
         row = {'idx': idx, 'n_legal': len(state.legal_actions())}
         for c in cfg['uct_c']:
             ev = AlphaZeroEvaluator(game, pm, vm, heuristic_guidance_weight=cfg['heur_w'],
-                                    cache_size=20000, blend_normalized=cfg['blend_normalized'])
+                                    cache_size=20000, blend_normalized=cfg['blend_normalized'],
+                                    mover_relative=cfg['mover_relative'])
             bot = mcts.MCTSBot(game=game, uct_c=c, max_simulations=cfg['sims'], evaluator=ev,
                                solve=False, dirichlet_noise=cfg['dirichlet'],
                                child_selection_fn=mcts.SearchNode.puct_value,
@@ -127,6 +128,9 @@ def main():
                          "heuristic, so --heur_w is the heuristic's true share (training's "
                          "guidance_blend_normalized). Needed for D021 and later, whose policies "
                          "put most of their probability on illegal moves.")
+    ap.add_argument('--mover_relative', action='store_true',
+                    help="The agent was trained with mover_relative_obs: evaluate every position "
+                         "from its player to move's point of view (required for such networks).")
     ap.add_argument('--dirichlet', type=float, nargs=2, default=None, metavar=('EPS', 'ALPHA'),
                     help="Root Dirichlet noise as in self-play full searches (training uses "
                          "0.2 0.25). Off by default.")
@@ -136,7 +140,8 @@ def main():
     cfg = dict(agent=os.path.abspath(args.agent), config_file=args.config_file,
                uct_c=args.uct_c, sims=args.sims, heur_w=args.heur_w,
                blend_normalized=args.guidance_blend_normalized,
-               dirichlet=tuple(args.dirichlet) if args.dirichlet else None)
+               dirichlet=tuple(args.dirichlet) if args.dirichlet else None,
+               mover_relative=args.mover_relative)
 
     pos = json.load(open(args.positions))['positions']
     items = [(i, p['history']) for i, p in enumerate(pos) if i % args.every == 0]

@@ -172,7 +172,7 @@ def _wilson(k, n, z=1.96):
 
 
 def _build_agent(spec, game, shape, sims, uct_c, cache_size, heur_w, client=None,
-                 blend_normalized=False, seat_relabel=False):
+                 blend_normalized=False, seat_relabel=False, mover_relative=False):
     """Returns a callable state -> action, or None for the heuristic player.
 
     With an InferenceClient, forward passes go to the batched GPU server and the
@@ -200,7 +200,8 @@ def _build_agent(spec, game, shape, sims, uct_c, cache_size, heur_w, client=None
     # and the comparison yields no decided games.
     ev = AlphaZeroEvaluator(game, pm, vm, heuristic_guidance_weight=heur_w,
                             cache_size=cache_size, client=client,
-                            blend_normalized=blend_normalized, seat_relabel=seat_relabel)
+                            blend_normalized=blend_normalized, seat_relabel=seat_relabel,
+                            mover_relative=mover_relative)
     bot = mcts.MCTSBot(game=game, uct_c=uct_c, max_simulations=sims, evaluator=ev,
                        solve=False, dirichlet_noise=None,
                        child_selection_fn=mcts.SearchNode.puct_value, verbose=False)
@@ -311,7 +312,8 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
     for s in "abc":
         print(f"{s.upper()} = {names[s]}" + ("" if specs[s] == HEURISTIC
                                              else f"  (uct_c={ucts[s]}, guidance={args._hw[s]}"
-                                                  f"{', seat-relabel' if getattr(args, 'seat_relabel_' + s) else ''})"))
+                                                  f"{', seat-relabel' if getattr(args, 'seat_relabel_' + s) else ''}"
+                                                  f"{', mover-relative' if getattr(args, 'mover_relative_' + s) else ''})"))
     print(f"{args.sims} sims/move, heuristic_weight={args.heuristic_weight}, "
           f"three-way: one seat each")
     print(f"{total} games ({per_order} per seat order), expected win share if equal: 0.333")
@@ -331,7 +333,9 @@ def _main_three_way(args, game, shape, nseats, name_fn, uct_a, uct_b, uct_c):
                heur_w=args.heuristic_weight, heur_w_a=args._hw["a"], heur_w_b=args._hw["b"],
                heur_w_c=args._hw["c"], config_file=args.config_file, gpu=args.gpu,
                seat_relabel_a=args.seat_relabel_a, seat_relabel_b=args.seat_relabel_b,
-               seat_relabel_c=args.seat_relabel_c)
+               seat_relabel_c=args.seat_relabel_c,
+               mover_relative_a=args.mover_relative_a, mover_relative_b=args.mover_relative_b,
+               mover_relative_c=args.mover_relative_c)
     progress = _Progress(total)   # shown from the start, before servers load
     arenas, servers = _start_servers(args, tuple(specs.items()), game, shape, nw, name_fn)
     print(f"running {nw} worker process(es), inference: "
@@ -541,7 +545,8 @@ def _worker(jobs, cfg, out_q, slot=None, arenas=None):
                                      cfg.get("heur_w_" + side, cfg["heur_w"]),
                                      _client(side),
                                      blend_normalized=cfg.get("blend_normalized", False),
-                                     seat_relabel=cfg.get("seat_relabel_" + side, False))
+                                     seat_relabel=cfg.get("seat_relabel_" + side, False),
+                                     mover_relative=cfg.get("mover_relative_" + side, False))
     # A job's seating names the agent in each seat, e.g. ('a', 'b', 'b') or ('c', 'a', 'b').
     for key, seating, seed in jobs:
         actors = [acts[side] for side in seating]
@@ -612,6 +617,10 @@ def main():
                         help=f"agent {_side.upper()}: show the network every position in its search with "
                              f"its own seat as player 0 (turn order kept) and map the values back "
                              f"-- a diagnostic for seat-specific play (2026-10-15)")
+        ap.add_argument(f"--mover_relative_{_side}", action="store_true",
+                        help=f"agent {_side.upper()} was trained with mover_relative_obs: show it "
+                             f"every position from its player-to-move's point of view and map "
+                             f"the values back. Required for such networks; wrong for others.")
     ap.add_argument("--heuristic_weight_c", type=float, default=None,
                     help="heuristic guidance for agent C only (three-way mode)")
     ap.add_argument("--guidance_blend_normalized", action="store_true",
@@ -704,10 +713,12 @@ def main():
     # uct_c means nothing to the heuristic player, so don't print one for it.
     print(f"A = {name_a}" + ("" if args.agent_a == HEURISTIC
                              else f"  (uct_c={uct_a}, guidance={hw['a']}"
-                                  f"{', seat-relabel' if args.seat_relabel_a else ''})"))
+                                  f"{', seat-relabel' if args.seat_relabel_a else ''}"
+                                  f"{', mover-relative' if args.mover_relative_a else ''})"))
     print(f"B = {name_b}" + ("" if args.agent_b == HEURISTIC
                              else f"  (uct_c={uct_b}, guidance={hw['b']}"
-                                  f"{', seat-relabel' if args.seat_relabel_b else ''})"))
+                                  f"{', seat-relabel' if args.seat_relabel_b else ''}"
+                                  f"{', mover-relative' if args.mover_relative_b else ''})"))
     print(f"{args.sims} sims/move, "
           f"heuristic_weight={args.heuristic_weight}, "
           f"A in {args.a_seats} of {nseats} seats")
@@ -749,7 +760,8 @@ def main():
                heur_w=args.heuristic_weight, heur_w_a=hw["a"], heur_w_b=hw["b"],
                config_file=args.config_file,
                gpu=args.gpu,
-               seat_relabel_a=args.seat_relabel_a, seat_relabel_b=args.seat_relabel_b)
+               seat_relabel_a=args.seat_relabel_a, seat_relabel_b=args.seat_relabel_b,
+               mover_relative_a=args.mover_relative_a, mover_relative_b=args.mover_relative_b)
     progress = _Progress(total)   # shown from the start, before servers load
     arenas, servers = _start_servers(args, (("a", args.agent_a), ("b", args.agent_b)),
                                      game, shape, nw, _name)

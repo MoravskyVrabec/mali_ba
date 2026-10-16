@@ -56,14 +56,16 @@ BUCKETS = (("early (>200 left)", 201, 9999), ("mid (61-200)", 61, 200), ("late (
 def main():
     ap = argparse.ArgumentParser(description="Value-head probe on a fixed held-out set")
     ap.add_argument("--positions", required=True, help="npz written by ab_eval.py --record_positions")
-    ap.add_argument("--agents", nargs="+", required=True, help="checkpoint stems (...weights.h5)")
+    ap.add_argument("--agents", nargs="+", required=True,
+                    help="checkpoint stems (...weights.h5); append ':rel' for a network trained "
+                         "with mover_relative_obs, e.g. mali_ba_agent_vD029.weights.h5:rel")
     ap.add_argument("--bootstrap", type=int, default=2000)
     args = ap.parse_args()
 
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")   # small job; leave the GPU alone
     sys.path.insert(0, os.path.dirname(HERE))
-    from mali_ba.training_utils import create_mali_ba_value_network
+    from mali_ba.training_utils import create_mali_ba_value_network, MoverRelative
 
     d = np.load(args.positions, allow_pickle=False)
     meta = json.loads(str(d["meta"]))
@@ -82,16 +84,30 @@ def main():
           f"endings: " + ", ".join(f"{k} {int((ending == k).sum())}" for k in ("timeout", "timbuktu", "rare_goods")) + ")")
 
     correct, picks, rows = {}, {}, []
+    mrel = None
     for spec in args.agents:
-        name = os.path.basename(spec).replace(".weights.h5", "")
+        rel = spec.endswith(":rel")
+        spec = spec[:-4] if rel else spec
+        name = os.path.basename(spec).replace(".weights.h5", "") + (" (rel)" if rel else "")
         path = spec.replace("weights.h5", "_value.weights.h5")
         if not os.path.exists(path):
             print(f"  missing {path}, skipped")
             continue
         vm = create_mali_ba_value_network(shape, rets.shape[1])
         vm.load_weights(path)
-        pred = np.concatenate([vm(X[i:i + 512].astype(np.float32), training=False).numpy()
-                               for i in range(0, len(X), 512)])
+        if rel:
+            # Score in the view it was trained in: each position from its own mover's point
+            # of view, predictions mapped back to the real players.
+            if mrel is None:
+                mrel = MoverRelative(shape[0], rets.shape[1])
+                movers = mrel.movers(X)
+            pred = np.concatenate([
+                mrel.to_abs_batch(vm(mrel.obs_batch(X[i:i + 512], movers[i:i + 512]),
+                                     training=False).numpy(), movers[i:i + 512])
+                for i in range(0, len(X), 512)])
+        else:
+            pred = np.concatenate([vm(X[i:i + 512].astype(np.float32), training=False).numpy()
+                                   for i in range(0, len(X), 512)])
         ok = pred.argmax(1) == leader
         correct[name] = ok
         picks[name] = pred.argmax(1)

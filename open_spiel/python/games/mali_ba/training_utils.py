@@ -642,8 +642,15 @@ class AlphaZeroEvaluator:
     """
 
     def __init__(self, game, policy_model, value_model, heuristic_guidance_weight=0.40,
-                 cache_size=8192, client=None, blend_normalized=False, seat_relabel=False):
+                 cache_size=8192, client=None, blend_normalized=False, seat_relabel=False,
+                 mover_relative=False):
         self._game = game
+        # mover_relative (2026-10-15, training mode): every position is shown to the
+        # network from the point of view of its own player to move (that player as
+        # player 0, the next as 1, ...) and the value outputs are mapped back to the
+        # real players; the network must have been trained that way (ini
+        # mover_relative_obs). See MoverRelative.
+        self._mover_relative = bool(mover_relative)
         # seat_relabel (2026-10-15, diagnostic): show the network every position with the
         # seat set by set_relabel_seat() (the searching agent's own seat, set at the root)
         # as player 0, the next seat as player 1, ... (turn order kept), and map its value
@@ -658,7 +665,7 @@ class AlphaZeroEvaluator:
         # including seat 0, where its own nodes were unchanged.
         self._seat_relabel = None
         self._relabel_shift = 0
-        if seat_relabel:
+        if seat_relabel or mover_relative:
             self._seat_relabel = _seat_relabel_plane_maps(
                 game.observation_tensor_shape()[0], game.num_players())
         # blend_normalized: rescale the network's policy over the legal moves BEFORE
@@ -717,7 +724,7 @@ class AlphaZeroEvaluator:
     def _entry(self, state):
         """Fetch or compute the cache entry for a state: [value, raw_policy, prior]."""
         key = tuple(state.history())
-        if self._relabel_shift:
+        if self._relabel_shift and not self._mover_relative:
             key = (self._relabel_shift,) + key
         entry = self._cache.get(key)
         if entry is not None:
@@ -727,7 +734,8 @@ class AlphaZeroEvaluator:
 
         self.cache_misses += 1
         _cp = state.current_player()
-        _shift = self._relabel_shift
+        _shift = (_cp if self._mover_relative and _cp > 0 else
+                  0 if self._mover_relative else self._relabel_shift)
         _relabel = self._seat_relabel is not None and _shift > 0
         if self._client is not None:
             # Server path: hand the flat observation straight over shared memory.
@@ -939,6 +947,73 @@ def prune_policy_target(root, uct_c, priors=None):
         k = min(n, int(np.floor(uct_c * prior(c) * sqrt_n / gap)))
         kept[c.action] = 0 if k <= 1 else k
     return kept
+
+
+class MoverRelative:
+    """Mover-relative view of observations and per-player vectors (2026-10-15).
+
+    The game's observation is absolute: per-seat plane blocks and seat-to-move planes,
+    with value outputs per seat. Trained on that, a network learns separate play for
+    each seat, and once seat 2 fell behind its positions stopped teaching it anything:
+    D028 won ~2% from seat 2 natively but 24% when shown seat-2 positions as if it were
+    player 0 (40 of 167 games, 2026-10-15). In the mover-relative view the player to
+    move is always slot 0, the next player slot 1, and so on (turn order kept), so one
+    skill serves every seat. Positions where player 0 moves are unchanged.
+
+    obs(flat, mover)        observation -> mover-relative (a new float32 array)
+    to_rel(vec, mover)      per-player vector -> slots: slot k = player (k + mover) % n
+    to_abs(vec, mover)      slots -> per-player: player p = slot (p - mover) % n
+    """
+
+    def __init__(self, num_planes, num_players):
+        self.n = num_players
+        self._planes = num_planes
+        self._maps = _seat_relabel_plane_maps(num_planes, num_players)
+        n_regions = (num_planes - 78 - 32 * num_players) // num_players
+        # First seat-to-move plane (one-hot on the absolute seat of the player to move).
+        self.seat_base = 77 + num_players * n_regions + 1 + num_players
+
+    def movers(self, X):
+        """Player to move in each absolute observation of X (N x planes x H x W),
+        from the seat-to-move planes; 0 where none is set."""
+        seat = X[:, self.seat_base:self.seat_base + self.n].reshape(len(X), self.n, -1)[:, :, 0]
+        return np.where(seat.max(1) > 0, seat.argmax(1), 0)
+
+    def obs_batch(self, X, movers):
+        """Mover-relative copy of a batch of absolute observations (N x planes x ...)."""
+        out = np.array(X, dtype=np.float32, copy=True)
+        for m in range(1, self.n):
+            idx = np.where(movers == m)[0]
+            if len(idx):
+                out[idx] = X[idx][:, self._maps[m]]
+        return out
+
+    def to_abs_batch(self, V, movers):
+        """Per-slot value rows -> per-player rows, each by its own mover."""
+        V = np.asarray(V)
+        out = V.copy()
+        for m in range(1, self.n):
+            idx = np.where(movers == m)[0]
+            if len(idx):
+                out[idx] = V[idx][:, [(p - m) % self.n for p in range(self.n)]]
+        return out
+
+    def obs(self, flat, mover):
+        flat = np.asarray(flat, dtype=np.float32)
+        if mover is None or mover <= 0:
+            return flat
+        return flat.reshape(self._planes, -1)[self._maps[mover]].reshape(flat.shape)
+
+    def to_rel(self, vec, mover):
+        if mover is None or mover <= 0:
+            return list(vec)
+        return [vec[(k + mover) % self.n] for k in range(self.n)]
+
+    def to_abs(self, vec, mover):
+        vec = np.asarray(vec)
+        if mover is None or mover <= 0:
+            return vec
+        return vec[[(p - mover) % self.n for p in range(self.n)]]
 
 
 def _seat_relabel_plane_maps(num_planes, num_players):
