@@ -92,6 +92,8 @@ def worker(items, cfg, out_q):
                                solve=False, dirichlet_noise=cfg['dirichlet'],
                                child_selection_fn=mcts.SearchNode.puct_value,
                                random_state=np.random.RandomState(1000 + idx), verbose=False)
+            if cfg['mover_relative']:
+                ev.set_relabel_seat(state.current_player())   # one view per search
             root = bot.mcts_search(state)
             visits = [ch.explore_count for ch in root.children]
             priors = [ch.prior for ch in root.children]

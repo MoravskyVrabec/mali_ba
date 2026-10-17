@@ -645,11 +645,19 @@ class AlphaZeroEvaluator:
                  cache_size=8192, client=None, blend_normalized=False, seat_relabel=False,
                  mover_relative=False):
         self._game = game
-        # mover_relative (2026-10-15, training mode): every position is shown to the
-        # network from the point of view of its own player to move (that player as
-        # player 0, the next as 1, ...) and the value outputs are mapped back to the
-        # real players; the network must have been trained that way (ini
-        # mover_relative_obs). See MoverRelative.
+        # mover_relative (training mode, ini mover_relative_obs; see MoverRelative): the
+        # network was trained on positions shown from the player to move's point of view.
+        # It is searched with ONE view per search: the searching player (the mover at
+        # the root) as player 0 for every node of the tree, set by set_relabel_seat()
+        # before each search -- the same frame as seat_relabel. At the root that is
+        # exactly the training frame.
+        #
+        # Until 2026-10-16 each node was shown from ITS OWN mover's point of view. That
+        # puts the searching player in a different slot at different depths, and any
+        # slot-dependent error in the value (D031: about +-0.05, against a typical value
+        # gap between moves of ~0.02) gets mixed across depths and swamps the search:
+        # D031 searched that way scored 0.065 against D028; searched with one view per
+        # search, 0.362 [0.321, 0.406] (71/76/32 of 167 from seats 0/1/2).
         self._mover_relative = bool(mover_relative)
         # seat_relabel (2026-10-15, diagnostic): show the network every position with the
         # seat set by set_relabel_seat() (the searching agent's own seat, set at the root)
@@ -664,7 +672,8 @@ class AlphaZeroEvaluator:
         # relabelled that way lost from every seat (11 of 476 decided games, 2026-10-15),
         # including seat 0, where its own nodes were unchanged.
         self._seat_relabel = None
-        self._relabel_shift = 0
+        # None = not set yet: a mover_relative search must call set_relabel_seat first.
+        self._relabel_shift = None if mover_relative else 0
         if seat_relabel or mover_relative:
             self._seat_relabel = _seat_relabel_plane_maps(
                 game.observation_tensor_shape()[0], game.num_players())
@@ -723,8 +732,11 @@ class AlphaZeroEvaluator:
 
     def _entry(self, state):
         """Fetch or compute the cache entry for a state: [value, raw_policy, prior]."""
+        if self._relabel_shift is None:
+            raise RuntimeError("AlphaZeroEvaluator(mover_relative=True): call "
+                               "set_relabel_seat(searching player) before each search")
         key = tuple(state.history())
-        if self._relabel_shift and not self._mover_relative:
+        if self._relabel_shift:
             key = (self._relabel_shift,) + key
         entry = self._cache.get(key)
         if entry is not None:
@@ -734,8 +746,7 @@ class AlphaZeroEvaluator:
 
         self.cache_misses += 1
         _cp = state.current_player()
-        _shift = (_cp if self._mover_relative and _cp > 0 else
-                  0 if self._mover_relative else self._relabel_shift)
+        _shift = self._relabel_shift
         _relabel = self._seat_relabel is not None and _shift > 0
         if self._client is not None:
             # Server path: hand the flat observation straight over shared memory.
@@ -776,8 +787,9 @@ class AlphaZeroEvaluator:
         return entry
 
     def set_relabel_seat(self, seat):
-        """seat_relabel: the seat shown as player 0 for the coming search (the searching
-        agent's own seat). Call before each search; no effect without seat_relabel."""
+        """The seat shown as player 0 for the coming search (the searching player's own
+        seat). Required before each search with mover_relative; used by seat_relabel;
+        no effect otherwise."""
         if self._seat_relabel is not None and seat >= 0:
             self._relabel_shift = int(seat)
 

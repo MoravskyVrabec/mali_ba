@@ -1139,8 +1139,11 @@ def actor_process(actor_id, game_params, args, job_queue, result_queue, games_pe
                 bot._dirichlet_noise = None
             _t0 = time.perf_counter()
             try:
-                if _teacher_mode:
-                    evaluator.set_relabel_seat(player)   # the teacher's seat is player 0
+                if _teacher_mode or getattr(args, 'mover_relative_obs', False):
+                    # One view for the whole search: the searching player (the mover here)
+                    # as player 0 -- the teacher's frame, and for a mover-relative network
+                    # the training frame at the root (see AlphaZeroEvaluator).
+                    evaluator.set_relabel_seat(player)
                 root = bot.mcts_search(state)
             except Exception as e:
                 import traceback

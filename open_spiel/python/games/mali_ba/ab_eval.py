@@ -207,7 +207,7 @@ def _build_agent(spec, game, shape, sims, uct_c, cache_size, heur_w, client=None
                        child_selection_fn=mcts.SearchNode.puct_value, verbose=False)
 
     def act(state):
-        if seat_relabel:
+        if seat_relabel or mover_relative:
             ev.set_relabel_seat(state.current_player())   # this agent's seat, for the whole search
         root = bot.mcts_search(state)
         # Greedy: evaluation should play each agent's best move, not sample.
@@ -618,8 +618,8 @@ def main():
                              f"its own seat as player 0 (turn order kept) and map the values back "
                              f"-- a diagnostic for seat-specific play (2026-10-15)")
         ap.add_argument(f"--mover_relative_{_side}", action="store_true",
-                        help=f"agent {_side.upper()} was trained with mover_relative_obs: show it "
-                             f"every position from its player-to-move's point of view and map "
+                        help=f"agent {_side.upper()} was trained with mover_relative_obs: search it "
+                             f"with its own seat shown as player 0 for the whole search and map "
                              f"the values back. Required for such networks; wrong for others.")
     ap.add_argument("--heuristic_weight_c", type=float, default=None,
                     help="heuristic guidance for agent C only (three-way mode)")
