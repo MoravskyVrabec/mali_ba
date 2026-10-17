@@ -131,12 +131,24 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
 </style>
 
 <main>
-  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 16 October 2026</div>
+  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 16 October 2026, updated 16 October (evening)</div>
   <h1>Sharper targets, the seat 2 investigation, and mover-relative training</h1>
   <p class="sub">Runs D024 through D030 and the plan for D031, 13–16 October. Written so either of us can pick this up cold. It continues <a href="HANDOFF-20261013.html">the 13 October handoff</a> (the D019–D021 plateau, the self-play fix, D023). The source of truth is the <code>mali_ba</code> repo (branch <code>main</code>); <code>open_spiel</code> only holds symlinks.</p>
 
+  <div class="status" style="border-left-color: var(--ochre)">
+    <h3>Update, 16 October evening: the search was the problem</h3>
+    <ul>
+      <li><strong>D031 ran</strong> (teacher D028, trained from D028's weights, 5,000 games, ~560 steps). Teacher self-play: 94.9% natural wins, median win 227 moves, <strong>seats 35.1 / 32.7 / 32.2%</strong>. With strong play that doesn't specialise by seat, the original rules are close to fair.</li>
+      <li><strong>Searched one view per search, D031 is level with D028: 0.362</strong> [0.321, 0.406] (71 / 76 / 32 of 167 from seats 0 / 1 / 2). Searched with each node from its own mover's view it scored 0.065. D030 likewise: 0.256 one view per search, 0.105 per position.</li>
+      <li><strong>Cause:</strong> showing each node from its own mover's view puts the searching player in different slots at different depths of the tree; slot-dependent value errors (D031 about ±0.05, against value gaps between moves of ~0.02) get mixed across depths and swamp the search. Not a training-data problem: stored positions were correct (checked), and D031's value head judges the teacher's positions better than D028 or D030 (top-pick 63.4%, slot bias ≤ 0.06).</li>
+      <li><strong>Fixed (116938a):</strong> mover-relative networks are now searched with one view per search (the searching player as player 0 at every node), in training, ab_eval and search_sharpness; the evaluator refuses to search without the seat set. Stored positions and targets are unchanged.</li>
+      <li><strong>Next: D032</strong>, normal self-play (teacher off, already set in the ini) from D031's weights, keeping D031's buffer. Smoke test: 8 of 8 games natural wins at 163–307 moves.</li>
+      <li>Read sections 4 and 6 below with this in mind: the strength loss of D029/D030 came mostly from the per-position search, and the teacher (section 6) was the remedy for a weak start that turned out to be largely a search problem. The teacher still helped: D031 (0.362) beat D030's level (0.256) with a quarter of the games.</li>
+    </ul>
+  </div>
+
   <div class="status">
-    <h3>Status on 16 October</h3>
+    <h3>Status on 16 October (morning)</h3>
     <ul>
       <li><strong>Strongest model in head-to-head play: D028</strong> (absolute seats). It beat D027 0.380 [0.338, 0.423] at guidance 0.10. D027 beat D025 0.406 after uct_c 1.0 and policy-target pruning sharpened the search targets.</li>
       <li><strong>Seat 2's collapse was learned, not a property of the game.</strong> Under every rule change tried, seat 2 won about 2% of network-guided games; with the heuristic alone it won its share. The network's input and value outputs are per absolute seat, so it learned separate play per seat, and seat 2 fell into a loop where its positions taught nothing (<a href="#seat2">section 3</a>).</li>
@@ -219,6 +231,7 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
     <li><strong>It cost strength, because of the starting point.</strong> D029 began from D028's weights. Searched per position, D028's seat-specific value head reads the searching player from a different slot at different nodes, and the search falls apart (the first relabel test: 11 of 476 games). So D029's self-play started near 2% strength, and D030 had climbed only to 10.5% against D028 (12 / 30 / 9 of 167 from seats 0 / 1 / 2).</li>
     <li>Self-play under mover-relative training was also less decisive: ~54% natural wins and ~410-move games, against D028's 91% and ~233.</li>
     <li><strong>D030 was trained correctly</strong> (checked): stored positions all have the seat-to-move marker in slot 0, and each slot's score correlates with the same slot's value target. D030 scores about the same on the value probe in either view (60.5 vs 59.4% balanced) because it learned to ignore the now-constant seat marker and judge each slot by its own data.</li>
+    <li><strong>Update (evening):</strong> most of the lost strength was the search, not the network. D029/D030 actors searched each node from its own mover's view (as did the evaluations). Searched one view per search, D030 scores 0.256 against D028 instead of 0.105. See the update at the top.</li>
     <li><strong>The v2 value probe is biased against mover-relative models</strong>: its positions come from D028 vs D027 games, where seat 2 finishes best in 2.5% of positions. A fair probe needs positions from games involving the new models (record a v3 set).</li>
   </ul>
 
@@ -246,8 +259,17 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
     <li>analyze_log: column widths follow the largest number (5-digit game counts); the win-rate chart legend at lower left; the search-cost chart shows simulations per move.</li>
   </ul>
 
-  <h2 id="plan">6. The plan: D031 with a teacher</h2>
+  <h2 id="plan">6. The plan: D031 with a teacher (done), then D032</h2>
   <ol class="steps">
+    <li>
+      <h3>D032 (next): normal self-play from D031</h3>
+      <ul>
+        <li><code>selfplay_teacher_weights</code> empty (set), <code>mover_relative_obs = true</code>; <code>--load_model_path mali_ba_agent_vD031.weights.h5 --save_model_path mali_ba_agent_vD032.weights.h5</code>; keep D031's buffer (teacher games, mover-relative tag).</li>
+        <li>Self-play searches with one view per search; check the startup line <code>self-play network : the weights being trained</code> and that the laptop is on commit 116938a or later (rsync the four files).</li>
+        <li>Expect D028-like self-play: most games natural wins, ~200–300 moves, seats near a third each.</li>
+        <li>Afterwards: D032 vs D028 and D031 with <code>--mover_relative_a</code>, value probe on <code>value_probe_set_v3.npz</code> (recorded from D031 vs D028), and <code>seat_balance.py --agent …vD032 --mover_relative base</code>.</li>
+      </ul>
+    </li>
     <li>
       <h3>How the teacher run works</h3>
       <ul>
@@ -316,7 +338,7 @@ python seat_balance.py --agent mali_ba_agent_vD031.weights.h5 --mover_relative b
 python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_agent_vD028.weights.h5 \
     --seat_relabel_a --uct_c 1.0 --guidance_blend_normalized --heuristic_weight 0.10 ...</code></pre>
   <ul>
-    <li><strong>Which flag for which network:</strong> D028 and earlier are absolute (no flag). D029, D030 and D031 on are mover-relative: <code>--mover_relative_X</code> in ab_eval, <code>:rel</code> in value_probe, <code>--mover_relative</code> in seat_balance and search_sharpness. The wrong mode silently gives a much weaker agent.</li>
+    <li><strong>Which flag for which network:</strong> D028 and earlier are absolute (no flag). D029, D030 and D031 on are mover-relative: <code>--mover_relative_X</code> in ab_eval, <code>:rel</code> in value_probe, <code>--mover_relative</code> in seat_balance and search_sharpness. The wrong mode silently gives a much weaker agent. Since 116938a, <code>--mover_relative_X</code> searches one view per search (the same as <code>--seat_relabel_X</code>); results recorded with it before 16 October evening (D030 0.105, D031 0.065) used the per-position search.</li>
     <li>Scripts outside the trainer need <code>PYTHONPATH</code> with the build's <code>python</code> directory and <code>open_spiel/python/games</code>, run from the <code>open_spiel</code> tree.</li>
   </ul>
 
@@ -325,11 +347,13 @@ python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_age
     <li><strong>ab_eval's progress line counts agents, not seats.</strong> <code>[A 167 B 172 C 149 …]</code> with the same model in all three seats is always near a third each. Seat shares are in the "wins by seat" line and the seat_balance summary. We briefly read "34 / 35 / 30%" as a seat fix that wasn't there.</li>
     <li><strong>A setting the desktop didn't send fell back silently on the laptop.</strong> The laptop played D021–D029 with the old guidance blend (~half heuristic): its self-play won 62% vs 29% (D029), 99% vs 92% (D027). Check the laptop's startup printout against the desktop's every run.</li>
     <li><strong>Per-position relabelling of an absolute-seat network breaks its search</strong> (the searching player sits in different slots at different nodes). Relabel once per search for diagnostics; train mover-relative networks per position.</li>
-    <li><strong>Starting a new input view from an old network's weights isn't a warm start</strong> if the old network searches badly in that view: its self-play games teach little. Use a teacher that plays well (D031).</li>
+    <li><strong>Searching each node from its own mover's view</strong> breaks the search even for networks trained in that view (D031 0.065 per position vs 0.362 one view per search). Search with one view per search: the searching player as player 0 at every node.</li>
+    <li><strong>Blaming the network first.</strong> D030's 0.105 looked like lost knowledge; the value probe and the per-slot check said its judgement was fine, and the search mode was the problem. When results and diagnostics disagree, test the search before retraining.</li>
+    <li><strong>Starting a new input view from an old network's weights isn't a warm start</strong> if the old network searches badly in that view: its self-play games teach little. A teacher that plays well helped (D031 with 5,000 games beat D030 with 21,000).</li>
     <li><strong>Plain value-probe top-pick rewards seat priors.</strong> Use balanced, with the seat picks; and probe with positions from games like the ones the model plays.</li>
     <li><strong>Seat balance depends on the model and its strength</strong>, not only the rules. It looked fair in near-random play and collapsed as play improved; seat 0 vs 1 flipped between models.</li>
     <li><strong>Overwriting a probe file:</strong> <code>--record_positions</code> to an existing name replaces it (v2 now holds the guidance-0.10 game's positions). Use a new name each time.</li>
   </ul>
 
-  <footer>Prepared 16 October 2026. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest code commit <code>0f60b7b</code>.</footer>
+  <footer>Prepared 16 October 2026. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest code commit <code>116938a</code>.</footer>
 </main>

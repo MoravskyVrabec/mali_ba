@@ -204,7 +204,10 @@ Mover-relative training (mover_relative_obs) gives even seats (D030 self-play
 33.5 / 32.6 / 33.8%) but D029/D030 lost strength (D030 vs D028: 0.105) because they
 started from D028 searched per position. Next: **D031 with the self-play teacher**
 (selfplay_teacher_weights = D028, per-search relabel), training from D028's weights
-on a fresh buffer. Then:
+on a fresh buffer. **Update 2026-10-16 evening:** the lost strength was mostly the
+per-position search (each node from its own mover's view). Searched one view per
+search, D031 is level with D028 (0.362) and D030 scores 0.256 (was 0.105); fixed in
+116938a. D032 continues with normal self-play from D031 (teacher off). Then:
 - Evaluate D031 mover-relative vs D028 and D030; record value_probe_set_v3.npz from
   one of those games (v2 is biased against mover-relative models).
 - If D031 is near D028: teacher off, continue normal self-play from D031.
