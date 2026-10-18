@@ -1815,6 +1815,237 @@ def plot_search_cost(search_costs, window=25, run_start=None):
     plt.show()
 
 
+def _rolling(values, window):
+    """Trailing mean over `window` items (shorter at the start); NaN-safe for empty input."""
+    import numpy as np
+    v = np.asarray(values, dtype=float)
+    if len(v) == 0:
+        return v
+    w = max(1, min(window, len(v)))
+    c = np.cumsum(np.insert(v, 0, 0.0))
+    out = np.empty(len(v))
+    out[w - 1:] = (c[w:] - c[:-w]) / w
+    for i in range(min(w - 1, len(v))):
+        out[i] = c[i + 1] / (i + 1)
+    return out
+
+
+def _win(n, parts, minimum):
+    """Rolling window for n points: about n/parts, at least `minimum`, at most n."""
+    return max(1, min(n, max(minimum, n // parts)))
+
+
+def _rolling_median(values, window):
+    import numpy as np
+    v = np.asarray(values, dtype=float)
+    w = max(1, min(window, len(v)))
+    return np.array([np.median(v[max(0, i - w + 1):i + 1]) for i in range(len(v))])
+
+
+def _step_hours(data, n, run_start):
+    """Hours since run start for n per-training-step rows (policy fit, route head):
+    their own lines carry no timestamp, but each training step also logs
+    'Training successful' with one, in the same order."""
+    import numpy as np
+    tl = data.get('trainer_losses', [])
+    if not n:
+        return np.array([])
+    if len(tl) >= n:
+        return np.array([(t - run_start).total_seconds() / 3600 for t, _ in tl[:n]])
+    if tl:   # fewer timestamps than rows: spread the rows over the timed span
+        t0, t1 = tl[0][0], tl[-1][0]
+        span = (t1 - t0).total_seconds() / 3600
+        off = (t0 - run_start).total_seconds() / 3600
+        return off + np.linspace(0, span, n)
+    return np.arange(n, dtype=float)
+
+
+def _dashboard_series(data):
+    """Everything the dashboard draws for one run, as time series in hours since start."""
+    import numpy as np
+    start = data.get('first_time')
+    out = {}
+    hours = lambda t: (t - start).total_seconds() / 3600
+
+    # 1. Policy learning (per training step).
+    pf = data.get('policy_fit', [])
+    if pf and start:
+        x = _step_hours(data, len(pf), start)
+        w = _win(len(pf), 25, 20)
+        out['policy'] = dict(x=x[w - 1:], target_h=_rolling([r[0] for r in pf], w)[w - 1:],
+                             ce=_rolling([r[1] for r in pf], w)[w - 1:],
+                             gap=_rolling([r[2] for r in pf], w)[w - 1:],
+                             gap_raw=np.array([r[2] for r in pf]))
+    rt = data.get('aux_route', [])
+    if rt and start:
+        x = _step_hours(data, len(rt), start)
+        ratio = [r[0] / r[1] if r[1] else np.nan for r in rt]
+        w = _win(len(rt), 25, 20)
+        out['route'] = dict(x=x[w - 1:], ratio=_rolling(ratio, w)[w - 1:])
+
+    # 2. Value head (local value checks joined to finished games).
+    rows = [r for r in value_calibration_rows(data) if r.get('time') is not None]
+    if rows and start:
+        rows.sort(key=lambda r: r['time'])
+        w = _win(len(rows), 30, 200)
+        x = np.array([hours(r['time']) for r in rows])[w - 1:]
+        calib = [(r['lead_pred'] + 2 * r['oth_pred']) / 3 - (r['lead_act'] + 2 * r['oth_act']) / 3
+                 for r in rows]
+        out['value'] = dict(x=x, top=100 * _rolling([r['hit'] for r in rows], w)[w - 1:],
+                            calib=_rolling(calib, w)[w - 1:],
+                            err=_rolling([r['abs_err'] for r in rows], w)[w - 1:], n=len(rows))
+
+    # 3 and 4. Self-play games (MCTS only).
+    games = sorted((g for g in data.get('games', []) if not g.get('is_bootstrap') and g.get('time')),
+                   key=lambda g: g['time'])
+    if games and start:
+        w = _win(len(games), 30, 100)
+        x = np.array([hours(g['time']) for g in games])
+        win = [1.0 if g['is_win'] else 0.0 for g in games]
+        wins = [g for g in games if g['is_win']]
+        series = dict(x=x[w - 1:], win=100 * _rolling(win, w)[w - 1:])
+        if wins:
+            ww = _win(len(wins), 30, 100)
+            series['wx'] = np.array([hours(g['time']) for g in wins])[ww - 1:]
+            series['win_len'] = _rolling_median([g['moves'] for g in wins], ww)[ww - 1:]
+            series['rare'] = 100 * _rolling([0.0 if 'Timbuktu' in g.get('reason', '') else 1.0
+                                             for g in wins], ww)[ww - 1:]
+            n_seats = len(wins[0]['returns']) if wins[0].get('returns') else 3
+            seat = [g['returns'].index(max(g['returns'])) for g in wins]
+            series['seat'] = [100 * _rolling([1.0 if s == k else 0.0 for s in seat], ww)[ww - 1:]
+                              for k in range(n_seats)]
+        out['games'] = series
+    return out
+
+
+def plot_training_dashboard(runs, save_path=None):
+    """Four panels on one time axis (hours since each run's start) that track learning
+    rather than throughput:
+
+      1. Policy learning: target entropy (how sharp the search targets are), the
+         network's cross-entropy to them over legal moves, and the gap between them
+         (falling = the network catching up), plus the route head's error ratio.
+         The total loss is not shown: it falls whenever the targets get sharper, even
+         while the network falls behind (D035: loss down, gap 0.15 -> 0.22).
+      2. Value head: rolling top-pick and calibration (average prediction minus
+         average training target per player; 0 = calibrated, below = pessimistic).
+      3. Self-play decisiveness: natural-win rate, median length of wins, rare-goods
+         share of wins.
+      4. Seat balance: rolling share of natural wins by seat, against a fair third.
+
+    runs: list of (label, parsed log data). With one run colours mark the metrics;
+    with several (analyze_log.py --compare) colours mark the runs and line styles
+    the metrics, so a change between runs reads as one colour against another.
+    """
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        print('matplotlib not available. Install with: pip install matplotlib')
+        return
+    series = [(label, _dashboard_series(d)) for label, d in runs]
+    multi = len(series) > 1
+    run_colors = ['#2c3c8c', '#c0392b', '#2a7349', '#9a5a0e', '#7b3fa0']
+    fig, axes = plt.subplots(2, 2, figsize=(15, 9), dpi=100, sharex=False)
+    (ax1, ax2), (ax3, ax4) = axes
+    fig.suptitle('Training progress' + ('' if multi else f' -- {series[0][0]}'), fontsize=13)
+
+    def col(run_i, metric_color):
+        return run_colors[run_i % len(run_colors)] if multi else metric_color
+
+    def tag(label, metric):
+        return f'{label}: {metric}' if multi else metric
+
+    # 1. Policy learning
+    ax1b = ax1.twinx()
+    for i, (label, sr) in enumerate(series):
+        p = sr.get('policy')
+        if p is None:
+            continue
+        ax1.plot(p['x'], p['target_h'], color=col(i, '#7f8c8d'), lw=1.2, ls='--' if multi else '-',
+                 label=tag(label, 'target H'))
+        ax1.plot(p['x'], p['ce'], color=col(i, '#2c3c8c'), lw=1.2, ls=':' if multi else '-',
+                 label=tag(label, 'CE over legal moves'))
+        g0, g1 = p['gap_raw'][:max(1, len(p['gap_raw']) // 10)].mean(), p['gap_raw'][-max(1, len(p['gap_raw']) // 10):].mean()
+        ax1b.plot(p['x'], p['gap'], color=col(i, '#c0392b'), lw=2.0,
+                  label=tag(label, f'gap {g0:.3f} -> {g1:.3f} (first/last tenth)'))
+        r = sr.get('route')
+        if r is not None:
+            ax1b.plot(r['x'], r['ratio'], color=col(i, '#9a5a0e'), lw=1.0, ls='-.',
+                      label=tag(label, 'route head error / always-mean'))
+    ax1.set_title('1. Policy learning  (WANT: gap falling)')
+    ax1.set_ylabel('nats (target H, CE)')
+    ax1b.set_ylabel('gap / route ratio', color='#c0392b')
+    _merge_legends(ax1, ax1b)
+
+    # 2. Value head
+    ax2b = ax2.twinx()
+    for i, (label, sr) in enumerate(series):
+        v = sr.get('value')
+        if v is None:
+            continue
+        ax2.plot(v['x'], v['top'], color=col(i, '#2a7349'), lw=1.5, label=tag(label, 'top-pick %'))
+        ax2b.plot(v['x'], v['calib'], color=col(i, '#7b3fa0'), lw=1.5, ls='--',
+                  label=tag(label, f'calibration (end {v["calib"][-1]:+.3f})'))
+    ax2b.axhline(0, color='#999999', lw=0.8)
+    ax2.set_title('2. Value head  (WANT: top-pick up, calibration near 0)')
+    ax2.set_ylabel('top-pick %')
+    ax2b.set_ylabel('avg prediction - avg target', color='#7b3fa0')
+    _merge_legends(ax2, ax2b)
+
+    # 3. Decisiveness
+    ax3b = ax3.twinx()
+    for i, (label, sr) in enumerate(series):
+        g = sr.get('games')
+        if g is None:
+            continue
+        ax3.plot(g['x'], g['win'], color=col(i, '#2c3c8c'), lw=1.5, label=tag(label, 'natural wins %'))
+        if 'rare' in g:
+            ax3.plot(g['wx'], g['rare'], color=col(i, '#9a5a0e'), lw=1.0, ls=':',
+                     label=tag(label, 'rare goods % of wins'))
+            ax3b.plot(g['wx'], g['win_len'], color=col(i, '#7f8c8d'), lw=1.2, ls='--',
+                      label=tag(label, 'median win length'))
+    ax3.set_ylim(0, 100)
+    ax3.set_title('3. Self-play decisiveness')
+    ax3.set_ylabel('%')
+    ax3b.set_ylabel('moves')
+    _merge_legends(ax3, ax3b)
+
+    # 4. Seat balance
+    seat_colors = ['#2c3c8c', '#c0392b', '#2a7349']
+    seat_styles = ['-', '--', ':']
+    for i, (label, sr) in enumerate(series):
+        g = sr.get('games')
+        if g is None or 'seat' not in g:
+            continue
+        for k, line in enumerate(g['seat']):
+            ax4.plot(g['wx'], line, lw=1.4,
+                     color=col(i, seat_colors[k % 3]), ls=seat_styles[k % 3] if multi else '-',
+                     label=tag(label, f'seat {k} ({line[-1]:.0f}% at end)'))
+    ax4.axhline(100 / 3, color='#999999', lw=0.8, ls='--')
+    ax4.set_ylim(0, 100)
+    ax4.set_title('4. Seat balance  (share of natural wins; fair = 33%)')
+    ax4.set_ylabel('%')
+    ax4.legend(loc='upper right', fontsize=8)
+
+    for ax in (ax1, ax2, ax3, ax4):
+        ax.set_xlabel('hours since run start')
+        ax.grid(True, alpha=0.3)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    if save_path:
+        plt.savefig(save_path, dpi=100)
+        print(f'  Dashboard saved to {save_path}')
+    else:
+        plt.show()
+
+
+def _merge_legends(ax, ax_twin):
+    h1, l1 = ax.get_legend_handles_labels()
+    h2, l2 = ax_twin.get_legend_handles_labels()
+    if h1 or h2:
+        ax_twin.legend(h1 + h2, l1 + l2, loc='best', fontsize=8)
+
+
 def fetch_remote_value_checks(log_path, ssh_password):
     """SSH to the laptop actor host and return raw log lines containing 'Value check'.
 
@@ -1928,6 +2159,41 @@ def _game_outcomes(data):
     return game_info
 
 
+def value_calibration_rows(data):
+    """One row per local value check matched to its finished game: the leader's and
+    the others' predictions and training targets, top-pick hit, mean |error|, the
+    game's finish order and time. Shared by the calibration report and the dashboard."""
+    import statistics as st
+    info = _game_outcomes(data)
+    games = data['games']
+    rows = []
+    for vc in data.get('value_checks', []):
+        gi = info.get((vc['actor'], vc['game_n']))
+        if gi is None or not gi['returns']:
+            continue
+        pred = [vc['p0'], vc['p1'], vc['p2']]
+        if any(v is None for v in pred):
+            continue
+        # Compare with what the value head is trained toward at THIS move: the final
+        # return plus the time penalties still to come (training_targets_at).
+        ret = training_targets_at(gi, vc['move'], data.get('max_play_moves', 420))[:len(pred)]
+        w = gi['winner_idx']
+        kind = ('timeout' if gi['outcome'] == 'timeout'
+                else 'Timbuktu win' if gi['win_type'] == 'timbuktu' else 'rare-goods win')
+        others = [i for i in range(len(pred)) if i != w]
+        rows.append({
+            'kind': kind, 'move': vc['move'], 'order': gi['order'],
+            'time': games[gi['order']].get('time'),
+            'lead_pred': pred[w], 'lead_act': ret[w],
+            'oth_pred': st.mean(pred[i] for i in others),
+            'oth_act': st.mean(ret[i] for i in others),
+            'top_pred': max(pred),
+            'hit': pred.index(max(pred)) == w,
+            'abs_err': st.mean(abs(pred[i] - ret[i]) for i in range(len(pred))),
+        })
+    return rows
+
+
 def print_value_calibration(data):
     """How well the value head's mid-game predictions match what games actually return.
 
@@ -1949,32 +2215,7 @@ def print_value_calibration(data):
     Uses local value checks only (laptop actors log to the laptop's own log).
     """
     import statistics as st
-    checks = data.get('value_checks', [])
-    info = _game_outcomes(data)
-    rows = []
-    for vc in checks:
-        gi = info.get((vc['actor'], vc['game_n']))
-        if gi is None or not gi['returns']:
-            continue
-        pred = [vc['p0'], vc['p1'], vc['p2']]
-        if any(v is None for v in pred):
-            continue
-        # Compare with what the value head is trained toward at THIS move: the final
-        # return plus the time penalties still to come (training_targets_at).
-        ret = training_targets_at(gi, vc['move'], data.get('max_play_moves', 420))[:len(pred)]
-        w = gi['winner_idx']
-        kind = ('timeout' if gi['outcome'] == 'timeout'
-                else 'Timbuktu win' if gi['win_type'] == 'timbuktu' else 'rare-goods win')
-        others = [i for i in range(len(pred)) if i != w]
-        rows.append({
-            'kind': kind, 'move': vc['move'], 'order': gi['order'],
-            'lead_pred': pred[w], 'lead_act': ret[w],
-            'oth_pred': st.mean(pred[i] for i in others),
-            'oth_act': st.mean(ret[i] for i in others),
-            'top_pred': max(pred),
-            'hit': pred.index(max(pred)) == w,
-            'abs_err': st.mean(abs(pred[i] - ret[i]) for i in range(len(pred))),
-        })
+    rows = value_calibration_rows(data)
 
     print()
     print('─' * 60)
@@ -2364,6 +2605,14 @@ def main():
     parser.add_argument('--batch-size', type=int, default=None, metavar='N',
                         help='Training batch size, used to compute sample reuse. Only needed '
                              'for logs predating the "Policy rows used" line, which states it.')
+    parser.add_argument('--compare', action='append', default=[], metavar='LOG',
+                        help='Another training log to overlay on the progress dashboard '
+                             '(repeatable), e.g. --compare train_runD034.log')
+    parser.add_argument('--save-dashboard', default=None, metavar='FILE.png',
+                        help='Write the progress dashboard to a PNG instead of showing it '
+                             '(works without a display)')
+    parser.add_argument('--cost-chart', action='store_true', default=False,
+                        help='Also show the self-play search-cost chart (throughput, not learning)')
     parser.add_argument('--show-early-terminations', action='store_true', default=False,
                         help='Include the EARLY TERMINATIONS section (long; off by default)')
     args = parser.parse_args()
@@ -2391,11 +2640,25 @@ def main():
         except (EOFError, KeyboardInterrupt):
             show_charts = False
 
+    def _run_label(path):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        return stem.replace('train_run', '') or stem
+
+    if args.save_dashboard or args.compare:
+        # Progress dashboard first: it is the chart that says whether the run learned.
+        runs = [(_run_label(args.log_file), data)]
+        for other in args.compare:
+            print(f'Parsing {other} for comparison ...')
+            runs.append((_run_label(other), parse_log(other)))
+        plot_training_dashboard(runs, save_path=args.save_dashboard)
     if show_charts:
+        if not (args.save_dashboard or args.compare):
+            plot_training_dashboard([(_run_label(args.log_file), data)])
         if csv_path:
             plot_value_checks(csv_path)
-        plot_search_cost(data.get('search_costs', []), window=args.window,
-                         run_start=data.get('first_time'))
+        if args.cost_chart:
+            plot_search_cost(data.get('search_costs', []), window=args.window,
+                             run_start=data.get('first_time'))
         mcts_games = [g for g in data['games'] if not g['is_bootstrap']]
         plot_win_rate(mcts_games, window=args.window,
                      trainer_losses=data.get('trainer_losses', []),
