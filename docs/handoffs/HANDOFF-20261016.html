@@ -131,9 +131,21 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
 </style>
 
 <main>
-  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 16 October 2026, updated 16 October (evening)</div>
+  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 16 October 2026, updated 18 October</div>
   <h1>Sharper targets, the seat 2 investigation, and mover-relative training</h1>
   <p class="sub">Runs D024 through D030 and the plan for D031, 13–16 October. Written so either of us can pick this up cold. It continues <a href="HANDOFF-20261013.html">the 13 October handoff</a> (the D019–D021 plateau, the self-play fix, D023). The source of truth is the <code>mali_ba</code> repo (branch <code>main</code>); <code>open_spiel</code> only holds symlinks.</p>
+
+  <div class="status">
+    <h3>Update, 18 October: D032–D038</h3>
+    <ul>
+      <li><strong>Best model in play: D032–D036 are level</strong> (each run's head-to-head against the previous best is even). D034 beat D028 0.439 [0.396, 0.483]. Seat-neutral models give fair seats: D034 vs D032 split 36 / 31 / 33% by seat.</li>
+      <li><strong>Search: uct_c 0.5</strong> (from 1.0). The same network at 0.5 beat itself at 1.0 0.410 [0.367, 0.454]. Evaluate D034 and later at uct_c 0.5.</li>
+      <li><strong>Value head: buffer pools rebalanced</strong> (near-win 0.05, rare goods 0.55, Timbuktu 0.35, timeout 0.05). Timeout games had become 3% of play but 35% of every batch, pulling the value head pessimistic; D036's calibration went back to about 0 and it has the best probe MSE yet.</li>
+      <li><strong>Open problem: policy learning.</strong> The POLICY FIT gap rose from ~0.13 (D033) to ~0.26 (D036) as the targets sharpened. D037 raised the full-search share to 40% (more policy rows); D038 trains with <strong>no heuristic guidance</strong> (a tie at guidance 0 vs 0.10 showed the network no longer needs it).</li>
+      <li><strong>analyze_log now has a training-progress dashboard</strong> (policy gap, value calibration, decisiveness, seat balance; <code>--compare</code> another run).</li>
+      <li>Details in <a href="#since16">section 10</a>; head-to-heads to run after D038 in <a href="#since16-next">10.4</a>.</li>
+    </ul>
+  </div>
 
   <div class="status" style="border-left-color: var(--ochre)">
     <h3>Update, 16 October evening: the search was the problem</h3>
@@ -170,6 +182,7 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
       <li><a href="#settings">Settings in effect (D031)</a></li>
       <li><a href="#tools">Tools and commands</a></li>
       <li><a href="#misled">Things that misled us</a></li>
+      <li><a href="#since16">Since 16 October: D032–D038</a></li>
     </ol>
   </nav>
 
@@ -307,7 +320,7 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
     </li>
   </ol>
 
-  <h2 id="settings">7. Settings in effect (D031)</h2>
+  <h2 id="settings">7. Settings in effect (D031; for D038 see <a href="#since16-settings">10.3</a>)</h2>
   <dl class="kv">
     <dt>Self-play</dt><dd>fixed teacher <code>mali_ba_agent_vD028.weights.h5</code>, per-search seat relabel (<code>selfplay_teacher_weights</code>)</dd>
     <dt>Network trained</dt><dd>from <code>--load_model_path</code> (D028 recommended), mover-relative (<code>mover_relative_obs = true</code>)</dd>
@@ -356,5 +369,61 @@ python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_age
     <li><strong>Overwriting a probe file:</strong> <code>--record_positions</code> to an existing name replaces it (v2 now holds the guidance-0.10 game's positions). Use a new name each time.</li>
   </ul>
 
-  <footer>Prepared 16 October 2026. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest code commit <code>116938a</code>.</footer>
+
+  <h2 id="since16">10. Since 16 October: D032 to D038</h2>
+
+  <h3>10.1 Runs and head-to-heads</h3>
+  <p>All mover-relative, one view per search; head-to-heads 300 simulations, 501 games, both agents mover-relative unless noted.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Run</th><th>From</th><th>The change</th><th class="n">Games</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td>D032</td><td>D031</td><td>Teacher off (own self-play)</td><td class="n">5,000</td><td><strong>Beat D028 0.412</strong> [0.369, 0.456]; 47 of 167 from seat 2</td></tr>
+        <tr><td>D033</td><td>D032</td><td>No change; interval 9 s</td><td class="n">20,000</td><td>Value probe v3: balanced 67.8% (D032 66.4%), significant</td></tr>
+        <tr><td>D034</td><td>D033</td><td>No change (stopped at 11,272)</td><td class="n">11,272</td><td>Beat D028 0.439 [0.396, 0.483]; <strong>even with D032</strong> 0.341</td></tr>
+        <tr><td>D035</td><td>D034</td><td><strong>uct_c 0.5</strong></td><td class="n">10,000</td><td>Even with D034 at uct_c 0.5 (0.311); target H 0.99 → 0.86 but POLICY FIT gap 0.15 → 0.22</td></tr>
+        <tr><td>D036</td><td>D034</td><td><strong>Pools rebalanced</strong>; interval 8 s</td><td class="n">15,000</td><td>Even with D034 (0.331); value calibration fixed (−0.13 → −0.06 on the probe); gap still ~0.26</td></tr>
+        <tr><td>D037</td><td>D036</td><td><strong>Full-search share 0.40</strong> (from 0.25)</td><td class="n">10,000</td><td>Not yet evaluated</td></tr>
+        <tr><td>D038</td><td>D037</td><td><strong>Heuristic guidance 0</strong> (from 0.10)</td><td class="n">running</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Single-network tests (same network on both sides, one setting changed):</p>
+  <ul>
+    <li><strong>uct_c 0.5 vs 1.0</strong> (D034): 0.410 [0.367, 0.454], 75 / 68 / 57 of 167 from seats 0 / 1 / 2. search_sharpness on D034: visit entropy 78% → 73% of uniform; the best move changed in only 5% of positions (on D023, a similar change altered a quarter). The policy itself is now much sharper than in early October (prior 86% of uniform vs 95% for D023).</li>
+    <li><strong>Guidance 0 vs 0.10</strong> (D036): 0.305 [0.266, 0.347], a tie; 9 of 501 timeouts (a quarter on 13 October).</li>
+  </ul>
+
+  <h3>10.2 What we learned</h3>
+  <ul>
+    <li><strong>The game is close to fair with seat-neutral play.</strong> D034 vs D032 (all three seats mover-relative) split 181 / 152 / 165 decided games by seat (36 / 31 / 33%). Self-play seat shares sit near a third, with seat 0 slightly ahead (35–37%) since D034. The rule options built for seat balance are not needed.</li>
+    <li><strong>Pool shares must follow the game mix.</strong> By D035 ~97% of games ended in a natural win and timeouts supplied ~7–8% of new positions, yet the timeout and near-win pools were 35% of every batch: old, over-trained positions with low targets. Calibration drifted −0.086 → −0.129 over D032–D035; after the rebalance (D036) the in-run calibration was on target (−0.25 vs −0.25) and the probe MSE was the best yet (0.322).</li>
+    <li><strong>Falling loss ≠ learning.</strong> D035's loss fell steadily to ~1.5 while play stayed level: the loss's floor (target entropy) dropped 0.13 with uct_c 0.5, faster than the network fell behind (gap +0.07). Watch the gap, the value probe and head-to-heads.</li>
+    <li><strong>The policy can't keep up with the sharper targets.</strong> Gap ~0.13 at uct_c 1.0 (D033) → 0.22 (D035) → 0.26 (D036), even with more frequent training. Only full-search moves carry policy targets, ~34 of 128 rows per batch at 25% full search. D037 raised that share to 40%: in its first hour the policy rows rose from 34 to 38 per batch (the buffer turns over slowly) and the gap fell from 0.29 to 0.25.</li>
+  </ul>
+
+  <h3 id="since16-settings">10.3 What was changed, and settings for D038</h3>
+  <ul>
+    <li><strong>ini:</strong> uct_c 0.5 (73413e3); pools near-win 0.05, rare goods 0.55, Timbuktu 0.35, timeout 0.05 and interval 8 s (6968e64); <code>playout_cap_full_prob</code> 0.40 and guidance 0 (642b8d7). Each change is commented in the ini with its reason and old value.</li>
+    <li><strong>analyze_log training-progress dashboard</strong> (48f9e49, ebbd743): shown first when charts are on. Four panels on one time axis: (1) policy learning: target H, CE over legal moves, <strong>the gap</strong> (with its change over the run), route-head error; (2) value head: rolling top-pick and calibration (average prediction − average target, 0 = calibrated); (3) self-play decisiveness: natural-win rate, median win length, rare-goods share; (4) seat balance against a fair third. <code>--compare OTHER.log</code> overlays another run (each metric keeps its colour: the main run dark and solid, compared runs lighter and dashed); <code>--save-dashboard FILE.png</code> writes it without a display. The search-cost chart now needs <code>--cost-chart</code>. Time axis is hours since each run's start, so runs with different throughput line up by time, not by games.</li>
+    <li>analyze_log also sizes its number columns from the data (5-digit game counts) (42865b1).</li>
+  </ul>
+  <dl class="kv">
+    <dt>Started from</dt><dd><code>mali_ba_agent_vD037.weights.h5</code> (line D031 → D032 → D033 → D034 → D036 → D037 → D038; D035 was a side branch)</dd>
+    <dt>Self-play</dt><dd>the network being trained (teacher off), mover-relative, one view per search</dd>
+    <dt>Search</dt><dd>uct_c 0.5; playout cap: full search on 40% of moves, else 40 simulations, fast moves greedy; policy-target pruning on</dd>
+    <dt>Guidance</dt><dd><strong>0</strong> (no heuristic in the prior)</dd>
+    <dt>Buffer</dt><dd>100k positions; pools near-win 0.05, rare goods 0.55, Timbuktu 0.35, timeout 0.05; 1 in 32 kept</dd>
+    <dt>Training</dt><dd>every 8 s, batch 128, learning rate 0.0002, aux targets on</dd>
+    <dt>Rules</dt><dd>original (goods 0,1,2 / 0,0,0; finish-the-round off; start seat 0)</dd>
+  </dl>
+
+  <h3 id="since16-next">10.4 Next</h3>
+  <ul>
+    <li><strong>After D038,</strong> all at uct_c 0.5, both agents mover-relative: D037 vs D036 at guidance 0.10 (the full-search change on its own); D038 vs D037 at guidance 0 (the guidance change); optionally D038 vs D032 at guidance 0 (has the line moved past D032?). From here on, compare models at guidance 0 as well, so head-to-heads measure the networks themselves.</li>
+    <li><strong>Watch in D038's dashboard</strong> (<code>--compare train_runD037.log</code>): the policy gap falling below ~0.25, natural wins staying ≥ 90% and timeouts low (go back to guidance 0.10 if self-play turns indecisive).</li>
+    <li><strong>Still to try, one per run:</strong> fast budget 40 → 80; uct_c 0.25 once the value head improves again; a higher learning rate or more policy weight if the gap stays high; make the normalized blend the evaluator default and fix <code>policy_probe.py</code> (TODO).</li>
+  </ul>
+
+  <footer>Prepared 16 October 2026. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest commit <code>642b8d7</code> (code: <code>ebbd743</code>).</footer>
 </main>

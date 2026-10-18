@@ -38,7 +38,9 @@ older ones are history.
   dominance), and the D024 plan (guidance 0.10, rare-goods actors off).
 - [HANDOFF-20261016.html](handoffs/HANDOFF-20261016.html): runs D024-D030 (uct_c 1.0
   and policy-target pruning, the seat 2 investigation and its cause, mover-relative
-  training, the laptop settings bug) and the D031 self-play teacher plan.
+  training, the laptop settings bug) and the D031 self-play teacher plan; updated 18
+  October with D032-D038 (uct_c 0.5, pool rebalance, more full searches, guidance 0,
+  the analyze_log training-progress dashboard).
 
 ## notes/ (past design notes and write-ups)
 Records of specific changes, investigations and plans, kept for context:
