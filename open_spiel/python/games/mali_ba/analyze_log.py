@@ -1933,9 +1933,10 @@ def plot_training_dashboard(runs, save_path=None):
          share of wins.
       4. Seat balance: rolling share of natural wins by seat, against a fair third.
 
-    runs: list of (label, parsed log data). With one run colours mark the metrics;
-    with several (analyze_log.py --compare) colours mark the runs and line styles
-    the metrics, so a change between runs reads as one colour against another.
+    runs: list of (label, parsed log data). Each metric keeps its own colour; with
+    several runs (analyze_log.py --compare) the first log is drawn solid in a dark
+    shade of that colour and each compared run dashed in lighter shades, so the same
+    metric in two runs reads as dark vs light of one colour.
     """
     try:
         import matplotlib.pyplot as plt
@@ -1945,13 +1946,26 @@ def plot_training_dashboard(runs, save_path=None):
         return
     series = [(label, _dashboard_series(d)) for label, d in runs]
     multi = len(series) > 1
-    run_colors = ['#2c3c8c', '#c0392b', '#2a7349', '#9a5a0e', '#7b3fa0']
+    from matplotlib.colors import to_rgb
+
+    def shade(color, run_i):
+        """Run 0: the colour darkened; later runs: progressively lighter tints."""
+        r, g, b = to_rgb(color)
+        if not multi:
+            return (r, g, b)
+        if run_i == 0:
+            return (r * 0.75, g * 0.75, b * 0.75)
+        f = min(0.75, 0.35 + 0.2 * (run_i - 1))   # share of white mixed in
+        return (r + (1 - r) * f, g + (1 - g) * f, b + (1 - b) * f)
+
+    def style(run_i, single_style='-'):
+        return single_style if not multi else ('-' if run_i == 0 else '--')
     fig, axes = plt.subplots(2, 2, figsize=(15, 9), dpi=100, sharex=False)
     (ax1, ax2), (ax3, ax4) = axes
     fig.suptitle('Training progress' + ('' if multi else f' -- {series[0][0]}'), fontsize=13)
 
     def col(run_i, metric_color):
-        return run_colors[run_i % len(run_colors)] if multi else metric_color
+        return shade(metric_color, run_i)
 
     def tag(label, metric):
         return f'{label}: {metric}' if multi else metric
@@ -1962,16 +1976,16 @@ def plot_training_dashboard(runs, save_path=None):
         p = sr.get('policy')
         if p is None:
             continue
-        ax1.plot(p['x'], p['target_h'], color=col(i, '#7f8c8d'), lw=1.2, ls='--' if multi else '-',
+        ax1.plot(p['x'], p['target_h'], color=col(i, '#7f8c8d'), lw=1.2, ls=style(i),
                  label=tag(label, 'target H'))
-        ax1.plot(p['x'], p['ce'], color=col(i, '#2c3c8c'), lw=1.2, ls=':' if multi else '-',
+        ax1.plot(p['x'], p['ce'], color=col(i, '#2c3c8c'), lw=1.2, ls=style(i),
                  label=tag(label, 'CE over legal moves'))
         g0, g1 = p['gap_raw'][:max(1, len(p['gap_raw']) // 10)].mean(), p['gap_raw'][-max(1, len(p['gap_raw']) // 10):].mean()
-        ax1b.plot(p['x'], p['gap'], color=col(i, '#c0392b'), lw=2.0,
+        ax1b.plot(p['x'], p['gap'], color=col(i, '#c0392b'), lw=2.0, ls=style(i),
                   label=tag(label, f'gap {g0:.3f} -> {g1:.3f} (first/last tenth)'))
         r = sr.get('route')
         if r is not None:
-            ax1b.plot(r['x'], r['ratio'], color=col(i, '#9a5a0e'), lw=1.0, ls='-.',
+            ax1b.plot(r['x'], r['ratio'], color=col(i, '#9a5a0e'), lw=1.0, ls=style(i, '-.'),
                       label=tag(label, 'route head error / always-mean'))
     ax1.set_title('1. Policy learning  (WANT: gap falling)')
     ax1.set_ylabel('nats (target H, CE)')
@@ -1984,8 +1998,9 @@ def plot_training_dashboard(runs, save_path=None):
         v = sr.get('value')
         if v is None:
             continue
-        ax2.plot(v['x'], v['top'], color=col(i, '#2a7349'), lw=1.5, label=tag(label, 'top-pick %'))
-        ax2b.plot(v['x'], v['calib'], color=col(i, '#7b3fa0'), lw=1.5, ls='--',
+        ax2.plot(v['x'], v['top'], color=col(i, '#2a7349'), lw=1.5, ls=style(i),
+                 label=tag(label, 'top-pick %'))
+        ax2b.plot(v['x'], v['calib'], color=col(i, '#7b3fa0'), lw=1.5, ls=style(i, '--'),
                   label=tag(label, f'calibration (end {v["calib"][-1]:+.3f})'))
     ax2b.axhline(0, color='#999999', lw=0.8)
     ax2.set_title('2. Value head  (WANT: top-pick up, calibration near 0)')
@@ -1999,11 +2014,12 @@ def plot_training_dashboard(runs, save_path=None):
         g = sr.get('games')
         if g is None:
             continue
-        ax3.plot(g['x'], g['win'], color=col(i, '#2c3c8c'), lw=1.5, label=tag(label, 'natural wins %'))
+        ax3.plot(g['x'], g['win'], color=col(i, '#2c3c8c'), lw=1.5, ls=style(i),
+                 label=tag(label, 'natural wins %'))
         if 'rare' in g:
-            ax3.plot(g['wx'], g['rare'], color=col(i, '#9a5a0e'), lw=1.0, ls=':',
+            ax3.plot(g['wx'], g['rare'], color=col(i, '#9a5a0e'), lw=1.0, ls=style(i, ':'),
                      label=tag(label, 'rare goods % of wins'))
-            ax3b.plot(g['wx'], g['win_len'], color=col(i, '#7f8c8d'), lw=1.2, ls='--',
+            ax3b.plot(g['wx'], g['win_len'], color=col(i, '#7f8c8d'), lw=1.2, ls=style(i, '--'),
                       label=tag(label, 'median win length'))
     ax3.set_ylim(0, 100)
     ax3.set_title('3. Self-play decisiveness')
@@ -2013,14 +2029,13 @@ def plot_training_dashboard(runs, save_path=None):
 
     # 4. Seat balance
     seat_colors = ['#2c3c8c', '#c0392b', '#2a7349']
-    seat_styles = ['-', '--', ':']
     for i, (label, sr) in enumerate(series):
         g = sr.get('games')
         if g is None or 'seat' not in g:
             continue
         for k, line in enumerate(g['seat']):
             ax4.plot(g['wx'], line, lw=1.4,
-                     color=col(i, seat_colors[k % 3]), ls=seat_styles[k % 3] if multi else '-',
+                     color=col(i, seat_colors[k % 3]), ls=style(i),
                      label=tag(label, f'seat {k} ({line[-1]:.0f}% at end)'))
     ax4.axhline(100 / 3, color='#999999', lw=0.8, ls='--')
     ax4.set_ylim(0, 100)
