@@ -138,7 +138,8 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
   <div class="status">
     <h3>Update, 18 October: D032–D038</h3>
     <ul>
-      <li><strong>Best model in play: D032–D036 are level</strong> (each run's head-to-head against the previous best is even). D034 beat D028 0.439 [0.396, 0.483]. Seat-neutral models give fair seats: D034 vs D032 split 36 / 31 / 33% by seat.</li>
+      <li><strong>Best model: D038</strong> (19 October). Each run since D032 tied the one before, but the gains added up: <strong>D038 beat D032 0.444</strong> [0.400, 0.488] at guidance 0. One run's gain is now smaller than a 501-game test can detect: compare across several runs, or play ~1,000 games. Next lever: halve the learning rate (constant 0.0002 Adam, no schedule) for D039.</li>
+      <li>Earlier: D032–D036 level step by step. D034 beat D028 0.439 [0.396, 0.483]. Seat-neutral models give fair seats: D034 vs D032 split 36 / 31 / 33% by seat.</li>
       <li><strong>Search: uct_c 0.5</strong> (from 1.0). The same network at 0.5 beat itself at 1.0 0.410 [0.367, 0.454]. Evaluate D034 and later at uct_c 0.5.</li>
       <li><strong>Value head: buffer pools rebalanced</strong> (near-win 0.05, rare goods 0.55, Timbuktu 0.35, timeout 0.05). Timeout games had become 3% of play but 35% of every batch, pulling the value head pessimistic; D036's calibration went back to about 0 and it has the best probe MSE yet.</li>
       <li><strong>Open problem: policy learning.</strong> The POLICY FIT gap rose from ~0.13 (D033) to ~0.26 (D036) as the targets sharpened. D037 raised the full-search share to 40% (more policy rows); D038 trains with <strong>no heuristic guidance</strong> (a tie at guidance 0 vs 0.10 showed the network no longer needs it).</li>
@@ -383,8 +384,8 @@ python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_age
         <tr><td>D034</td><td>D033</td><td>No change (stopped at 11,272)</td><td class="n">11,272</td><td>Beat D028 0.439 [0.396, 0.483]; <strong>even with D032</strong> 0.341</td></tr>
         <tr><td>D035</td><td>D034</td><td><strong>uct_c 0.5</strong></td><td class="n">10,000</td><td>Even with D034 at uct_c 0.5 (0.311); target H 0.99 → 0.86 but POLICY FIT gap 0.15 → 0.22</td></tr>
         <tr><td>D036</td><td>D034</td><td><strong>Pools rebalanced</strong>; interval 8 s</td><td class="n">15,000</td><td>Even with D034 (0.331); value calibration fixed (−0.13 → −0.06 on the probe); gap still ~0.26</td></tr>
-        <tr><td>D037</td><td>D036</td><td><strong>Full-search share 0.40</strong> (from 0.25)</td><td class="n">10,000</td><td>Not yet evaluated</td></tr>
-        <tr><td>D038</td><td>D037</td><td><strong>Heuristic guidance 0</strong> (from 0.10)</td><td class="n">running</td><td>—</td></tr>
+        <tr><td>D037</td><td>D036</td><td><strong>Full-search share 0.40</strong> (from 0.25)</td><td class="n">10,000</td><td>Even with D036 (0.359) at guidance 0.10; policy rows 34 → 50 per batch</td></tr>
+        <tr class="hl"><td>D038</td><td>D037</td><td><strong>Heuristic guidance 0</strong> (from 0.10)</td><td class="n">10,000</td><td>Even with D037 (0.309) at guidance 0; gap 0.253 → 0.233 falling; <strong>beat D032 0.444</strong> [0.400, 0.488] at guidance 0 (72 / 70 / 75 of 167; seats 161 / 167 / 161)</td></tr>
       </tbody>
     </table>
   </div>
@@ -422,6 +423,7 @@ python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_age
   <ul>
     <li><strong>After D038,</strong> all at uct_c 0.5, both agents mover-relative: D037 vs D036 at guidance 0.10 (the full-search change on its own); D038 vs D037 at guidance 0 (the guidance change); optionally D038 vs D032 at guidance 0 (has the line moved past D032?). From here on, compare models at guidance 0 as well, so head-to-heads measure the networks themselves.</li>
     <li><strong>Watch in D038's dashboard</strong> (<code>--compare train_runD037.log</code>): the policy gap falling below ~0.25, natural wins staying ≥ 90% and timeouts low (go back to guidance 0.10 if self-play turns indecisive).</li>
+    <li><strong>Result (19 October):</strong> D037 vs D036 0.359 and D038 vs D037 0.309, both ties; but D038 vs D032 0.444, so the line improved cumulatively. D038 is the reference. D039: <code>--learning_rate 0.0001</code> (from 0.0002), judged against D038 and a model a few runs back.</li>
     <li><strong>Still to try, one per run:</strong> fast budget 40 → 80; uct_c 0.25 once the value head improves again; a higher learning rate or more policy weight if the gap stays high; make the normalized blend the evaluator default and fix <code>policy_probe.py</code> (TODO).</li>
   </ul>
 
