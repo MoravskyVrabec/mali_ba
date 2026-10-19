@@ -267,6 +267,27 @@ served by the server. No C++ changes were needed.
 - Ideas: undo for hot-seat games; a replay viewer for saved games; show each player's
   goods in detail; a model's value estimate as an optional "who's winning" bar.
 
+## AI skill levels (added 2026-10-18)
+
+Offer "Level 1-5" opponents instead of model names (raw model/sims stay available).
+Each level is a preset of three knobs, fixed for the whole game so a bot doesn't swing
+between strong and weak:
+- **Model:** the heuristic for the lowest level, then older D checkpoints, then the best
+  model. Old models make natural-looking mistakes.
+- **Simulations:** fewer = weaker (already per seat, e.g. `D039@50`); strength flattens
+  at very low counts, where the bot just follows its network's first instinct.
+- **Temperature:** sample moves in proportion to search visits instead of always
+  playing the most-visited (0 = greedy, as now). Limit sampling to moves within a margin
+  of the best so a weak level never makes absurd blunders (Stockfish "Skill Level" uses
+  a similar capped-mistake idea).
+
+Work: temperature sampling in `play/bots.py` NetworkBot; a levels table in the server
+(and a level picker in both clients); calibrate the presets with `ab_eval` round-robins
+so the steps are evenly spaced (an Elo-style ladder), then check by playing them.
+Later options: adjust the level automatically after a few wins or losses; human-like
+models trained on saved human games, per rating band (as Lichess's Maia), once there
+are enough of them.
+
 ## Parked: extra training compute (added 2026-10-08)
 
 Decide only once training is clearly improving (after the policy-learning work).
