@@ -138,7 +138,8 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
   <div class="status">
     <h3>Update, 18 October: D032–D038</h3>
     <ul>
-      <li><strong>Best model: D038</strong> (19 October). Each run since D032 tied the one before, but the gains added up: <strong>D038 beat D032 0.444</strong> [0.400, 0.488] at guidance 0. One run's gain is now smaller than a 501-game test can detect: compare across several runs, or play ~1,000 games. Next lever: halve the learning rate (constant 0.0002 Adam, no schedule) for D039.</li>
+      <li><strong>Best model: D039</strong> (18 October): halving the learning rate to 0.0001 gave the first single-run gain since D032 (D039 beat D038 0.380 [0.338, 0.423]). D040: full-search share 0.55, learning rate kept at 0.0001; halve again (0.00005) at the next plateau. The learning rate is now logged at startup and shown by analyze_log (feef9ac).</li>
+      <li>Before that: <strong>D038</strong>. Each run since D032 tied the one before, but the gains added up: <strong>D038 beat D032 0.444</strong> [0.400, 0.488] at guidance 0. One run's gain is now smaller than a 501-game test can detect: compare across several runs, or play ~1,000 games. Next lever: halve the learning rate (constant 0.0002 Adam, no schedule) for D039.</li>
       <li>Earlier: D032–D036 level step by step. D034 beat D028 0.439 [0.396, 0.483]. Seat-neutral models give fair seats: D034 vs D032 split 36 / 31 / 33% by seat.</li>
       <li><strong>Search: uct_c 0.5</strong> (from 1.0). The same network at 0.5 beat itself at 1.0 0.410 [0.367, 0.454]. Evaluate D034 and later at uct_c 0.5.</li>
       <li><strong>Value head: buffer pools rebalanced</strong> (near-win 0.05, rare goods 0.55, Timbuktu 0.35, timeout 0.05). Timeout games had become 3% of play but 35% of every batch, pulling the value head pessimistic; D036's calibration went back to about 0 and it has the best probe MSE yet.</li>
@@ -385,6 +386,7 @@ python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_age
         <tr><td>D035</td><td>D034</td><td><strong>uct_c 0.5</strong></td><td class="n">10,000</td><td>Even with D034 at uct_c 0.5 (0.311); target H 0.99 → 0.86 but POLICY FIT gap 0.15 → 0.22</td></tr>
         <tr><td>D036</td><td>D034</td><td><strong>Pools rebalanced</strong>; interval 8 s</td><td class="n">15,000</td><td>Even with D034 (0.331); value calibration fixed (−0.13 → −0.06 on the probe); gap still ~0.26</td></tr>
         <tr><td>D037</td><td>D036</td><td><strong>Full-search share 0.40</strong> (from 0.25)</td><td class="n">10,000</td><td>Even with D036 (0.359) at guidance 0.10; policy rows 34 → 50 per batch</td></tr>
+        <tr class="hl"><td>D039</td><td>D038</td><td><strong>Learning rate 0.0001</strong> (from 0.0002)</td><td class="n">10,000</td><td><strong>Beat D038 0.380</strong> [0.338, 0.423] and D036 0.393 [0.351, 0.436] at guidance 0 (64–65 of 167 from every seat); gap 0.240 → 0.222; value probe balanced 69.6% (best)</td></tr>
         <tr class="hl"><td>D038</td><td>D037</td><td><strong>Heuristic guidance 0</strong> (from 0.10)</td><td class="n">10,000</td><td>Even with D037 (0.309) at guidance 0; gap 0.253 → 0.233 falling; <strong>beat D032 0.444</strong> [0.400, 0.488] at guidance 0 (72 / 70 / 75 of 167; seats 161 / 167 / 161)</td></tr>
       </tbody>
     </table>
