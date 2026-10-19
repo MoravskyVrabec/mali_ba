@@ -181,8 +181,8 @@ highest `seq`, not the longest history: a restarted turn makes the history short
 - `turn` is set during a human's turn (otherwise `null`): `moves` made so far this turn,
   `can_restart` (at least one move to undo) and `complete` (the turn is done and waits
   for `complete_turn`; `legal_moves` is then empty and `current_seat` is still this
-  seat). Bots' turns pass on without waiting. During token placement each placement is a
-  turn.
+  seat). Bots' turns pass on without waiting. Each token placement is a turn of its own,
+  including the two placements in a row at a serpentine bend.
 - `result` is set when the game ends:
   `{"winner": 0 | null, "reason", "returns", "score", "moves"}`. `winner` is `null` when
   the game reached the move cap. `score` is the engine's score breakdown text. A game

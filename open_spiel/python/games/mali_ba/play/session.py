@@ -19,8 +19,9 @@ move it can send comes from legal_moves().
             s.bot_move()
     print(s.result())
 
-A human's turn runs until play passes to another seat; the game then waits on that
-human's complete_turn(). Until then restart_turn() puts the game back to the start of
+A human's turn runs until play passes to another seat, or is one token placement (each
+placement is a turn, also two in a row at a serpentine bend); the game then waits on
+that human's complete_turn(). Until then restart_turn() puts the game back to the start of
 the turn (any number of times).
 
 Not thread-safe by itself: a server holds one lock per session (bot_move can take
@@ -246,8 +247,11 @@ class GameSession:
         if self.awaiting_complete is not None:
             raise IllegalMove("the turn is done: complete it or restart it")
         rec = self._apply(self._to_action(move))
-        if self.state.is_terminal() or self.state.current_player() != cur:
-            self.awaiting_complete = cur      # play has passed on: wait for Complete Turn
+        # The turn is done when play passes on, and after every token placement: with
+        # serpentine placement a player places twice in a row, but each is its own turn.
+        if (self.state.is_terminal() or self.state.current_player() != cur
+                or rec["kind"] == "place_token"):
+            self.awaiting_complete = cur      # wait for Complete Turn
         return rec
 
     def complete_turn(self, seat=None):
