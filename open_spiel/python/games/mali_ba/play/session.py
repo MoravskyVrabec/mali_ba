@@ -35,6 +35,11 @@ class IllegalMove(ValueError):
 # Engine enums (mali_ba_common.h): seats are PlayerColor 0..; meeples in board JSON
 # are MeepleColor ints; trade post "type" 1 = post, 2 = center.
 PLAYER_COLORS = ["Red", "Green", "Blue", "Violet", "Pink"]
+# Where the background map (ui/mali_ba_map.jpg) sits relative to the hexes: x, y, width,
+# height in hex radii from the centre of hex (0,0,0), screen axes (y down, flat-top hexes:
+# centre x = 1.5*q, y = sqrt(3)*(y-z)/2). Measured from the original visualizer's layout,
+# whose nudges were tuned to line the map up with the board.
+MAP_RECT = [-11.214, -7.147, 21.824, 16.034]
 MEEPLE_COLORS = ["solid black", "clear black", "solid silver", "clear silver", "clear white",
                  "solid gold", "clear gold", "solid bronze", "clear bronze", "clear tan"]
 
@@ -54,6 +59,7 @@ def board_config(game):
         "player_colors": PLAYER_COLORS[:game.num_players()],
         "meeple_colors": MEEPLE_COLORS,
         "post_types": {"1": "post", "2": "center"},
+        "map_rect": MAP_RECT,
     }
 
 

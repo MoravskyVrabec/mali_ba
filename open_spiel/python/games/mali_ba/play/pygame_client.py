@@ -39,7 +39,8 @@ from mali_ba.config import (HEX_SIZE, PLAYER_COLOR_DICT, PlayerColor, WHITE, BLA
                             LIGHT_GRAY, DARK_GRAY, GRAY, YELLOW)
 from mali_ba.classes.classes_other import City, HexCoord
 from mali_ba.classes.game_state import GameStateCache
-from mali_ba.ui.visualizer_drawing import draw_board_state, load_background_map
+from mali_ba.ui import visualizer_drawing
+from mali_ba.ui.visualizer_drawing import draw_board_state
 from mali_ba.ui.visualizer_other import parse_and_update_state_from_json
 
 SIDEBAR_W = 340
@@ -137,7 +138,13 @@ class Client:
                                   common_good=c["common_good"], rare_good=c["rare_good"])
                              for c in board_cfg["cities"]]
         self.city_at = {c.location: c for c in self.cache.cities}
-        self.has_map = os.path.exists(MAP_FILE) and load_background_map(MAP_FILE)
+        self.map_img = pygame.image.load(MAP_FILE).convert() if os.path.exists(MAP_FILE) else None
+        self.map_scaled = (None, None)  # (size, surface): rescaled only when the zoom changes
+        if self.map_img is not None:
+            # The shared drawing code makes hexes see-through when its map is set, and draws
+            # that map centred in the window; this client pins the map to the hexes instead.
+            visualizer_drawing.BACKGROUND_MAP = self.map_img
+            visualizer_drawing.draw_background_map = lambda *a, **k: None
 
         self.inbox = queue.Queue()
         self.conns = {}
@@ -307,6 +314,7 @@ class Client:
         mancala_hex = (HexCoord(*map(int, mid["mancalaHex"].split(",")))
                        if self.view and "MANCALA" in self.view["phase"] and mid.get("mancalaHex")
                        else None)
+        self.draw_map()
         draw_board_state(self.screen, self.cache, self.hex_to_pixel, self.zoom, self.fonts,
                          self.font_sizes, highlight, self.selected_hex or mancala_hex,
                          show_trade_routes=self.show_routes)
@@ -315,6 +323,20 @@ class Client:
         if self.view and self.view.get("result") and self.show_result:
             self.draw_result(self.view["result"])
         pygame.display.flip()
+
+    def draw_map(self):
+        """The background map, pinned to the hexes by board_config["map_rect"]."""
+        if self.map_img is None or "map_rect" not in self.cfg:
+            return
+        x, y, w, h = self.cfg["map_rect"]
+        size = HEX_SIZE / 2.0 * self.zoom
+        dims = (max(1, round(w * size)), max(1, round(h * size)))
+        if self.map_scaled[0] != dims:
+            self.map_scaled = (dims, pygame.transform.smoothscale(self.map_img, dims))
+        ox, oy = self.hex_to_pixel(HexCoord(0, 0, 0))
+        self.screen.set_clip(self.board_rect())
+        self.screen.blit(self.map_scaled[1], (round(ox + x * size), round(oy + y * size)))
+        self.screen.set_clip(None)
 
     def draw_route_marks(self):
         size = HEX_SIZE / 2.0 * self.zoom

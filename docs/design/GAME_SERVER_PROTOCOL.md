@@ -62,8 +62,14 @@ All bodies are JSON. Errors return a 4xx status with `{"detail": "..."}`.
              "common_good": "Iron work", "rare_good": "Silver cross"}, ...],
  "player_colors": ["Red", "Green", "Blue"],
  "meeple_colors": ["solid black", "clear black", ...],
- "post_types": {"1": "post", "2": "center"}}
+ "post_types": {"1": "post", "2": "center"},
+ "map_rect": [-11.214, -7.147, 21.824, 16.034],
+ "map_url": "/api/map"}
 ```
+`map_rect` places the background map (`GET /api/map`, a JPEG) relative to the hexes:
+x, y, width and height, in hex radii from the centre of hex (0,0,0). Screen y points
+down, and hexes are flat-topped, so hex (q,r,s) is centred at (1.5 q, √3 (r − s) / 2).
+The rectangle reproduces the original visualizer's alignment.
 In the board JSON, seats are numbers (0 = the first of `player_colors`), meeples are
 indexes into `meeple_colors`, and a trade post's `type` is a key of `post_types`.
 
@@ -192,6 +198,14 @@ At 300 simulations on the CPU, a decision takes about 0.8 s on average and 2 s a
 (measured while training was running). Bots search one at a time across all games.
 
 ## Front ends
+
+**Web** (`play/web/index.html`) is served by the game server itself: open
+`http://HOST:8765/` in any browser, including on a phone. The lobby creates games (any
+mix of humans, networks and the heuristic) and lists the server's games with Join, Watch
+and Resume buttons. Seat tokens are kept in the browser, so reloading the page rejoins
+the game. `http://HOST:8765/#g=GAME_ID` is an invite link: it opens the game and offers
+the open seats. To play, click a highlighted hex or a move button. The wheel zooms;
+right-drag, shift-drag or a touch drag pans. Hovering a move shows it on the board.
 
 **Pygame** (`play/pygame_client.py`) needs only pygame, websockets and the mali_ba package
 (`PYTHONPATH=open_spiel/python/games`); it does not need the engine build.

@@ -141,9 +141,23 @@ def info():
             "num_seats": _game().num_players(), "config_file": os.path.basename(SETTINGS["config_file"])}
 
 
+MAP_FILE = os.path.join(MALI_BA_DIR, "ui", "mali_ba_map.jpg")
+
+
+def _board_config():
+    cfg = board_config(_game())
+    cfg["map_url"] = "/api/map" if os.path.exists(MAP_FILE) else None
+    return cfg
+
+
 @app.get("/api/board")
 def board():
-    return board_config(_game())
+    return _board_config()
+
+
+@app.get("/api/map")
+def board_map():
+    return FileResponse(MAP_FILE)
 
 
 @app.get("/api/models")
@@ -287,7 +301,7 @@ async def play(ws: WebSocket, gid: str, token: str | None = None):
         seat = g.tokens[token]
     g.conns[ws] = seat
     await _send(ws, {"type": "welcome", "protocol": PROTOCOL, "game_id": gid, "seat": seat,
-                     "board_config": board_config(_game()),
+                     "board_config": _board_config(),
                      "view": g.session.view(for_seat=-1 if seat is None else seat)})
     try:
         while True:
