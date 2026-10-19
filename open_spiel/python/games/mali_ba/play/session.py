@@ -32,6 +32,31 @@ class IllegalMove(ValueError):
     pass
 
 
+# Engine enums (mali_ba_common.h): seats are PlayerColor 0..; meeples in board JSON
+# are MeepleColor ints; trade post "type" 1 = post, 2 = center.
+PLAYER_COLORS = ["Red", "Green", "Blue", "Violet", "Pink"]
+MEEPLE_COLORS = ["solid black", "clear black", "solid silver", "clear silver", "clear white",
+                 "solid gold", "clear gold", "solid bronze", "clear bronze", "clear tan"]
+
+
+def board_config(game):
+    """The board's fixed parts, which never change during a game: the hexes, the
+    cities, and the names behind the board JSON's numbers."""
+    import pyspiel
+    g = pyspiel.mali_ba.downcast_game(game)
+    return {
+        "grid_radius": g.get_grid_radius(),
+        "valid_hexes": sorted([h.x, h.y, h.z] for h in g.get_valid_hexes()),
+        "cities": [{"id": c.id, "name": c.name, "culture": c.culture,
+                    "location": [c.location.x, c.location.y, c.location.z],
+                    "common_good": c.common_good, "rare_good": c.rare_good}
+                   for c in g.get_cities()],
+        "player_colors": PLAYER_COLORS[:game.num_players()],
+        "meeple_colors": MEEPLE_COLORS,
+        "post_types": {"1": "post", "2": "center"},
+    }
+
+
 class GameSession:
 
     def __init__(self, config_file, seats, seed=None, game=None):
@@ -45,6 +70,8 @@ class GameSession:
         self.seed = random.randrange(2**31) if seed is None else int(seed)
         self._rng = random.Random(self.seed)
         self.goods_list = common_goods_list(self.game)
+        self._city_names = {tuple(c["location"]): c["name"]
+                            for c in board_config(self.game)["cities"]}
 
         self.seats = []
         self._bots = {}
@@ -97,8 +124,34 @@ class GameSession:
         if self.current_seat() is None:
             return []
         sj = state_json if state_json is not None else self.state_json()
-        return [describe_action(self._ms(), a, sj, self.goods_list)
-                for a in self.state.legal_actions()]
+        moves = [describe_action(self._ms(), a, sj, self.goods_list)
+                 for a in self.state.legal_actions()]
+        if any(m["kind"] == "declare_route" for m in moves):
+            self._add_route_hexes(moves, sj)
+        return moves
+
+    def _add_route_hexes(self, moves, sj):
+        """Each DeclareRoute_k names the k-th route the engine found. Its hexes come from
+        the engine itself: apply the move to a copy of the state and read the new route
+        from the copy's JSON. (About 0.25 ms per option.)"""
+        import pyspiel
+        before = {r["id"] for r in sj.get("tradeRoutes", [])}
+        for m in moves:
+            if m["kind"] != "declare_route":
+                continue
+            c = self.state.clone()
+            c.apply_action(m["action"])
+            after = json.loads(pyspiel.mali_ba.downcast_state(c).serialize()).get("tradeRoutes", [])
+            new = [r for r in after if r["id"] not in before]
+            if not new:
+                continue
+            hexes = [[int(v) for v in h.split(",")] for h in new[0]["hexes"]]
+            cities = [self._city_names[tuple(h)] for h in hexes if tuple(h) in self._city_names]
+            m["hexes"] = hexes
+            m["cities"] = cities
+            where = (" - ".join(cities) if len(cities) > 1 else f"through {cities[0]}" if cities
+                     else f"from ({new[0]['hexes'][0]}) to ({new[0]['hexes'][-1]})")
+            m["label"] = f"Route {where} ({len(hexes)} hexes)"
 
     def result(self):
         """None while playing; then winner (None if the move cap ended it), reason,
@@ -111,6 +164,9 @@ class GameSession:
         winner = None if "Max game length" in reason else rets.index(max(rets))
         return {"winner": winner, "reason": reason, "returns": rets,
                 "score": ms.get_score_breakdown_string(), "moves": len(self.history)}
+
+    def board_config(self):
+        return board_config(self.game)
 
     def view(self, for_seat=None):
         """Everything a front end draws. Legal moves are included when it is a human's
@@ -183,13 +239,17 @@ class GameSession:
 
     def _apply(self, a):
         seat = self.current_seat()
-        desc = describe_action(self._ms(), a, self.state_json(), self.goods_list)
+        sj = self.state_json()
+        desc = describe_action(self._ms(), a, sj, self.goods_list)
+        if desc["kind"] == "declare_route":
+            self._add_route_hexes([desc], sj)
         self.state.apply_action(a)
         rec = {"n": len(self.history), "seat": seat, "action": int(a),
                "name": desc["name"], "kind": desc["kind"], "label": desc["label"],
                "t": time.time()}
-        if "hex" in desc:
-            rec["hex"] = desc["hex"]
+        for k in ("hex", "hexes", "good"):
+            if desc.get(k) is not None:
+                rec[k] = desc[k]
         self.history.append(rec)
         self._resolve_chance()
         return rec

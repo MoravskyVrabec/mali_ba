@@ -10,8 +10,8 @@ can draw without knowing any rules:
 
 Kinds: place_token, start_mancala, mancala_step, place_post, pay_good, upgrade,
 declare_route, take_income, pass. "hex" is set for actions tied to one hex (a front end
-highlights it); "good" for payments; "route_index" for route declarations (the engine
-does not yet expose a route option's hexes -- a planned binding).
+highlights it); "good" for payments; "route_index" for route declarations (GameSession
+adds each route's "hexes" and "cities" by applying it to a copy of the state).
 """
 import re
 

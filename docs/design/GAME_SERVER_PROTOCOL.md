@@ -55,6 +55,18 @@ All bodies are JSON. Errors return a 4xx status with `{"detail": "..."}`.
 {"protocol": 1, "default_sims": 300, "max_sims": 1600, "num_seats": 3, "config_file": "mali_ba.ini"}
 ```
 
+`GET /api/board` returns the board's fixed parts, which a front end needs once:
+```json
+{"grid_radius": 7, "valid_hexes": [[-5, 0, 5], ...],
+ "cities": [{"id": 1, "name": "Agadez", "culture": "Tuareg", "location": [4, -4, 0],
+             "common_good": "Iron work", "rare_good": "Silver cross"}, ...],
+ "player_colors": ["Red", "Green", "Blue"],
+ "meeple_colors": ["solid black", "clear black", ...],
+ "post_types": {"1": "post", "2": "center"}}
+```
+In the board JSON, seats are numbers (0 = the first of `player_colors`), meeples are
+indexes into `meeple_colors`, and a trade post's `type` is a key of `post_types`.
+
 `GET /api/models` returns models with the newest first:
 ```json
 [{"id": "D040", "mover_relative": true}, {"id": "D039", "mover_relative": true}, ...]
@@ -107,7 +119,7 @@ Messages the server sends:
 
 | Message | When |
 |---|---|
-| `{"type": "welcome", "protocol": 1, "game_id", "seat", "view"}` | on connecting; `seat` is `null` for spectators |
+| `{"type": "welcome", "protocol": 1, "game_id", "seat", "board_config", "view"}` | on connecting; `seat` is `null` for spectators; `board_config` is what `/api/board` returns |
 | `{"type": "state", "last_move", "view"}` | after every move by anyone, and after a seat is claimed (`last_move` is then `null`) |
 | `{"type": "error", "message"}` | a rejected move or a bad message; the game is unchanged |
 
@@ -155,13 +167,17 @@ The engine splits a turn into single decisions. Each legal move carries a `kind`
 | `place_post` | `PlacePost` (at the mancala's end hex) | |
 | `pay_good` | `PayGood_k` | `good` |
 | `upgrade` | `UpgradePost_(x,y,z)` | `hex` |
-| `declare_route` | `DeclareRoute_k` | `route_index`; `hexes` is `null` for now |
+| `declare_route` | `DeclareRoute_k` | `route_index`, `hexes` (the route, in order), `cities` (the cities on it) |
 | `take_income` | `TakeIncome` | |
 | `pass` | `Pass` (decline a post or route, or end a mancala) | |
 
-A front end can highlight `hex` on the board and show `label` as text. A planned engine
-binding will add each route option's hexes, so `declare_route` can be drawn on the board
-instead of shown as "option k".
+A front end can highlight `hex` on the board and show `label` as text.
+
+A route choice can offer well over 100 options late in a game, so a list alone is hard to
+use. Each option's `hexes` come from the engine: the server applies the option to a copy
+of the state and reads the new route. A front end can draw an option on the board, or
+narrow the list to the routes through hexes the player clicks, as the pygame client does.
+History records keep `hex`, `hexes` and `good` when the move had them.
 
 ## Bots
 
@@ -174,6 +190,21 @@ instead of shown as "option k".
 
 At 300 simulations on the CPU, a decision takes about 0.8 s on average and 2 s at most
 (measured while training was running). Bots search one at a time across all games.
+
+## Front ends
+
+**Pygame** (`play/pygame_client.py`) needs only pygame, websockets and the mali_ba package
+(`PYTHONPATH=open_spiel/python/games`); it does not need the engine build.
+```
+python -m mali_ba.play.pygame_client --new human,D039,heuristic           # you vs two bots
+python -m mali_ba.play.pygame_client --new human,human,D039@100 --hotseat  # two humans at one screen
+python -m mali_ba.play.pygame_client --join GAME_ID --name Alice           # take an open seat
+python -m mali_ba.play.pygame_client --watch GAME_ID
+python -m mali_ba.play.pygame_client --new D040,D039,heuristic --bot_delay 1
+```
+Add `--server http://HOST:8765` for a server on another machine. To play, click a
+highlighted hex or a move button. The wheel zooms the board and scrolls the move list;
+right-drag pans. F fits the board, R toggles trade routes, H hides the final score.
 
 ## Versioning
 

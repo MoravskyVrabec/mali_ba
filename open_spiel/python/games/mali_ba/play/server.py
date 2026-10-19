@@ -6,6 +6,7 @@ Run (from the open_spiel tree, mali_ba env):
 
 Protocol: docs/design/GAME_SERVER_PROTOCOL.md (version PROTOCOL below). In short:
   GET  /api/info                      protocol version, server settings
+  GET  /api/board                     the fixed board: hexes, cities, colour names
   GET  /api/models                    network bots that can fill a seat
   POST /api/games                     create a game: {"seats": [...], "seed", "bot_delay"}
   GET  /api/games                     games and their open human seats
@@ -33,7 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from mali_ba.play.bots import DEFAULT_SIMS, model_name
-from mali_ba.play.session import GameSession, IllegalMove
+from mali_ba.play.session import GameSession, IllegalMove, board_config
 
 PROTOCOL = 1
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -138,6 +139,11 @@ app = FastAPI(title="Mali-Ba game server")
 def info():
     return {"protocol": PROTOCOL, "default_sims": DEFAULT_SIMS, "max_sims": SETTINGS["max_sims"],
             "num_seats": _game().num_players(), "config_file": os.path.basename(SETTINGS["config_file"])}
+
+
+@app.get("/api/board")
+def board():
+    return board_config(_game())
 
 
 @app.get("/api/models")
@@ -281,6 +287,7 @@ async def play(ws: WebSocket, gid: str, token: str | None = None):
         seat = g.tokens[token]
     g.conns[ws] = seat
     await _send(ws, {"type": "welcome", "protocol": PROTOCOL, "game_id": gid, "seat": seat,
+                     "board_config": board_config(_game()),
                      "view": g.session.view(for_seat=-1 if seat is None else seat)})
     try:
         while True:
