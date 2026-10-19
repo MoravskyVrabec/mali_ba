@@ -43,6 +43,7 @@ RE_POLICY_FIT = re.compile(
 RE_PASS_ONLY = re.compile(
     r"MCTS top visits: \['Pass: \d+ visits'\]"
 )
+RE_LEARNING_RATE = re.compile(r'learning_rate ([0-9.eE+-]+)')
 RE_COMPUTE_DEVICE = re.compile(
     r'Trainer: COMPUTE DEVICE = (.+?)\s*$'
 )
@@ -153,6 +154,7 @@ def parse_log(path):
     no_kill_games = {}            # (actor, game_n) -> list of would-have-terminated events
     oversample_threshold = None   # set from log; None means log predates this feature
     compute_device = None         # trainer GPU/CPU report; None in logs predating it
+    learning_rate = None          # from the VALUE TARGET CONFIG line (logged from 2026-10-18)
     experiences_processed = 0     # total unique experiences the trainer ingested
     policy_rows = []              # (recorded_rows, batch_size) per training step;
                                   # absent in logs predating playout cap randomization
@@ -314,6 +316,11 @@ def parse_log(path):
                 compute_device = m.group(1).strip()
                 continue
 
+            if learning_rate is None and 'VALUE TARGET CONFIG' in line:
+                m = RE_LEARNING_RATE.search(line)
+                if m:
+                    learning_rate = m.group(1)
+
             m = RE_POLICY_ROWS.search(line)
             if m:
                 policy_rows.append((int(m.group(1)), int(m.group(2))))
@@ -435,6 +442,7 @@ def parse_log(path):
         'oversample_threshold': oversample_threshold,
         'search_costs': search_costs,
         'compute_device': compute_device,
+        'learning_rate': learning_rate,
         'experiences_processed': experiences_processed,
         'policy_rows': policy_rows,
     }
@@ -589,6 +597,9 @@ def print_sample_reuse(data, batch_size_arg=None):
             print(f'  Trainer device            : {device}')
     else:
         print(f'  Trainer device            : not reported (log predates device logging)')
+    lr = data.get('learning_rate')
+    print(f'  Learning rate             : '
+          + (f'{lr} (Adam, constant)' if lr else 'not logged (runs before 2026-10-18; see the run command)'))
 
     # Batch size: newer logs state it directly ("Policy rows used: N/M"); older ones
     # do not, so fall back to --batch-size. Reuse scales linearly with it, so say which.

@@ -2145,7 +2145,8 @@ def main(args):
     log(LogLevel.INFO,
         f"Learner: VALUE TARGET CONFIG = gamma {getattr(args, 'gamma', 0.997)}, "
         f"buffer {args.replay_buffer_size}, batch {args.batch_size}, "
-        f"train_interval {getattr(args, 'train_interval_seconds', 10)}s"
+        f"train_interval {getattr(args, 'train_interval_seconds', 10)}s, "
+        f"learning_rate {args.learning_rate:g} (Adam, constant)"
         + ("  [gamma=1.0: targets independent of moves remaining]"
            if getattr(args, 'gamma', 0.997) >= 1.0 else
            "  [gamma<1: targets depend on moves remaining, which the observation "
@@ -3053,6 +3054,7 @@ if __name__ == "__main__":
               f'decisions {"exempt" if parsed_args.playout_cap_exempt_route_decisions else "capped"}')
     else:
         print(f'  playout cap                 : off')
+    print(f'  learning_rate               : {parsed_args.learning_rate:g} (Adam, constant; --learning_rate)')
     print(f'  uct_c                       : {parsed_args.uct_c:g}')
     print(f'  min_buffer_to_train         : {parsed_args.min_buffer_to_train:,}'
           f'{" (train from the first batch)" if parsed_args.min_buffer_to_train <= 0 else ""}')
