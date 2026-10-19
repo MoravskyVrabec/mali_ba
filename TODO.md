@@ -248,21 +248,24 @@ search, D031 is level with D028 (0.362) and D030 scores 0.256 (was 0.105); fixed
     Revisit size only once the buffer spans far more games. Next experiment:
     `buffer_keep_every = 32` (~8,000 games in the same memory).
 
-## Human play: separate the engine from the presentation layer (added 2026-10-08)
+## Human play: game server and front ends (DONE 2026-10-18; follow-ups below)
 
-Design for review: `docs/design/ENGINE_UI_SEPARATION.md`. Goal: humans vs bots in
-the local GUI and later a web front end, with move-by-move legal-move feedback and
-the trained network as an opponent.
+Built (commits d57dd11, 8e38db9, 7be38fb, 23d7063): `play/` package -- GameSession
+(any mix of human and bot seats; legal moves described for display; route options carry
+their hexes, read from the engine by applying each to a cloned state), heuristic and
+network bots (ab_eval's search, 300 sims default), a FastAPI/WebSocket game server
+(protocol v1, `docs/design/GAME_SERVER_PROTOCOL.md`), a pygame client and a web client
+served by the server. No C++ changes were needed.
 
-- **Blocking now:** the local GUI sends whole-turn move strings (`place (x,y,z)`,
-  `mancala a:b:c post`) that the engine no longer accepts (it uses step-by-step
-  actions such as `PlaceToken_(x,y,z)`, `StartMancala_`, `MancalaDir_k`); human moves
-  in the GUI are very likely broken.
-- GUI bots are the C++ heuristic (via a pygame timer), with a second, inconsistent
-  network-bot path patched into `GameInterface`.
-- Plan: GameSession + one bot interface (heuristic, network + MCTS, data-fitted
-  placement) with headless tests; engine changes (per-decision move pruning,
-  describe-action); then move the GUI onto it; then a web server.
+- The old GUI (`main.py`, `ui/visualizer.py`, `utils/cpp_interface.py`) is untouched:
+  its live modes send whole-turn move strings the engine no longer accepts, and its
+  rule copies (`ui/visualizer_other.py`) are stale. Replay mode may still work. Decide:
+  retire the live modes, or port replay to the new clients (games the server saves to
+  `play/games_played/` are JSON with the full move history).
+- Placement for network bots uses the heuristic (self-play places tokens at random).
+- No login on the server: expose it only on the LAN or Tailscale.
+- Ideas: undo for hot-seat games; a replay viewer for saved games; show each player's
+  goods in detail; a model's value estimate as an optional "who's winning" bar.
 
 ## Parked: extra training compute (added 2026-10-08)
 

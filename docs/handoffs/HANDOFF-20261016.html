@@ -429,5 +429,16 @@ python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_age
     <li><strong>Still to try, one per run:</strong> fast budget 40 → 80; uct_c 0.25 once the value head improves again; a higher learning rate or more policy weight if the gap stays high; make the normalized blend the evaluator default and fix <code>policy_probe.py</code> (TODO).</li>
   </ul>
 
+  <h2 id="play">11. Playing against the models (18 October)</h2>
+  <p>A game server now lets any mix of humans and bots play, from any machine that can reach it. The engine holds every rule; the front ends only draw the board and send one of the legal moves the server lists. No C++ changes were needed.</p>
+  <ul>
+    <li><strong>Start the server</strong> (open_spiel tree, mali_ba env, needs <code>fastapi</code> and <code>uvicorn</code>): <code>PYTHONPATH=build/python:open_spiel/python/games:. python -m mali_ba.play.server --host 0.0.0.0 --port 8765</code></li>
+    <li><strong>Browser:</strong> open <code>http://HOST:8765/</code>, choose the seats (human, any model, heuristic) and create the game. The link <code>#g=GAME_ID</code> invites others.</li>
+    <li><strong>Pygame:</strong> <code>python -m mali_ba.play.pygame_client --new human,D039,heuristic [--server http://HOST:8765]</code>; also <code>--join</code>, <code>--watch</code>, <code>--hotseat</code>.</li>
+    <li><strong>Bots</strong> search as ab_eval evaluates (uct_c 0.5, no noise, guidance 0, mover-relative from D029, most-visited move), 300 simulations by default (about 0.8 s per decision on the CPU while training runs). Bots place tokens with the heuristic.</li>
+    <li>Route choices can offer 100+ options late in a game, so each option carries its hexes: hover to see one, click hexes to keep only routes through them.</li>
+    <li>Protocol and options: <code>docs/design/GAME_SERVER_PROTOCOL.md</code>. Code: <code>open_spiel/python/games/mali_ba/play/</code>. Commits d57dd11, 8e38db9, 7be38fb, 23d7063.</li>
+  </ul>
+
   <footer>Prepared 16 October 2026. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest commit <code>642b8d7</code> (code: <code>ebbd743</code>).</footer>
 </main>
