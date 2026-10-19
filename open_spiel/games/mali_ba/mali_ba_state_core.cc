@@ -315,9 +315,10 @@ namespace open_spiel
                     }
                     
                     // 1. Income Action
-                    // NOTE: consecutive-income restriction is a training heuristic only,
-                    // not an actual game rule. Remove when no longer needed.
-                    bool income_blocked = last_was_income_[current_player_id_];
+                    // Taking income twice in a row is blocked only when the ini asks for
+                    // it (block_consecutive_income): a training aid, not a game rule.
+                    bool income_blocked = GetGame()->GetRules().block_consecutive_income &&
+                                          last_was_income_[current_player_id_];
                     if (CanTakeIncome() && !income_blocked) {
                         result.actions.push_back(kIncomeAction);
                         result.counts.income_moves++;

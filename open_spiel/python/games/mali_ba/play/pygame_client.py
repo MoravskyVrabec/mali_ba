@@ -22,7 +22,8 @@ no engine build. Mouse: click a highlighted hex or a move button; the wheel zoom
 and scrolls the move list; right-drag
 pans. Restart Turn puts the game back to the start of your turn; when your turn is
 done, Complete Turn (or Enter) passes play on. Keys: F fits the board, R toggles trade
-routes, H hides the final score, Esc quits.
+routes, H hides the final score, Esc quits. "End game..." (bottom right of the
+sidebar) stops the game for everyone after asking.
 """
 import argparse
 import json
@@ -170,6 +171,9 @@ class Client:
         self.scroll, self.list_key = 0, None
         self.route_filter = set()    # hexes a route must pass through (route choice)
         self.show_result = True
+        self.confirm_end = False     # the "end the game?" box is open
+        self.end_rect = None
+        self.confirm_buttons = []    # [(rect, "end" | "keep")]
         self.hover = None
         self.fit()
 
@@ -289,6 +293,16 @@ class Client:
 
     # -- input --
     def click(self, pos):
+        if self.confirm_end:                 # the box is modal: only its buttons count
+            for r, what in self.confirm_buttons:
+                if r.collidepoint(pos):
+                    self.confirm_end = False
+                    if what == "end":
+                        self.send_end_game()
+            return
+        if self.end_rect and self.end_rect.collidepoint(pos):
+            self.confirm_end = True
+            return
         if self.view and self.view.get("result") and self.board_rect().collidepoint(pos):
             self.show_result = not self.show_result      # the score box covers the board
             return
@@ -331,7 +345,40 @@ class Client:
         self.draw_route_marks()
         if self.view and self.view.get("result") and self.show_result:
             self.draw_result(self.view["result"])
+        if self.confirm_end:
+            self.draw_confirm_end()
         pygame.display.flip()
+
+    def draw_confirm_end(self):
+        w, h = self.screen.get_size()
+        shade = pygame.Surface((w, h), pygame.SRCALPHA)
+        shade.fill((30, 25, 20, 120))
+        self.screen.blit(shade, (0, 0))
+        box = pygame.Rect(0, 0, 400, 150)
+        box.center = (w // 2, h // 2)
+        pygame.draw.rect(self.screen, (251, 248, 241), box, border_radius=10)
+        pygame.draw.rect(self.screen, DARK_GRAY, box, 1, border_radius=10)
+        self.text("End this game for everyone?", box.x + 18, box.y + 16, self.big)
+        self.text("It stops now with no winner and can't be resumed.", box.x + 18, box.y + 50, self.small, DARK_GRAY)
+        self.text("The score so far is shown and the game is saved.", box.x + 18, box.y + 66, self.small, DARK_GRAY)
+        keep = pygame.Rect(box.right - 290, box.bottom - 48, 150, 32)
+        end = pygame.Rect(box.right - 130, box.bottom - 48, 112, 32)
+        self.confirm_buttons = [(keep, "keep"), (end, "end")]
+        pos = pygame.mouse.get_pos()
+        for r, what in self.confirm_buttons:
+            hov = r.collidepoint(pos)
+            fill = ((200, 40, 40) if hov else (155, 44, 44)) if what == "end" else (YELLOW if hov else LIGHT_GRAY)
+            pygame.draw.rect(self.screen, fill, r, border_radius=6)
+            pygame.draw.rect(self.screen, DARK_GRAY, r, 1, border_radius=6)
+            label = "End game" if what == "end" else "Keep playing"
+            tw = self.font.size(label)[0]
+            self.text(label, r.centerx - tw // 2, r.y + 9, self.font, WHITE if what == "end" else BLACK)
+
+    def send_end_game(self):
+        conn = next((c for s, c in self.conns.items() if s is not None), None)
+        if conn is not None:
+            conn.send({"type": "end_game"})
+            self.status = "ending the game..."
 
     def draw_map(self):
         """The background map, pinned to the hexes by board_config["map_rect"]."""
@@ -477,26 +524,41 @@ class Client:
         # Hovered hex: its city, if any.
         if self.hover:
             c = self.city_at.get(self.hover)
-            yy = h - 150
+            yy = h - 174
             self.text(f"hex {self.hover.x},{self.hover.y},{self.hover.z}", x, yy, self.small, DARK_GRAY)
             if c:
                 self.text(f"{c.name} ({c.culture})", x, yy + 16, self.small)
                 self.text(f"common: {c.common_good}   rare: {c.rare_good}", x, yy + 32, self.small,
                           max_w=mw)
         # Recent moves.
-        yy = h - 96
+        yy = h - 120
         self.text("Recent moves", x, yy, self.small, DARK_GRAY)
         for rec in v["history"][-4:]:
             yy += 18
             col = PLAYER_COLOR_DICT.get(PlayerColor.from_int(rec["seat"]), GRAY)
             pygame.draw.circle(self.screen, col, (x + 5, yy + 6), 4)
             self.text(rec["label"], x + 14, yy, self.small, max_w=mw - 14)
+        # End game: a small link in the bottom corner, away from the move buttons; it
+        # asks "are you sure?" before anything happens.
+        self.end_rect = None
+        if any(s is not None for s in self.conns) and not v.get("result"):
+            label = "End game..."
+            tw, th = self.small.size(label)
+            self.end_rect = pygame.Rect(w - 12 - tw, h - th - 6, tw, th)
+            hov = self.end_rect.collidepoint(pygame.mouse.get_pos())
+            self.text(label, self.end_rect.x, self.end_rect.y, self.small,
+                      (200, 30, 30) if hov else (150, 50, 50))
+            pygame.draw.line(self.screen, (150, 50, 50), self.end_rect.bottomleft, self.end_rect.bottomright)
 
     def draw_result(self, res):
         lines = [l for l in (res.get("score") or "").splitlines() if l.strip() and "====" not in l]
         win = res.get("winner")
-        head = ("Game over: no winner (move cap)" if win is None
-                else f"{self.view['seats'][win]['name']} wins — {res['reason']}")
+        if res.get("ended_by") is not None:
+            head = f"Game ended early by {self.view['seats'][res['ended_by']]['name']}; score so far:"
+        elif win is None:
+            head = "Game over: no winner (move cap)"
+        else:
+            head = f"{self.view['seats'][win]['name']} wins — {res['reason']}"
         bw = self.board_rect().width
         box = pygame.Rect(30, 30, min(620, bw - 60), 40 + 18 * len(lines))
         s = pygame.Surface(box.size, pygame.SRCALPHA)
@@ -512,6 +574,9 @@ class Client:
         dragging, last = False, None
         while True:
             for e in pygame.event.get():
+                if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE and self.confirm_end:
+                    self.confirm_end = False         # Esc closes the box, not the window
+                    continue
                 if e.type == pygame.QUIT or (e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE):
                     pygame.quit()
                     return
@@ -522,7 +587,7 @@ class Client:
                     self.fit()
                 elif e.type == pygame.KEYDOWN and e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                     t = (self.view or {}).get("turn")
-                    if t and t["complete"] and t["seat"] in self.conns:
+                    if t and t["complete"] and t["seat"] in self.conns and not self.confirm_end:
                         self.send_move({"_cmd": "complete_turn", "label": "Complete Turn"})
                 elif e.type == pygame.KEYDOWN and e.key == pygame.K_h:
                     self.show_result = not self.show_result

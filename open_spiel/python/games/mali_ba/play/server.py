@@ -139,7 +139,8 @@ app = FastAPI(title="Mali-Ba game server")
 @app.get("/api/info")
 def info():
     return {"protocol": PROTOCOL, "default_sims": DEFAULT_SIMS, "max_sims": SETTINGS["max_sims"],
-            "num_seats": _game().num_players(), "config_file": os.path.basename(SETTINGS["config_file"])}
+            "num_seats": _game().num_players(), "config_file": os.path.basename(SETTINGS["config_file"]),
+            "rules": SETTINGS.get("rules", {})}
 
 
 MAP_FILE = os.path.join(MALI_BA_DIR, "ui", "mali_ba_map.jpg")
@@ -342,6 +343,20 @@ async def play(ws: WebSocket, gid: str, token: str | None = None):
                         continue
                     await _broadcast(g, None, event=kind)
                 _kick_bots(g)
+            elif kind == "end_game":
+                # Any seated human may stop the game for everyone (clients ask "are you
+                # sure?" first). It is saved like a finished game and leaves the list.
+                if seat is None:
+                    await _send(ws, {"type": "error", "message": "spectators cannot end the game"})
+                    continue
+                async with g.lock:
+                    try:
+                        g.session.end_game(seat)
+                    except IllegalMove as e:
+                        await _send(ws, {"type": "error", "message": str(e)})
+                        continue
+                    await _broadcast(g, None, event="end_game")
+                GAMES.pop(g.id, None)
             elif kind == "view":
                 await _send(ws, {"type": "state", "seq": g.seq, "last_move": None,
                                  "view": g.session.view(for_seat=-1 if seat is None else seat)})
@@ -362,6 +377,36 @@ if os.path.isdir(WEB_DIR):
         return FileResponse(os.path.join(WEB_DIR, "index.html"))
 
 
+# Human play differs from training only in these ini values (each can be changed with
+# --rule KEY=VALUE). block_consecutive_income is a training aid, not a game rule.
+PLAY_RULES = {"block_consecutive_income": "false"}
+
+
+def play_config(path, overrides, out_dir):
+    """A copy of the ini with some values replaced, so human play and training share one
+    ini. A key that isn't in the file is added to [Rules]. Returns the copy's path."""
+    lines = open(path).read().splitlines()
+    done = set()
+    for i, line in enumerate(lines):
+        m = re.match(r"\s*([A-Za-z_]\w*)\s*=", line)
+        if m and m.group(1) in overrides:
+            lines[i] = f"{m.group(1)} = {overrides[m.group(1)]}"
+            done.add(m.group(1))
+    missing = [f"{k} = {v}" for k, v in overrides.items() if k not in done]
+    if missing:
+        at = next((i + 1 for i, l in enumerate(lines) if l.strip() == "[Rules]"), None)
+        if at is None:
+            lines += ["[Rules]"] + missing
+        else:
+            lines[at:at] = missing
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, "play_" + os.path.basename(path))
+    with open(out, "w") as f:
+        f.write("# Written by play/server.py from " + path + "; edit that file instead.\n")
+        f.write("\n".join(lines) + "\n")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--host", default="127.0.0.1",
@@ -373,8 +418,20 @@ def main():
     ap.add_argument("--record_dir", default=os.path.join(HERE, "games_played"),
                     help="finished games are saved here as JSON ('' to turn off)")
     ap.add_argument("--gpu", action="store_true", help="let TensorFlow use the GPU")
+    ap.add_argument("--rule", action="append", default=[], metavar="KEY=VALUE",
+                    help="override an ini value for these games (repeatable); by default "
+                         + ", ".join(f"{k}={v}" for k, v in PLAY_RULES.items()))
     args = ap.parse_args()
-    SETTINGS.update(config_file=os.path.abspath(args.config_file),
+    rules = dict(PLAY_RULES)
+    for r in args.rule:
+        k, sep, v = r.partition("=")
+        if not sep:
+            ap.error(f"--rule needs KEY=VALUE, got {r!r}")
+        rules[k.strip()] = v.strip()
+    config = play_config(os.path.abspath(args.config_file), rules,
+                         os.path.join(HERE, "games_played"))
+    SETTINGS["rules"] = rules
+    SETTINGS.update(config_file=config,
                     models_dir=os.path.abspath(args.models_dir),
                     max_sims=args.max_sims, record_dir=args.record_dir or None)
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
@@ -386,6 +443,7 @@ def main():
     import uvicorn
     print(f"Mali-Ba server on http://{args.host}:{args.port}  (protocol {PROTOCOL}, "
           f"{len(list_models())} models in {SETTINGS['models_dir']})")
+    print(f"rules from {args.config_file}, with " + ", ".join(f"{k} = {v}" for k, v in rules.items()))
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 

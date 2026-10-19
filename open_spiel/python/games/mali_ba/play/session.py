@@ -105,6 +105,7 @@ class GameSession:
         # then the game stays with them: bots don't move and nothing else is legal.
         self._turn = None          # {"seat", "state", "history_len"}
         self.awaiting_complete = None
+        self.ended_by = None       # a human seat that ended the game early
         self._resolve_chance()
         self._start_turn()
 
@@ -120,11 +121,15 @@ class GameSession:
         return str(self._ms().current_phase()).split(".")[-1]
 
     def is_over(self):
+        if self.ended_by is not None:
+            return True
         return self.state.is_terminal() and self.awaiting_complete is None
 
     def current_seat(self):
         """The seat to move, or None when the game is over. A human whose turn is done
         but not yet completed is still the seat to move."""
+        if self.ended_by is not None:
+            return None
         if self.awaiting_complete is not None:
             return self.awaiting_complete
         if self.state.is_terminal():
@@ -181,6 +186,11 @@ class GameSession:
         if not self.is_over():
             return None
         ms = self._ms()
+        if self.ended_by is not None:
+            name = self.seats[self.ended_by]["name"]
+            return {"winner": None, "reason": f"Ended early by {name}", "ended_by": self.ended_by,
+                    "returns": None, "score": ms.get_score_breakdown_string(),
+                    "moves": len(self.history)}
         reason = ms.get_game_end_reason()
         rets = [float(r) for r in self.state.returns()]
         winner = None if "Max game length" in reason else rets.index(max(rets))
@@ -260,6 +270,17 @@ class GameSession:
         self.state = self._turn["state"].clone()
         del self.history[self._turn["history_len"]:]
         self.awaiting_complete = None
+
+    def end_game(self, seat):
+        """A human player stops the game for everyone. No winner; the score so far is
+        reported."""
+        if self.is_over():
+            raise IllegalMove("the game is already over")
+        if seat is None or seat in self._bots or not 0 <= seat < len(self.seats):
+            raise IllegalMove("only a human player can end the game")
+        self.ended_by = seat
+        self.awaiting_complete = None
+        self._turn = None
 
     def _start_turn(self):
         """At the start of a human's turn, keep a copy of the game for Restart Turn."""

@@ -51,6 +51,12 @@ h2 { font-size: 15px; margin: 18px 0 8px; color: var(--muted); text-transform: u
 #moves button { text-align: left; }
 #moves button:hover { background: var(--hi); }
 #status { color: var(--bad); min-height: 1.2em; }
+#endwrap { margin-top: auto; padding-top: 18px; text-align: right; }
+#endbtn { background: none; border: none; color: var(--bad); font-size: 13px; padding: 2px 0; text-decoration: underline; }
+.modal { position: fixed; inset: 0; background: rgba(30, 25, 20, .45); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
+.modalbox { background: var(--panel); border-radius: 12px; padding: 18px 20px; max-width: 380px; width: 100%; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
+.modalbtns { display: flex; gap: 10px; justify-content: flex-end; }
+button.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
 #turnctl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 #turnctl button { padding: 9px 10px; font-weight: 600; }
 #turnctl button:disabled { opacity: .45; cursor: default; border-color: var(--line); }
@@ -124,6 +130,18 @@ svg text { pointer-events: none; }
     </div>
     <div class="legend small muted">
       <span>&#9679; token</span><span>&#9650; post</span><span>&#9632; center</span><span>&middot; meeples</span>
+    </div>
+    <div id="endwrap" class="hidden"><button id="endbtn" title="Stop this game for everyone">End game&hellip;</button></div>
+  </div>
+</div>
+
+<div id="confirmend" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirmtitle">
+  <div class="modalbox">
+    <div id="confirmtitle"><strong>End this game for everyone?</strong></div>
+    <p class="small muted">The game stops now with no winner, and it can't be resumed. The score so far is shown and the game is saved.</p>
+    <div class="modalbtns">
+      <button id="keepbtn" class="primary">Keep playing</button>
+      <button id="reallyendbtn" class="danger">End game</button>
     </div>
   </div>
 </div>
@@ -270,7 +288,7 @@ function openGame(gid) {
     const url = `${proto}//${location.host}/ws/${gid}` + (token ? `?token=${encodeURIComponent(token)}` : "");
     const ws = new WebSocket(url);
     ws.onmessage = ev => onMessage(seat, JSON.parse(ev.data));
-    ws.onclose = () => { if (G && G.gid === gid) { status("Connection lost; reconnecting..."); setTimeout(() => {
+    ws.onclose = () => { if (G && G.gid === gid && !(G.view && G.view.result)) { status("Connection lost; reconnecting..."); setTimeout(() => {
       if (G && G.gid === gid) G.conns[seat] = open(seat, token); }, 2000); } };
     return ws;
   };
@@ -499,10 +517,12 @@ function renderSide() {
   $("history").innerHTML = v.history.slice(-8).reverse().map(h =>
     `<div><span class="dot" style="background:${PLAYER_RGB[h.seat]}"></span>${esc(h.label)}</div>`).join("");
 
+  $("endwrap").classList.toggle("hidden", !G.mine.length || !!v.result);
   const res = $("result");
   if (v.result && G.showResult) {
     const w = v.result.winner;
-    const head = w === null ? "Game over: no winner (move cap)" : `${esc(v.seats[w].name)} wins — ${esc(v.result.reason)}`;
+    const head = v.result.ended_by != null ? `Game ended early by ${esc(v.seats[v.result.ended_by].name)}; score so far:`
+      : w === null ? "Game over: no winner (move cap)" : `${esc(v.seats[w].name)} wins — ${esc(v.result.reason)}`;
     const score = (v.result.score || "").split("\n").filter(l => l.trim() && !l.includes("====")).join("\n");
     res.innerHTML = `<strong>${head}</strong> <button style="float:right" onclick="G.showResult=false;render()">Hide</button><pre>${esc(score)}</pre>`;
     res.classList.remove("hidden");
@@ -531,8 +551,18 @@ $("zfit").onclick = () => fit();
 $("routesbtn").onclick = () => { G.showRoutes = !G.showRoutes; render(); };
 $("lobbybtn").onclick = () => { location.hash = ""; };
 $("restartbtn").onclick = () => send({cmd: "restart_turn"});
+const closeConfirm = () => $("confirmend").classList.add("hidden");
+$("endbtn").onclick = () => { $("confirmend").classList.remove("hidden"); $("keepbtn").focus(); };
+$("keepbtn").onclick = closeConfirm;
+$("confirmend").onclick = e => { if (e.target === $("confirmend")) closeConfirm(); };
+$("reallyendbtn").onclick = () => {
+  closeConfirm();
+  const ws = G && Object.values(G.conns).find(c => c.readyState === 1);
+  if (ws) ws.send(JSON.stringify({type: "end_game"}));
+};
 $("completebtn").onclick = () => send({cmd: "complete_turn"});
 document.addEventListener("keydown", e => {
+  if (!$("confirmend").classList.contains("hidden")) { if (e.key === "Escape") closeConfirm(); return; }
   if (e.key === "Enter" && G && G.view && !$("completebtn").disabled && !$("turnctl").classList.contains("hidden")) send({cmd: "complete_turn"});
 });
 

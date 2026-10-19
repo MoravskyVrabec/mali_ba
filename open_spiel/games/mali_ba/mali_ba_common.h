@@ -413,6 +413,10 @@ namespace open_spiel
       // Setup: tokens are placed in serpentine order (0,1,2,2,1,0,0,1,2) instead of
       // round-robin (0,1,2,0,1,2,...), so seat 0 does not get first pick every round.
       bool serpentine_token_placement = false;
+      // Not a rule of the game: a training aid from early self-play, which forbids
+      // taking income on two turns in a row. On by default so training is unchanged;
+      // the game server turns it off for human play.
+      bool block_consecutive_income = true;
 
       // Scoring Rules
       int score_trading_post   = 4;  // pts per trading post on board

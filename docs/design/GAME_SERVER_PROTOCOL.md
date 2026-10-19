@@ -26,6 +26,12 @@ PYTHONPATH=build/python:open_spiel/python/games:. \
 | `--max_sims` | 1600 | the most simulations a seat may ask for |
 | `--record_dir` | `play/games_played` | finished games saved as JSON; `''` turns it off |
 | `--gpu` | off | let TensorFlow use the GPU (the default leaves it to training) |
+| `--rule KEY=VALUE` | `block_consecutive_income=false` | change one ini value for these games (repeatable) |
+
+The server plays by the same ini as training, except for the values in `--rule`. By
+default only one differs: `block_consecutive_income` (a training aid that forbids taking
+income twice in a row) is off. The server writes the changed copy to
+`play/games_played/play_mali_ba.ini`; edit the original, not the copy.
 
 There is no login. Anyone who can reach the port can create and watch games, so expose it
 only on networks you trust (the LAN, or Tailscale for remote players).
@@ -57,7 +63,8 @@ All bodies are JSON. Errors return a 4xx status with `{"detail": "..."}`.
 
 `GET /api/info` returns:
 ```json
-{"protocol": 2, "default_sims": 300, "max_sims": 1600, "num_seats": 3, "config_file": "mali_ba.ini"}
+{"protocol": 2, "default_sims": 300, "max_sims": 1600, "num_seats": 3,
+ "config_file": "play_mali_ba.ini", "rules": {"block_consecutive_income": "false"}}
 ```
 
 `GET /api/board` returns the board's fixed parts, which a front end needs once:
@@ -125,6 +132,7 @@ Messages the client sends:
 | `{"type": "move", "action": 812}` | play a move: its `action` id or its `name` (e.g. `"MancalaDir_2"`) from `legal_moves` |
 | `{"type": "complete_turn"}` | your turn is done (`view.turn.complete`): pass play to the next player |
 | `{"type": "restart_turn"}` | put the game back to the start of your turn (any time during it, also once it is done) |
+| `{"type": "end_game"}` | stop the game for everyone, from any human seat (clients should ask "are you sure?" first); no winner, the game is saved and leaves the games list |
 | `{"type": "view"}` | ask for the current state again |
 | `{"type": "ping"}` | the server answers `{"type": "pong"}` |
 
@@ -177,7 +185,9 @@ highest `seq`, not the longest history: a restarted turn makes the history short
   turn.
 - `result` is set when the game ends:
   `{"winner": 0 | null, "reason", "returns", "score", "moves"}`. `winner` is `null` when
-  the game reached the move cap. `score` is the engine's score breakdown text.
+  the game reached the move cap. `score` is the engine's score breakdown text. A game
+  stopped with `end_game` has `ended_by` (the seat), no winner, `returns` `null`, and
+  the score so far.
 
 ### Moves
 
@@ -225,6 +235,7 @@ the game. `http://HOST:8765/#g=GAME_ID` is an invite link: it opens the game and
 the open seats. To play, click a highlighted hex or a move button. The wheel zooms;
 right-drag, shift-drag or a touch drag pans. Hovering a move shows it on the board.
 Restart Turn and Complete Turn sit under the prompt; Enter also completes a turn.
+"End game…" at the bottom of the sidebar stops the game after a confirmation.
 
 **Pygame** (`play/pygame_client.py`) needs only pygame, websockets and the mali_ba package
 (`PYTHONPATH=open_spiel/python/games`); it does not need the engine build.
@@ -237,7 +248,8 @@ python -m mali_ba.play.pygame_client --new D040,D039,heuristic --bot_delay 1
 ```
 Add `--server http://HOST:8765` for a server on another machine. To play, click a
 highlighted hex or a move button. The wheel zooms the board and scrolls the move list;
-right-drag pans. Restart Turn and Complete Turn (or Enter) sit in the sidebar. F fits
+right-drag pans. Restart Turn and Complete Turn (or Enter) sit in the sidebar; "End
+game..." in its bottom-right corner stops the game after a confirmation. F fits
 the board, R toggles trade routes, H hides the final score.
 
 ## Versioning
