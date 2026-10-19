@@ -18,3 +18,4 @@ build/
 # Heuristic pretraining data (pretrain_heuristic.py) and its reports
 pretrain_data/
 *.pretrain.json
+open_spiel/python/games/mali_ba/play/games_played/
