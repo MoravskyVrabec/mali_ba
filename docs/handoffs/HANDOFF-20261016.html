@@ -429,6 +429,13 @@ python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_age
     <li><strong>Still to try, one per run:</strong> fast budget 40 → 80; uct_c 0.25 once the value head improves again; a higher learning rate or more policy weight if the gap stays high; make the normalized blend the evaluator default and fix <code>policy_probe.py</code> (TODO).</li>
   </ul>
 
+  <h3 id="d040">10.5 D040 (19 October)</h3>
+  <ul>
+    <li><strong>Run:</strong> 25,000 games from D039, full-search share 0.55, learning rate 0.0001, guidance 0. Search targets sharper (target H 0.661 → 0.595); policy gap flat at 0.223; value head flat (top-pick 81%, mean error 0.347); 97% natural wins; seats 32.6 / 31.4 / 35.5%.</li>
+    <li><strong>Head-to-heads</strong> (guidance 0, uct_c 0.5, both mover-relative): D040 vs D039 <strong>0.358</strong> [0.317, 0.401], a tie; D040 vs D036 <strong>0.391</strong> [0.349, 0.434], stronger, the same margin as D039 vs D036 (0.393). D040 holds D039's strength without adding to it: a plateau.</li>
+    <li><strong>Next, D041:</strong> from D040, <code>--learning_rate 0.00005</code> (the staircase), everything else unchanged. If it ties again, work on the value head (flat for two runs) rather than cutting the rate further.</li>
+  </ul>
+
   <h2 id="play">11. Playing against the models (18 October)</h2>
   <p>A game server now lets any mix of humans and bots play, from any machine that can reach it. The engine holds every rule; the front ends only draw the board and send one of the legal moves the server lists. No C++ changes were needed.</p>
   <ul>
