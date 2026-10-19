@@ -20,7 +20,9 @@ its address, e.g. http://192.168.0.10:8765 or its Tailscale name.
 Needs only pygame and websockets plus the mali_ba package (PYTHONPATH=open_spiel/python/games);
 no engine build. Mouse: click a highlighted hex or a move button; the wheel zooms the board
 and scrolls the move list; right-drag
-pans. Keys: F fits the board, R toggles trade routes, H hides the final score, Esc quits.
+pans. Restart Turn puts the game back to the start of your turn; when your turn is
+done, Complete Turn (or Enter) passes play on. Keys: F fits the board, R toggles trade
+routes, H hides the final score, Esc quits.
 """
 import argparse
 import json
@@ -158,6 +160,7 @@ class Client:
             c.start()
 
         self.views = {}              # seat (or None) -> latest view from that connection
+        self.seqs = {}               # seat (or None) -> the server's number for that view
         self.view = None
         self.selected_hex = None
         self.status = "connecting..."
@@ -222,6 +225,7 @@ class Client:
             t = msg.get("type")
             if t in ("welcome", "state"):
                 self.views[seat] = msg["view"]
+                self.seqs[seat] = msg.get("seq", 0)
                 if t == "welcome":
                     self.status = "connected" + ("" if seat is None else f" as seat {seat}")
                 lm = msg.get("last_move")
@@ -236,9 +240,11 @@ class Client:
     def refresh_view(self):
         if not self.views:
             return
-        any_view = max(self.views.values(), key=lambda v: len(v["history"]) and v["history"][-1]["n"])
+        newest = max(self.seqs.values())
+        any_view = next(self.views[s] for s in self.views if self.seqs[s] == newest)
         cur = any_view["current_seat"]
-        v = self.views.get(cur) if cur in self.views else any_view
+        # The seat to move's own view has its legal moves; use it if it is up to date.
+        v = self.views[cur] if cur in self.views and self.seqs[cur] == newest else any_view
         if v is not self.view:
             self.view = v
             parse_and_update_state_from_json(json.dumps(v["board"]), self.cache)
@@ -273,7 +279,10 @@ class Client:
         conn = self.conns.get(cur)
         if conn is None:
             return
-        conn.send({"type": "move", "action": m["action"]})
+        if "_cmd" in m:                       # Complete Turn / Restart Turn
+            conn.send({"type": m["_cmd"]})
+        else:
+            conn.send({"type": "move", "action": m["action"]})
         self.selected_hex = None
         self.route_filter = set()
         self.status = "sent: " + m["label"]
@@ -398,6 +407,29 @@ class Client:
         y = self.text(self.status, x, y, self.small, (120, 40, 40), mw)
         y += 8
 
+        # Turn controls for a human at this screen: Restart Turn whenever it's their turn,
+        # Complete Turn once their moves have passed play on.
+        turn = v.get("turn")
+        if turn and turn["seat"] == v["current_seat"] and turn["seat"] in self.conns:
+            if turn["complete"]:
+                y = self.text("Your turn is done.", x, y, self.font)
+            half = (mw - 8) // 2
+            controls = [(pygame.Rect(x, y + 2, half, 30), {"_cmd": "restart_turn", "label": "Restart Turn"},
+                         turn["can_restart"], (235, 225, 205)),
+                        (pygame.Rect(x + half + 8, y + 2, half, 30), {"_cmd": "complete_turn", "label": "Complete Turn"},
+                         turn["complete"], (120, 200, 120))]
+            for r, cmd, enabled, col in controls:
+                hov = enabled and r.collidepoint(pygame.mouse.get_pos())
+                fill = (YELLOW if hov else col) if enabled else (238, 236, 232)
+                pygame.draw.rect(self.screen, fill, r, border_radius=6)
+                pygame.draw.rect(self.screen, DARK_GRAY if enabled else GRAY, r, 1, border_radius=6)
+                tw = self.font.size(cmd["label"])[0]
+                self.text(cmd["label"], r.centerx - tw // 2, r.y + 8, self.font,
+                          BLACK if enabled else GRAY)
+                if enabled:
+                    self.buttons.append((r, cmd))
+            y += 40
+
         # Moves: buttons for moves with no hex, and for a hex that has several moves.
         if moves:
             hex_moves = [m for m in moves if m.get("hex")]
@@ -437,8 +469,10 @@ class Client:
                 y = self.text(f"   v {hidden} more (scroll)", x, y, self.small, DARK_GRAY)
         elif not v.get("result"):
             cur = v["current_seat"]
-            if cur is not None:
-                y = self.text(f"Waiting for {v['seats'][cur]['name']}…", x, y, self.font, DARK_GRAY)
+            if cur is not None and cur not in self.conns:
+                done = turn and turn["complete"]
+                y = self.text(f"Waiting for {v['seats'][cur]['name']}" +
+                              (" to complete the turn..." if done else "..."), x, y, self.font, DARK_GRAY)
 
         # Hovered hex: its city, if any.
         if self.hover:
@@ -486,6 +520,10 @@ class Client:
                     self.fit()
                 elif e.type == pygame.KEYDOWN and e.key == pygame.K_f:
                     self.fit()
+                elif e.type == pygame.KEYDOWN and e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    t = (self.view or {}).get("turn")
+                    if t and t["complete"] and t["seat"] in self.conns:
+                        self.send_move({"_cmd": "complete_turn", "label": "Complete Turn"})
                 elif e.type == pygame.KEYDOWN and e.key == pygame.K_h:
                     self.show_result = not self.show_result
                 elif e.type == pygame.KEYDOWN and e.key == pygame.K_r:
@@ -534,8 +572,8 @@ def main():
 
     srv = Server(args.server)
     info = srv.call("GET", "/api/info")
-    if info["protocol"] != 1:
-        sys.exit(f"server speaks protocol {info['protocol']}; this client speaks 1")
+    if info["protocol"] != 2:
+        sys.exit(f"server speaks protocol {info['protocol']}; this client speaks 2")
     board_cfg = srv.call("GET", "/api/board")
     tokens = {}
     if args.new:

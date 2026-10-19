@@ -1,4 +1,4 @@
-# Mali-Ba game server protocol (version 1)
+# Mali-Ba game server protocol (version 2)
 
 The game server (`open_spiel/python/games/mali_ba/play/server.py`) runs games of Mali-Ba.
 Any seat can be a human or a bot. Humans connect from any front end (the pygame GUI, a
@@ -42,7 +42,12 @@ only on networks you trust (the LAN, or Tailscale for remote players).
 5. On every change the server sends each connection a `state` message. When it is your
    seat's turn, the message's `view.legal_moves` is non-empty; send one with a `move`
    message.
-6. When the game ends, `view.result` is set.
+6. A human's turn is several decisions. When the last one passes play on, the turn is
+   done (`view.turn.complete`) but the game waits: send `complete_turn` to let the next
+   player move. Until then, `restart_turn` puts the game back to the start of the turn,
+   as often as you like.
+7. When the game ends, `view.result` is set. A human whose move ends the game completes
+   that turn first.
 
 A token stays valid for the whole game, so a client that drops can reconnect with it.
 
@@ -52,7 +57,7 @@ All bodies are JSON. Errors return a 4xx status with `{"detail": "..."}`.
 
 `GET /api/info` returns:
 ```json
-{"protocol": 1, "default_sims": 300, "max_sims": 1600, "num_seats": 3, "config_file": "mali_ba.ini"}
+{"protocol": 2, "default_sims": 300, "max_sims": 1600, "num_seats": 3, "config_file": "mali_ba.ini"}
 ```
 
 `GET /api/board` returns the board's fixed parts, which a front end needs once:
@@ -118,6 +123,8 @@ Messages the client sends:
 | Message | Meaning |
 |---|---|
 | `{"type": "move", "action": 812}` | play a move: its `action` id or its `name` (e.g. `"MancalaDir_2"`) from `legal_moves` |
+| `{"type": "complete_turn"}` | your turn is done (`view.turn.complete`): pass play to the next player |
+| `{"type": "restart_turn"}` | put the game back to the start of your turn (any time during it, also once it is done) |
 | `{"type": "view"}` | ask for the current state again |
 | `{"type": "ping"}` | the server answers `{"type": "pong"}` |
 
@@ -125,12 +132,17 @@ Messages the server sends:
 
 | Message | When |
 |---|---|
-| `{"type": "welcome", "protocol": 1, "game_id", "seat", "board_config", "view"}` | on connecting; `seat` is `null` for spectators; `board_config` is what `/api/board` returns |
-| `{"type": "state", "last_move", "view"}` | after every move by anyone, and after a seat is claimed (`last_move` is then `null`) |
+| `{"type": "welcome", "protocol": 2, "game_id", "seat", "seq", "board_config", "view"}` | on connecting; `seat` is `null` for spectators; `board_config` is what `/api/board` returns |
+| `{"type": "state", "seq", "last_move", "view"}` | after every move by anyone; after a seat is claimed, and after `complete_turn` or `restart_turn`, `last_move` is `null` and `event` names the command |
 | `{"type": "error", "message"}` | a rejected move or a bad message; the game is unchanged |
 
 A move is rejected when it isn't your turn, the game is over, the connection is a
-spectator, or the move isn't legal now.
+spectator, the move isn't legal now, or your turn is done and waiting for
+`complete_turn`. `complete_turn` is rejected while the turn isn't finished.
+
+`seq` numbers the state messages of a game; the highest is the newest. A client with
+several connections (one per seat at a hot-seat screen) should show the view with the
+highest `seq`, not the longest history: a restarted turn makes the history shorter.
 
 ### The view
 
@@ -147,7 +159,8 @@ spectator, or the move isn't legal now.
               "kind": "place_token", "label": "Place a token on (3,2,-5)", "hex": [3, 2, -5],
               "t": 1792371002.3}, ...],
  "result": null,
- "goods": ["Casava/peanut", ...]}
+ "goods": ["Casava/peanut", ...],
+ "turn": {"seat": 0, "moves": 3, "can_restart": true, "complete": false}}
 ```
 
 - `board` is the engine's own state JSON (`Mali_BaState::Serialize`). Its keys are
@@ -156,7 +169,12 @@ spectator, or the move isn't legal now.
   mancala in progress: `mancalaHex`, `mancalaPath`, `meeplesInHand`, `lastActionHex`),
   `history` and `version`. Hexes are cube coordinates `x,y,z` with x+y+z = 0.
 - `legal_moves` is non-empty only for the seat to move, on its own connection.
-- `history` holds the last 200 decisions.
+- `history` holds the last 200 decisions. A restarted turn's decisions are removed from it.
+- `turn` is set during a human's turn (otherwise `null`): `moves` made so far this turn,
+  `can_restart` (at least one move to undo) and `complete` (the turn is done and waits
+  for `complete_turn`; `legal_moves` is then empty and `current_seat` is still this
+  seat). Bots' turns pass on without waiting. During token placement each placement is a
+  turn.
 - `result` is set when the game ends:
   `{"winner": 0 | null, "reason", "returns", "score", "moves"}`. `winner` is `null` when
   the game reached the move cap. `score` is the engine's score breakdown text.
@@ -206,6 +224,7 @@ and Resume buttons. Seat tokens are kept in the browser, so reloading the page r
 the game. `http://HOST:8765/#g=GAME_ID` is an invite link: it opens the game and offers
 the open seats. To play, click a highlighted hex or a move button. The wheel zooms;
 right-drag, shift-drag or a touch drag pans. Hovering a move shows it on the board.
+Restart Turn and Complete Turn sit under the prompt; Enter also completes a turn.
 
 **Pygame** (`play/pygame_client.py`) needs only pygame, websockets and the mali_ba package
 (`PYTHONPATH=open_spiel/python/games`); it does not need the engine build.
@@ -218,7 +237,8 @@ python -m mali_ba.play.pygame_client --new D040,D039,heuristic --bot_delay 1
 ```
 Add `--server http://HOST:8765` for a server on another machine. To play, click a
 highlighted hex or a move button. The wheel zooms the board and scrolls the move list;
-right-drag pans. F fits the board, R toggles trade routes, H hides the final score.
+right-drag pans. Restart Turn and Complete Turn (or Enter) sit in the sidebar. F fits
+the board, R toggles trade routes, H hides the final score.
 
 ## Versioning
 

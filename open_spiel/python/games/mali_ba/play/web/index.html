@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mali-Ba</title>
-<!-- Web front end for the Mali-Ba game server (protocol 1, docs/design/GAME_SERVER_PROTOCOL.md).
+<!-- Web front end for the Mali-Ba game server (protocol 2, docs/design/GAME_SERVER_PROTOCOL.md).
      No rules here: it draws what the server sends and sends back one of the legal moves. -->
 <style>
 :root {
@@ -51,6 +51,10 @@ h2 { font-size: 15px; margin: 18px 0 8px; color: var(--muted); text-transform: u
 #moves button { text-align: left; }
 #moves button:hover { background: var(--hi); }
 #status { color: var(--bad); min-height: 1.2em; }
+#turnctl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#turnctl button { padding: 9px 10px; font-weight: 600; }
+#turnctl button:disabled { opacity: .45; cursor: default; border-color: var(--line); }
+#completebtn:not(:disabled) { background: #2f7d32; border-color: #2f7d32; }
 #history div { display: flex; gap: 6px; align-items: center; }
 #history .dot { width: 9px; height: 9px; margin: 0; }
 #result { position: absolute; left: 14px; top: 50px; max-width: min(640px, calc(100% - 28px)); max-height: calc(100% - 64px);
@@ -108,6 +112,10 @@ svg text { pointer-events: none; }
     <div id="joinbox" class="hidden small"></div>
     <div id="status" class="small"></div>
     <div id="prompt"></div>
+    <div id="turnctl" class="hidden">
+      <button id="restartbtn" title="Put the game back to the start of your turn">Restart Turn</button>
+      <button id="completebtn" class="primary" title="Pass play to the next player (Enter)">Complete Turn</button>
+    </div>
     <div id="moves"></div>
     <div id="hover" class="small muted"></div>
     <div>
@@ -122,7 +130,7 @@ svg text { pointer-events: none; }
 
 <script>
 "use strict";
-const PROTOCOL = 1;
+const PROTOCOL = 2;
 const PLAYER_RGB = ["#ff5050", "#50d050", "#8c8cff", "#c850ff", "#ff96c8"];
 const MEEPLE_RGB = ["#000000", "#646464", "#c0c0c0", "#dcdcdc", "#ffffff",
                     "#ffd700", "#ffeb9c", "#cd7f32", "#e2ad7d", "#d2b48c"];
@@ -253,7 +261,7 @@ function openGame(gid) {
   location.hash = "g=" + gid;
   $("lobby").classList.add("hidden"); $("game").classList.remove("hidden");
   const tokens = (store("maliba.tokens") || {})[gid] || {};
-  G = {gid, conns: {}, views: {}, view: null, cfg: null, vb: null, selHex: null, filter: new Set(),
+  G = {gid, conns: {}, views: {}, seqs: {}, view: null, cfg: null, vb: null, selHex: null, filter: new Set(),
        showRoutes: true, hoverMove: null, showResult: true, mine: Object.keys(tokens).map(Number)};
   $("gtitle").textContent = "Game " + gid;
   $("role").textContent = G.mine.length ? "you: seat " + G.mine.map(s => s + 1).join(", ") : "watching";
@@ -277,11 +285,11 @@ function onMessage(seat, m) {
     if (m.protocol !== PROTOCOL) status(`Server protocol ${m.protocol}; this page speaks ${PROTOCOL}.`);
     if (!G.cfg) { G.cfg = m.board_config; G.validKeys = new Set(G.cfg.valid_hexes.map(key));
                   G.cityAt = {}; for (const c of G.cfg.cities) G.cityAt[key(c.location)] = c; fit(); }
-    G.views[seat] = m.view;
+    G.views[seat] = m.view; G.seqs[seat] = m.seq || 0;
     if (seat !== "watch") status("");
   } else if (m.type === "state") {
-    G.views[seat] = m.view;
-    if (m.last_move) status("");
+    G.views[seat] = m.view; G.seqs[seat] = m.seq || 0;
+    if (m.last_move || m.event) status("");
   } else if (m.type === "error") {
     status("Rejected: " + m.message);
     return;
@@ -289,12 +297,15 @@ function onMessage(seat, m) {
   pickView();
 }
 function pickView() {
-  const vs = Object.values(G.views);
-  if (!vs.length) return;
-  const latest = vs.reduce((a, b) => (b.history.length && (!a.history.length ||
-                 b.history[b.history.length - 1].n > a.history[a.history.length - 1].n)) ? b : a);
+  // The server numbers its state messages; the highest is the newest (a restarted turn
+  // makes the history shorter, so history length can't tell).
+  const seats = Object.keys(G.views);
+  if (!seats.length) return;
+  const newest = Math.max(...seats.map(s => G.seqs[s]));
+  const latest = G.views[seats.find(s => G.seqs[s] === newest)];
   const cur = latest.current_seat;
-  const v = G.views[cur] && G.views[cur].history.length === latest.history.length ? G.views[cur] : latest;
+  // The seat to move's own view carries its legal moves; use it if it is up to date.
+  const v = G.views[cur] && G.seqs[cur] === newest ? G.views[cur] : latest;
   if (v !== G.view) {
     const before = G.view;
     G.view = v;
@@ -315,7 +326,7 @@ function listedMoves() {
 function send(m) {
   const ws = G.conns[G.view.current_seat];
   if (!ws) return;
-  ws.send(JSON.stringify({type: "move", action: m.action}));
+  ws.send(JSON.stringify(m.cmd ? {type: m.cmd} : {type: "move", action: m.action}));
   G.selHex = null; G.filter.clear(); G.hoverMove = null;
   status("");
 }
@@ -463,10 +474,20 @@ function renderSide() {
     if (routeMoves().length) prompt = `<strong>Choose a trade route.</strong> <span class="small muted">Hover an option to see it; click hexes to show only routes through them${G.filter.size ? ` (${G.filter.size} selected; click again to remove)` : ""}.</span>`;
     else if (moves.some(m => m.hex)) prompt = "<strong>Your move:</strong> <span class='small muted'>click a highlighted hex" + (listed.length ? " or choose below" : "") + ".</span>";
     else prompt = "<strong>Your move:</strong>";
-  } else if (!v.result && v.current_seat !== null) {
-    prompt = `<span class="muted">Waiting for ${esc(v.seats[v.current_seat].name)}…</span>`;
   }
+  const turn = v.turn, myTurn = turn && turn.seat === v.current_seat && G.mine.includes(turn.seat);
+  if (myTurn && turn.complete) prompt = "<strong>Your turn is done.</strong> <span class='small muted'>Complete it to pass play on, or restart it.</span>";
+  else if (!moves.length && !v.result && v.current_seat !== null && !myTurn)
+    prompt = `<span class="muted">Waiting for ${esc(v.seats[v.current_seat].name)}${turn && turn.complete ? " to complete the turn" : ""}…</span>`;
   $("prompt").innerHTML = prompt;
+  // Turn controls for a human at this device: Restart Turn whenever it's their turn,
+  // Complete Turn once their moves have passed play on.
+  const tc = $("turnctl");
+  tc.classList.toggle("hidden", !myTurn);
+  if (myTurn) {
+    $("restartbtn").disabled = !turn.can_restart;
+    $("completebtn").disabled = !turn.complete;
+  }
   const mv = $("moves"); mv.innerHTML = "";
   for (const m of listed) {
     const bt = document.createElement("button"); bt.textContent = m.label;
@@ -509,6 +530,11 @@ $("zout").onclick = () => zoom(1.25);
 $("zfit").onclick = () => fit();
 $("routesbtn").onclick = () => { G.showRoutes = !G.showRoutes; render(); };
 $("lobbybtn").onclick = () => { location.hash = ""; };
+$("restartbtn").onclick = () => send({cmd: "restart_turn"});
+$("completebtn").onclick = () => send({cmd: "complete_turn"});
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && G && G.view && !$("completebtn").disabled && !$("turnctl").classList.contains("hidden")) send({cmd: "complete_turn"});
+});
 
 // ---------- routing ----------
 async function route() {

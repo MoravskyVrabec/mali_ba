@@ -36,7 +36,7 @@ from pydantic import BaseModel
 from mali_ba.play.bots import DEFAULT_SIMS, model_name
 from mali_ba.play.session import GameSession, IllegalMove, board_config
 
-PROTOCOL = 1
+PROTOCOL = 2      # 2: human turns end with complete_turn; restart_turn
 HERE = os.path.dirname(os.path.abspath(__file__))
 MALI_BA_DIR = os.path.dirname(HERE)
 WEB_DIR = os.path.join(HERE, "web")
@@ -101,6 +101,7 @@ class Game:
         self.bot_task = None
         self.created = time.time()
         self.recorded = False
+        self.seq = 0                # numbers the state messages: newest = highest
 
     def summary(self):
         s = self.session
@@ -246,10 +247,14 @@ async def _send(ws, msg):
         pass
 
 
-async def _broadcast(g, last_move):
+async def _broadcast(g, last_move, event=None):
+    g.seq += 1
     for ws, seat in list(g.conns.items()):
-        await _send(ws, {"type": "state", "last_move": last_move,
-                         "view": g.session.view(for_seat=-1 if seat is None else seat)})
+        msg = {"type": "state", "seq": g.seq, "last_move": last_move,
+               "view": g.session.view(for_seat=-1 if seat is None else seat)}
+        if event:
+            msg["event"] = event        # "complete_turn" or "restart_turn"
+        await _send(ws, msg)
     if g.session.is_over() and not g.recorded:
         g.recorded = True
         _record(g)
@@ -300,7 +305,7 @@ async def play(ws: WebSocket, gid: str, token: str | None = None):
             return
         seat = g.tokens[token]
     g.conns[ws] = seat
-    await _send(ws, {"type": "welcome", "protocol": PROTOCOL, "game_id": gid, "seat": seat,
+    await _send(ws, {"type": "welcome", "protocol": PROTOCOL, "game_id": gid, "seat": seat, "seq": g.seq,
                      "board_config": _board_config(),
                      "view": g.session.view(for_seat=-1 if seat is None else seat)})
     try:
@@ -325,8 +330,20 @@ async def play(ws: WebSocket, gid: str, token: str | None = None):
                         continue
                     await _broadcast(g, rec)
                 _kick_bots(g)
+            elif kind in ("complete_turn", "restart_turn"):
+                if seat is None:
+                    await _send(ws, {"type": "error", "message": "spectators cannot play"})
+                    continue
+                async with g.lock:
+                    try:
+                        getattr(g.session, kind)(seat=seat)
+                    except IllegalMove as e:
+                        await _send(ws, {"type": "error", "message": str(e)})
+                        continue
+                    await _broadcast(g, None, event=kind)
+                _kick_bots(g)
             elif kind == "view":
-                await _send(ws, {"type": "state", "last_move": None,
+                await _send(ws, {"type": "state", "seq": g.seq, "last_move": None,
                                  "view": g.session.view(for_seat=-1 if seat is None else seat)})
             else:
                 await _send(ws, {"type": "error", "message": f"unknown message type {kind!r}"})

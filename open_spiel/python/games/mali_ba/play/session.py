@@ -10,12 +10,18 @@ move it can send comes from legal_moves().
             {"type": "network", "weights": "mali_ba_agent_vD039.weights.h5", "sims": 300},
             {"type": "heuristic"}], seed=7)
     while not s.is_over():
-        if s.is_human_turn():
+        if s.awaiting_complete is not None:
+            s.complete_turn()                 # the human confirms the finished turn
+        elif s.is_human_turn():
             moves = s.legal_moves()           # [{"action", "name", "kind", "label", ...}]
             s.apply(moves[0]["action"])       # or the move's name, e.g. "MancalaDir_2"
         else:
             s.bot_move()
     print(s.result())
+
+A human's turn runs until play passes to another seat; the game then waits on that
+human's complete_turn(). Until then restart_turn() puts the game back to the start of
+the turn (any number of times).
 
 Not thread-safe by itself: a server holds one lock per session (bot_move can take
 seconds; run it off the event loop).
@@ -94,7 +100,13 @@ class GameSession:
         self.state = self.game.new_initial_state()
         self._ms().seed_rng(self.seed & 0xFFFFFFFF)   # the heuristic's own randomness
         self.history = []          # [{"n", "seat", "action", "name", "label", "t"}]
+        # A human's turn: a copy of the game from its start (for Restart Turn), and, once
+        # their moves have passed play on, the seat waiting to press Complete Turn. Until
+        # then the game stays with them: bots don't move and nothing else is legal.
+        self._turn = None          # {"seat", "state", "history_len"}
+        self.awaiting_complete = None
         self._resolve_chance()
+        self._start_turn()
 
     # ---- queries -------------------------------------------------------------------
 
@@ -108,10 +120,13 @@ class GameSession:
         return str(self._ms().current_phase()).split(".")[-1]
 
     def is_over(self):
-        return self.state.is_terminal()
+        return self.state.is_terminal() and self.awaiting_complete is None
 
     def current_seat(self):
-        """The seat to move, or None when the game is over."""
+        """The seat to move, or None when the game is over. A human whose turn is done
+        but not yet completed is still the seat to move."""
+        if self.awaiting_complete is not None:
+            return self.awaiting_complete
         if self.state.is_terminal():
             return None
         p = self.state.current_player()
@@ -126,8 +141,9 @@ class GameSession:
         return s is not None and s in self._bots
 
     def legal_moves(self, state_json=None):
-        """The current seat's legal moves, described (see describe.py)."""
-        if self.current_seat() is None:
+        """The current seat's legal moves, described (see describe.py). None while a
+        finished turn waits for Complete Turn."""
+        if self.current_seat() is None or self.awaiting_complete is not None:
             return []
         sj = state_json if state_json is not None else self.state_json()
         moves = [describe_action(self._ms(), a, sj, self.goods_list)
@@ -162,7 +178,7 @@ class GameSession:
     def result(self):
         """None while playing; then winner (None if the move cap ended it), reason,
         returns, the score breakdown and the number of moves."""
-        if not self.state.is_terminal():
+        if not self.is_over():
             return None
         ms = self._ms()
         reason = ms.get_game_end_reason()
@@ -192,7 +208,17 @@ class GameSession:
             "history": self.history[-200:],
             "result": self.result(),
             "goods": self.goods_list,
+            "turn": self.turn_info(),
         }
+
+    def turn_info(self):
+        """For a human's turn: {"seat", "moves" (decisions so far this turn),
+        "can_restart", "complete" (done: waiting for Complete Turn)}; else None."""
+        if self._turn is None:
+            return None
+        made = len(self.history) - self._turn["history_len"]
+        return {"seat": self._turn["seat"], "moves": made, "can_restart": made > 0,
+                "complete": self.awaiting_complete is not None}
 
     # ---- moves ---------------------------------------------------------------------
 
@@ -207,7 +233,39 @@ class GameSession:
             raise IllegalMove(f"it is seat {cur}'s turn, not seat {seat}'s")
         if cur in self._bots:
             raise IllegalMove(f"seat {cur} is a bot")
-        return self._apply(self._to_action(move))
+        if self.awaiting_complete is not None:
+            raise IllegalMove("the turn is done: complete it or restart it")
+        rec = self._apply(self._to_action(move))
+        if self.state.is_terminal() or self.state.current_player() != cur:
+            self.awaiting_complete = cur      # play has passed on: wait for Complete Turn
+        return rec
+
+    def complete_turn(self, seat=None):
+        """The human whose turn is done hands play to the next player."""
+        cur = self.awaiting_complete
+        if cur is None:
+            raise IllegalMove("the turn isn't finished yet")
+        if seat is not None and seat != cur:
+            raise IllegalMove(f"it is seat {cur}'s turn, not seat {seat}'s")
+        self.awaiting_complete = None
+        self._turn = None
+        self._start_turn()
+
+    def restart_turn(self, seat=None):
+        """Puts the game back to the start of the current human's turn."""
+        if self._turn is None:
+            raise IllegalMove("it is not a human's turn")
+        if seat is not None and seat != self._turn["seat"]:
+            raise IllegalMove(f"it is seat {self._turn['seat']}'s turn, not seat {seat}'s")
+        self.state = self._turn["state"].clone()
+        del self.history[self._turn["history_len"]:]
+        self.awaiting_complete = None
+
+    def _start_turn(self):
+        """At the start of a human's turn, keep a copy of the game for Restart Turn."""
+        if self._turn is None and self.is_human_turn():
+            self._turn = {"seat": self.current_seat(), "state": self.state.clone(),
+                          "history_len": len(self.history)}
 
     def bot_move(self):
         """The bot to move makes one decision. Returns the history record."""
@@ -218,7 +276,9 @@ class GameSession:
         a = self._bots[cur].choose(self.state)
         if a not in legal:          # never expected; keep the game going if it happens
             a = self._rng.choice(legal)
-        return self._apply(a)
+        rec = self._apply(a)
+        self._start_turn()
+        return rec
 
     def run_bots(self, on_move=None, max_moves=None):
         """Bots move until a human's turn or the end. on_move(record) after each."""
