@@ -18,11 +18,14 @@ Seat specs: human[:name], heuristic, or a model id from /api/models with an opti
 its address, e.g. http://192.168.0.10:8765 or its Tailscale name.
 
 Needs only pygame and websockets plus the mali_ba package (PYTHONPATH=open_spiel/python/games);
-no engine build. Mouse: click a highlighted hex or a move button; the wheel zooms the board
-and scrolls the move list; right-drag
-pans. Restart Turn puts the game back to the start of your turn; when your turn is
-done, Complete Turn (or Enter) passes play on. Keys: F fits the board, R toggles trade
-routes, H hides the final score, Esc quits. "End game..." (bottom right of the
+no engine build. Mouse: click a highlighted hex or a move button. Mancala steps and token
+placements play on one click; an upgrade or a mancala start opens a menu by the hex
+first. The wheel zooms the board and scrolls the move list; right-drag pans. Restart
+Turn puts the game back to the start of your turn; when your turn is done, Complete
+Turn (or Enter) passes play on. The Routes and Show City Names buttons (top left of the
+board) toggle trade routes and bring city names in front of the pieces (remembered in
+~/.config/mali_ba/pygame_client.json). Keys: F fits the board, R toggles trade routes,
+H hides the final score, Esc closes a menu or quits. "End game..." (bottom right of the
 sidebar) stops the game for everyone after asking.
 """
 import argparse
@@ -40,13 +43,34 @@ from websockets.sync.client import connect
 
 from mali_ba.config import (HEX_SIZE, PLAYER_COLOR_DICT, PlayerColor, WHITE, BLACK,
                             LIGHT_GRAY, DARK_GRAY, GRAY, YELLOW)
-from mali_ba.classes.classes_other import City, HexCoord
+from mali_ba.classes.classes_other import City, HexCoord, TradePostType
 from mali_ba.classes.game_state import GameStateCache
 from mali_ba.ui import visualizer_drawing
-from mali_ba.ui.visualizer_drawing import draw_board_state
 from mali_ba.ui.visualizer_other import parse_and_update_state_from_json
 
 SIDEBAR_W = 340
+# Moves a single click may play at once: frequent and unambiguous. Any other hex move
+# (an upgrade, a mancala start) opens a menu by the hex first, even when it is the only
+# choice there, so a costly decision is never made by one stray click.
+ONE_CLICK = {"mancala_step", "place_token"}
+PREFS_FILE = os.path.expanduser("~/.config/mali_ba/pygame_client.json")
+
+
+def load_prefs():
+    try:
+        with open(PREFS_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_prefs(prefs):
+    try:
+        os.makedirs(os.path.dirname(PREFS_FILE), exist_ok=True)
+        with open(PREFS_FILE, "w") as f:
+            json.dump(prefs, f)
+    except OSError:
+        pass
 MAP_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "ui", "mali_ba_map.jpg")
 
@@ -171,6 +195,11 @@ class Client:
         self.scroll, self.list_key = 0, None
         self.route_filter = set()    # hexes a route must pass through (route choice)
         self.show_result = True
+        self.menu = None             # {"hex", "moves", "pos", "buttons"}: choices for one hex
+        self.prefs = load_prefs()
+        self.names_front = bool(self.prefs.get("names_front", False))
+        self.tool_buttons = []       # [(rect, "routes" | "names")]
+        self.city_fonts = {}
         self.confirm_end = False     # the "end the game?" box is open
         self.end_rect = None
         self.confirm_buttons = []    # [(rect, "end" | "keep")]
@@ -252,6 +281,8 @@ class Client:
         if v is not self.view:
             self.view = v
             parse_and_update_state_from_json(json.dumps(v["board"]), self.cache)
+            if self.menu:
+                self.close_menu()          # the position changed: its choices may not hold
             if self.selected_hex and not self.moves_at(self.selected_hex):
                 self.selected_hex = None
             if not self.route_moves():
@@ -300,6 +331,24 @@ class Client:
                     if what == "end":
                         self.send_end_game()
             return
+        if self.menu:                        # a hex menu is open: its buttons, or close it
+            for r, m in self.menu["buttons"]:
+                if r.collidepoint(pos):
+                    self.close_menu()
+                    if m is not None:
+                        self.send_move(m)
+                    return
+            self.close_menu()
+            return
+        for r, what in self.tool_buttons:
+            if r.collidepoint(pos):
+                if what == "routes":
+                    self.show_routes = not self.show_routes
+                else:
+                    self.names_front = not self.names_front
+                    self.prefs["names_front"] = self.names_front
+                    save_prefs(self.prefs)
+                return
         if self.end_rect and self.end_rect.collidepoint(pos):
             self.confirm_end = True
             return
@@ -320,10 +369,10 @@ class Client:
             self.scroll = 0
             return
         here = self.moves_at(h)
-        if len(here) == 1:
+        if len(here) == 1 and here[0]["kind"] in ONE_CLICK:
             self.send_move(here[0])
         elif here:
-            self.selected_hex = h          # several moves on this hex: pick one in the sidebar
+            self.open_menu(h, here, pos)   # ask first (see ONE_CLICK)
         else:
             self.selected_hex = None
 
@@ -338,16 +387,136 @@ class Client:
                        if self.view and "MANCALA" in self.view["phase"] and mid.get("mancalaHex")
                        else None)
         self.draw_map()
-        draw_board_state(self.screen, self.cache, self.hex_to_pixel, self.zoom, self.fonts,
-                         self.font_sizes, highlight, self.selected_hex or mancala_hex,
-                         show_trade_routes=self.show_routes)
+        self.draw_board(highlight, self.selected_hex or mancala_hex)
+        self.draw_toolbar()
         self.draw_sidebar(moves)
         self.draw_route_marks()
+        if self.menu:
+            self.draw_menu()
         if self.view and self.view.get("result") and self.show_result:
             self.draw_result(self.view["result"])
         if self.confirm_end:
             self.draw_confirm_end()
         pygame.display.flip()
+
+    def draw_board(self, highlight, selected):
+        """The board, drawn here rather than by the old GUI's draw_board_state so the
+        order can differ: city names behind the pieces (unless Show City Names is on)
+        and centers drawn larger than posts."""
+        vd, c, z = visualizer_drawing, self.cache, self.zoom
+        for h in c.valid_hexes:
+            vd.draw_hex_with_transparency(self.screen, h, self.hex_to_pixel, z, self.fonts,
+                                          highlight, selected)
+        if not self.names_front:
+            self.draw_city_names(faded=True)
+        for h, ms in c.hex_meeples.items():
+            if ms and h in c.valid_hexes:
+                vd.draw_meeple_stack(self.screen, h, ms, self.hex_to_pixel, z)
+        for h, posts in c.trade_posts_locations.items():
+            if posts and h in c.valid_hexes:
+                self.draw_posts(h, posts)
+        for h, owners in c.player_token_locations.items():
+            if owners and h in c.valid_hexes:
+                vd.draw_player_tokens(self.screen, h, owners, self.hex_to_pixel, z)
+        if self.show_routes:
+            for route in c.trade_routes or []:
+                if route and route.hexes:
+                    vd.draw_trade_route(self.screen, route, self.hex_to_pixel, z)
+        if self.names_front:
+            self.draw_city_names(faded=False)
+
+    def draw_posts(self, h, posts):
+        """Posts as triangles, centers as larger squares with a white core (positions as
+        in the old drawing code: fanned out from 30 degrees)."""
+        cx, cy = self.hex_to_pixel(h)
+        size = HEX_SIZE / 2.0 * self.zoom
+        if size < 1:
+            return
+        base = max(1.0, size * 0.15)
+        spread = min(20, 60 / len(posts))
+        for i, post in enumerate(posts):
+            a = math.radians(30 + i * spread)
+            x, y = cx + size * 0.65 * math.cos(a), cy + size * 0.65 * math.sin(a)
+            col = PLAYER_COLOR_DICT.get(post.owner, GRAY)
+            if post.type == TradePostType.CENTER:
+                side = base * 2.2
+                r = pygame.Rect(0, 0, round(side), round(side))
+                r.center = (round(x), round(y))
+                pygame.draw.rect(self.screen, col, r)
+                pygame.draw.rect(self.screen, BLACK, r, max(1, round(side / 9)))
+                core = r.inflate(-round(side * 0.6), -round(side * 0.6))
+                pygame.draw.rect(self.screen, WHITE, core)
+                pygame.draw.rect(self.screen, BLACK, core, 1)
+            else:
+                th, tb = base * 1.5, base * 1.2
+                pts = [(round(x), round(y - th / 2)), (round(x - tb / 2), round(y + th / 2)),
+                       (round(x + tb / 2), round(y + th / 2))]
+                pygame.draw.polygon(self.screen, col, pts)
+                pygame.draw.polygon(self.screen, BLACK, pts, 1)
+
+    def draw_city_names(self, faded):
+        size = max(8, int(self.font_sizes["small_font"] * self.zoom * 0.7))
+        font = self.city_fonts.get(size)
+        if font is None:
+            font = self.city_fonts[size] = pygame.font.Font(None, size)
+            font.set_bold(True)
+        ink = (60, 55, 50) if faded else (20, 18, 15)
+        for city in self.cache.cities:
+            if city.location not in self.cache.valid_hexes:
+                continue
+            cx, cy = self.hex_to_pixel(city.location)
+            text = font.render(city.name, True, ink)
+            halo = font.render(city.name, True, WHITE)
+            r = text.get_rect(center=(cx, cy))
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):   # a white outline for contrast
+                self.screen.blit(halo, r.move(dx, dy))
+            self.screen.blit(text, r)
+
+    def draw_toolbar(self):
+        """Routes and Show City Names, over the board's top-left corner (as on the web)."""
+        self.tool_buttons = []
+        x, y = 10, 10
+        for what, label, on in (("routes", "Routes", self.show_routes),
+                                ("names", "Show City Names", self.names_front)):
+            w = self.small.size(label)[0] + 16
+            r = pygame.Rect(x, y, w, 24)
+            hov = r.collidepoint(pygame.mouse.get_pos())
+            fill = (233, 211, 74) if on else ((250, 250, 245) if not hov else (240, 236, 225))
+            pygame.draw.rect(self.screen, fill, r, border_radius=6)
+            pygame.draw.rect(self.screen, DARK_GRAY, r, 1, border_radius=6)
+            self.text(label, r.x + 8, r.y + 6, self.small)
+            self.tool_buttons.append((r, what))
+            x += w + 6
+
+    def open_menu(self, h, moves, pos):
+        self.menu = {"hex": h, "moves": moves, "pos": pos, "buttons": []}
+        self.selected_hex = h
+
+    def close_menu(self):
+        self.menu = None
+        self.selected_hex = None
+
+    def draw_menu(self):
+        """The choices for one hex, beside it, plus Cancel."""
+        items = [(m["label"], m) for m in self.menu["moves"]] + [("Cancel", None)]
+        w = min(320, max(self.font.size(t)[0] for t, _ in items) + 28)
+        h = 8 + 32 * len(items)
+        br = self.board_rect()
+        x = min(self.menu["pos"][0] + 14, br.right - w - 8)
+        y = min(self.menu["pos"][1] + 14, br.bottom - h - 8)
+        box = pygame.Rect(max(8, x), max(8, y), w, h)
+        pygame.draw.rect(self.screen, (251, 248, 241), box, border_radius=9)
+        pygame.draw.rect(self.screen, BLACK, box, 1, border_radius=9)
+        self.menu["buttons"] = []
+        mouse = pygame.mouse.get_pos()
+        for i, (label, m) in enumerate(items):
+            r = pygame.Rect(box.x + 6, box.y + 6 + 32 * i, w - 12, 28)
+            hov = r.collidepoint(mouse)
+            pygame.draw.rect(self.screen, YELLOW if hov else LIGHT_GRAY, r, border_radius=5)
+            pygame.draw.rect(self.screen, DARK_GRAY, r, 1, border_radius=5)
+            self.text(label, r.x + 8, r.y + 7, self.font, DARK_GRAY if m is None else BLACK,
+                      max_w=r.width - 16)
+            self.menu["buttons"].append((r, m))
 
     def draw_confirm_end(self):
         w, h = self.screen.get_size()
@@ -576,6 +745,9 @@ class Client:
             for e in pygame.event.get():
                 if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE and self.confirm_end:
                     self.confirm_end = False         # Esc closes the box, not the window
+                    continue
+                if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE and self.menu:
+                    self.close_menu()                # Esc closes a hex menu, not the window
                     continue
                 if e.type == pygame.QUIT or (e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE):
                     pygame.quit()
