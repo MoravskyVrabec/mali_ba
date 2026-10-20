@@ -42,6 +42,7 @@ h2 { font-size: 15px; margin: 18px 0 8px; color: var(--muted); text-transform: u
 #board { width: 100%; height: 100%; display: block; user-select: none; }
 #boardtools { position: absolute; left: 10px; top: 10px; display: flex; gap: 6px; }
 #boardtools button { padding: 3px 9px; background: rgba(255,255,255,.9); }
+#boardtools button.on { background: var(--hi); border-color: #6b5b00; }
 #side { background: var(--panel); border-left: 1px solid var(--line); padding: 12px 14px; overflow-y: auto;
         display: flex; flex-direction: column; gap: 10px; }
 .seat { display: flex; align-items: flex-start; gap: 8px; padding: 4px 6px; border-radius: 6px; }
@@ -113,6 +114,7 @@ svg text { pointer-events: none; }
       <button id="zin" title="Zoom in">+</button><button id="zout" title="Zoom out">&minus;</button>
       <button id="zfit" title="Fit the board">Fit</button>
       <button id="routesbtn" title="Show or hide trade routes">Routes</button>
+      <button id="namesbtn" title="City names in front of the pieces (off: behind them, so pieces stay visible)">Show City Names</button>
     </div>
     <div id="result" class="hidden"></div>
     <div id="hexmenu" class="hidden" role="menu"></div>
@@ -429,7 +431,10 @@ function renderBoard() {
     el("image", {"pointer-events": "none", href: G.cfg.map_url, x: x * R, y: y * R, width: w * R, height: h * R, preserveAspectRatio: "none", opacity: 0.9}, svg);
   }
   // Pieces never take clicks: a click anywhere on a hex is a click on that hex.
-  const gHex = el("g", {}, svg), gItems = el("g", {"pointer-events": "none"}, svg),
+  // City names sit behind the pieces (gNames) unless Show City Names brings them to
+  // the front (drawn after the pieces); either way they never take clicks.
+  const gHex = el("g", {}, svg), gNames = el("g", {"pointer-events": "none"}, svg),
+        gItems = el("g", {"pointer-events": "none"}, svg),
         gTop = el("g", {"pointer-events": "none"}, svg);
   for (const h of G.cfg.valid_hexes) {
     const k = key(h), c = px(h);
@@ -463,11 +468,13 @@ function renderBoard() {
       else el("polygon", {points: `${x},${y - s * 1.2} ${x - s},${y + s * 0.8} ${x + s},${y + s * 0.8}`, fill: col, stroke: "#000", "stroke-width": 0.6}, gItems);
     });
   }
-  // cities
+  // cities: behind the pieces, faded slightly, unless brought to the front
+  const front = namesFront();
+  const gCity = front ? el("g", {"pointer-events": "none"}) : gNames;
   for (const c of G.cfg.cities) {
     const p = px(c.location);
     el("text", {x: p[0], y: p[1] + 1, "font-size": 6.4, "font-weight": 700, "text-anchor": "middle", fill: "#1d1a16",
-                stroke: "#fff", "stroke-width": 1.6, "paint-order": "stroke"}, gItems).textContent = c.name;
+                stroke: "#fff", "stroke-width": 1.6, "paint-order": "stroke", opacity: front ? 1 : 0.8}, gCity).textContent = c.name;
   }
   // player tokens (circles), upper left of the hex
   for (const [k, owners] of Object.entries(b.playerTokens || {})) {
@@ -480,6 +487,7 @@ function renderBoard() {
   }
   // declared trade routes
   if (G.showRoutes) for (const rt of b.tradeRoutes || []) drawRoute(gItems, rt.hexes.map(h => h.split(",").map(Number)), PLAYER_RGB[rt.owner], 0.55);
+  if (front) svg.insertBefore(gCity, gTop);
   // route choice: filter marks and the hovered option
   for (const k of G.filter) { const c = px(k.split(",").map(Number));
     el("circle", {cx: c[0], cy: c[1], r: R * 0.82, fill: "none", stroke: "#000", "stroke-width": 1.8}, gTop); }
@@ -586,6 +594,15 @@ $("zin").onclick = () => zoom(1 / 1.25);
 $("zout").onclick = () => zoom(1.25);
 $("zfit").onclick = () => fit();
 $("routesbtn").onclick = () => { G.showRoutes = !G.showRoutes; render(); };
+// City names in front of the pieces: a per-browser preference (off = behind).
+function namesFront() { try { return localStorage.getItem("maliba.namesFront") === "1"; } catch (e) { return !!window.__namesFront; } }
+function syncNamesBtn() { $("namesbtn").classList.toggle("on", namesFront()); }
+$("namesbtn").onclick = () => {
+  const v = !namesFront();
+  try { localStorage.setItem("maliba.namesFront", v ? "1" : "0"); } catch (e) { window.__namesFront = v; }
+  syncNamesBtn(); renderBoard();
+};
+syncNamesBtn();
 $("lobbybtn").onclick = () => { location.hash = ""; };
 $("restartbtn").onclick = () => send({cmd: "restart_turn"});
 const closeConfirm = () => $("confirmend").classList.add("hidden");
