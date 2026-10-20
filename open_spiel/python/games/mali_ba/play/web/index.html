@@ -42,6 +42,7 @@ h2 { font-size: 15px; margin: 18px 0 8px; color: var(--muted); text-transform: u
 #board { width: 100%; height: 100%; display: block; user-select: none; }
 #boardtools { position: absolute; left: 10px; top: 10px; display: flex; gap: 6px; }
 #boardtools button { padding: 3px 9px; background: rgba(255,255,255,.9); }
+.swatch { display: inline-block; width: 11px; height: 11px; border: 3px solid; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 #boardtools button.on { background: var(--hi); border-color: #6b5b00; }
 #side { background: var(--panel); border-left: 1px solid var(--line); padding: 12px 14px; overflow-y: auto;
         display: flex; flex-direction: column; gap: 10px; }
@@ -114,6 +115,7 @@ svg text { pointer-events: none; }
       <button id="zin" title="Zoom in">+</button><button id="zout" title="Zoom out">&minus;</button>
       <button id="zfit" title="Fit the board">Fit</button>
       <button id="routesbtn" title="Show or hide trade routes">Routes</button>
+      <button id="regionsbtn" class="hidden" title="Outline each region in its own colour (borders between regions in grey)">Show Regions</button>
       <button id="namesbtn" title="City names in front of the pieces (off: behind them, so pieces stay visible)">Show City Names</button>
     </div>
     <div id="result" class="hidden"></div>
@@ -139,6 +141,7 @@ svg text { pointer-events: none; }
     <div class="legend small muted">
       <span>&#9679; token</span><span>&#9650; post</span><span>&#9632; center</span><span>&middot; meeples</span>
     </div>
+    <div id="regionlegend" class="legend small hidden"></div>
     <div id="endwrap" class="hidden"><button id="endbtn" title="Stop this game for everyone">End game&hellip;</button></div>
   </div>
 </div>
@@ -310,7 +313,7 @@ function onMessage(seat, m) {
   if (m.type === "welcome") {
     if (m.protocol !== PROTOCOL) status(`Server protocol ${m.protocol}; this page speaks ${PROTOCOL}.`);
     if (!G.cfg) { G.cfg = m.board_config; G.validKeys = new Set(G.cfg.valid_hexes.map(key));
-                  G.cityAt = {}; for (const c of G.cfg.cities) G.cityAt[key(c.location)] = c; fit(); }
+                  G.cityAt = {}; for (const c of G.cfg.cities) G.cityAt[key(c.location)] = c; fit(); syncRegionsBtn(); }
     G.views[seat] = m.view; G.seqs[seat] = m.seq || 0;
     if (seat !== "watch") status("");
   } else if (m.type === "state") {
@@ -433,7 +436,8 @@ function renderBoard() {
   // Pieces never take clicks: a click anywhere on a hex is a click on that hex.
   // City names sit behind the pieces (gNames) unless Show City Names brings them to
   // the front (drawn after the pieces); either way they never take clicks.
-  const gHex = el("g", {}, svg), gNames = el("g", {"pointer-events": "none"}, svg),
+  const gHex = el("g", {}, svg), gRegions = el("g", {"pointer-events": "none"}, svg),
+        gNames = el("g", {"pointer-events": "none"}, svg),
         gItems = el("g", {"pointer-events": "none"}, svg),
         gTop = el("g", {"pointer-events": "none"}, svg);
   for (const h of G.cfg.valid_hexes) {
@@ -444,6 +448,7 @@ function renderBoard() {
     p.addEventListener("mouseenter", () => showHover(k));
     el("text", {x: c[0], y: c[1] - R * 0.62, "font-size": 4.2, "text-anchor": "middle", fill: "#5b5248"}, gHex).textContent = k;
   }
+  if (showRegions()) drawRegions(gRegions);
   // meeples: small dots in rows along the lower half of the hex
   for (const [k, ms] of Object.entries(b.hexMeeples || {})) {
     if (!G.validKeys.has(k) || !ms.length) continue;
@@ -495,6 +500,36 @@ function renderBoard() {
   if (G.hoverMove && G.hoverMove.hex) { const c = px(G.hoverMove.hex);
     el("circle", {cx: c[0], cy: c[1], r: R * 0.85, fill: "none", stroke: "#000", "stroke-width": 2.2}, gTop); }
 }
+// ---------- regions ----------
+// Colour-blind-safe region colours (Okabe-Ito); the same list in pygame_client.py. Yellow
+// comes late: it is too close to the yellow that highlights playable hexes.
+const REGION_RGB = ["#E69F00", "#56B4E9", "#009E73", "#CC79A7", "#0072B2", "#D55E00", "#F0E442", "#999933"];
+const REGION_SHARED = "#8a8a8a";      // an edge between two regions
+// Neighbour direction -> the hex edge facing it (flat-top corners at 0, 60, ... degrees).
+const HEX_DIRS = [[1,-1,0],[1,0,-1],[0,1,-1],[-1,1,0],[-1,0,1],[0,-1,1]];
+const DIR_EDGE = HEX_DIRS.map(d => { const p = px(d); const a = Math.atan2(p[1], p[0]) * 180 / Math.PI;
+  return (((Math.round((a - 30) / 60)) % 6) + 6) % 6; });
+function regionOf() {
+  if (!G.regionOf) { G.regionOf = {}; (G.cfg.regions || []).forEach((r, i) => r.hexes.forEach(h => G.regionOf[key(h)] = i)); }
+  return G.regionOf;
+}
+function drawRegions(g) {
+  const of = regionOf();
+  for (const [k, ri] of Object.entries(of)) {
+    const h = k.split(",").map(Number), c = px(h);
+    HEX_DIRS.forEach((d, di) => {
+      const nk = key([h[0] + d[0], h[1] + d[1], h[2] + d[2]]), other = of[nk];
+      const shared = other !== undefined && other !== ri;
+      const e = DIR_EDGE[di], a0 = Math.PI / 3 * e, a1 = Math.PI / 3 * (e + 1), k2 = 0.9;  // inset a little
+      el("line", {x1: c[0] + R * k2 * Math.cos(a0), y1: c[1] + R * k2 * Math.sin(a0),
+                  x2: c[0] + R * k2 * Math.cos(a1), y2: c[1] + R * k2 * Math.sin(a1),
+                  stroke: shared ? REGION_SHARED : REGION_RGB[ri % REGION_RGB.length],
+                  "stroke-width": shared ? 1.6 : 2.4, "stroke-linecap": "round"}, g);
+    });
+  }
+}
+function showRegions() { try { return localStorage.getItem("maliba.regions") === "1"; } catch (e) { return !!window.__regions; } }
+
 function drawRoute(g, hexes, col, op, big) {
   const pts = hexes.map(px).map(p => p.join(",")).join(" ");
   if (hexes.length > 1) {
@@ -603,6 +638,20 @@ $("namesbtn").onclick = () => {
   syncNamesBtn(); renderBoard();
 };
 syncNamesBtn();
+function syncRegionsBtn() {
+  const has = !!(G && G.cfg && (G.cfg.regions || []).length);
+  $("regionsbtn").classList.toggle("hidden", !has);
+  $("regionsbtn").classList.toggle("on", showRegions());
+  const leg = $("regionlegend");
+  leg.classList.toggle("hidden", !has || !showRegions());
+  if (has) leg.innerHTML = G.cfg.regions.map((r, i) =>
+    `<span><span class="swatch" style="border-color:${REGION_RGB[i % REGION_RGB.length]}"></span>${esc(r.name)}</span>`).join("");
+}
+$("regionsbtn").onclick = () => {
+  const v = !showRegions();
+  try { localStorage.setItem("maliba.regions", v ? "1" : "0"); } catch (e) { window.__regions = v; }
+  syncRegionsBtn(); renderBoard();
+};
 $("lobbybtn").onclick = () => { location.hash = ""; };
 $("restartbtn").onclick = () => send({cmd: "restart_turn"});
 const closeConfirm = () => $("confirmend").classList.add("hidden");

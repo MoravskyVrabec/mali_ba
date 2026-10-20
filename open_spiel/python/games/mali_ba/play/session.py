@@ -67,7 +67,22 @@ def board_config(game):
         "meeple_colors": MEEPLE_COLORS,
         "post_types": {"1": "post", "2": "center"},
         "map_rect": MAP_RECT,
+        "regions": _regions(g),
     }
+
+
+def _regions(g):
+    """[{"id", "name", "hexes"}] from the engine; [] with an engine built before the
+    region bindings (2026-10-19), so clients just hide the regions toggle."""
+    if not hasattr(g, "get_region_for_hex"):
+        return []
+    by_id = {}
+    for h in g.get_valid_hexes():
+        rid = g.get_region_for_hex(h)
+        if rid >= 0:
+            by_id.setdefault(rid, []).append([h.x, h.y, h.z])
+    return [{"id": rid, "name": g.get_region_name(rid), "hexes": sorted(by_id.get(rid, []))}
+            for rid in g.get_valid_region_ids()]
 
 
 class GameSession:

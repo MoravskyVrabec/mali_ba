@@ -23,7 +23,8 @@ placements play on one click; an upgrade or a mancala start opens a menu by the 
 first. The wheel zooms the board and scrolls the move list; right-drag pans. Restart
 Turn puts the game back to the start of your turn; when your turn is done, Complete
 Turn (or Enter) passes play on. The Routes and Show City Names buttons (top left of the
-board) toggle trade routes and bring city names in front of the pieces (remembered in
+board) toggle trade routes and bring city names in front of the pieces; Show Regions
+outlines each region in its own colour (both remembered in
 ~/.config/mali_ba/pygame_client.json). Keys: F fits the board, R toggles trade routes,
 H hides the final score, Esc closes a menu or quits. "End game..." (bottom right of the
 sidebar) stops the game for everyone after asking.
@@ -53,6 +54,12 @@ SIDEBAR_W = 340
 # (an upgrade, a mancala start) opens a menu by the hex first, even when it is the only
 # choice there, so a costly decision is never made by one stray click.
 ONE_CLICK = {"mancala_step", "place_token"}
+# Colour-blind-safe region colours (Okabe-Ito), as in web/index.html; grey = an edge
+# between two regions. Yellow comes late: too close to the playable-hex highlight.
+REGION_RGB = [(0xE6, 0x9F, 0x00), (0x56, 0xB4, 0xE9), (0x00, 0x9E, 0x73), (0xCC, 0x79, 0xA7),
+              (0x00, 0x72, 0xB2), (0xD5, 0x5E, 0x00), (0xF0, 0xE4, 0x42), (0x99, 0x99, 0x33)]
+REGION_SHARED = (0x8A, 0x8A, 0x8A)
+HEX_DIRS = ((1, -1, 0), (1, 0, -1), (0, 1, -1), (-1, 1, 0), (-1, 0, 1), (0, -1, 1))
 PREFS_FILE = os.path.expanduser("~/.config/mali_ba/pygame_client.json")
 
 
@@ -198,6 +205,9 @@ class Client:
         self.menu = None             # {"hex", "moves", "pos", "buttons"}: choices for one hex
         self.prefs = load_prefs()
         self.names_front = bool(self.prefs.get("names_front", False))
+        self.show_regions = bool(self.prefs.get("regions", False))
+        self.region_of = {HexCoord(*h): i for i, r in enumerate(board_cfg.get("regions") or [])
+                          for h in r["hexes"]}
         self.tool_buttons = []       # [(rect, "routes" | "names")]
         self.city_fonts = {}
         self.confirm_end = False     # the "end the game?" box is open
@@ -344,6 +354,10 @@ class Client:
             if r.collidepoint(pos):
                 if what == "routes":
                     self.show_routes = not self.show_routes
+                elif what == "regions":
+                    self.show_regions = not self.show_regions
+                    self.prefs["regions"] = self.show_regions
+                    save_prefs(self.prefs)
                 else:
                     self.names_front = not self.names_front
                     self.prefs["names_front"] = self.names_front
@@ -389,6 +403,8 @@ class Client:
         self.draw_map()
         self.draw_board(highlight, self.selected_hex or mancala_hex)
         self.draw_toolbar()
+        if self.show_regions and self.region_of:
+            self.draw_region_legend()
         self.draw_sidebar(moves)
         self.draw_route_marks()
         if self.menu:
@@ -407,6 +423,8 @@ class Client:
         for h in c.valid_hexes:
             vd.draw_hex_with_transparency(self.screen, h, self.hex_to_pixel, z, self.fonts,
                                           highlight, selected)
+        if self.show_regions and self.region_of:
+            self.draw_regions()
         if not self.names_front:
             self.draw_city_names(faded=True)
         for h, ms in c.hex_meeples.items():
@@ -424,6 +442,39 @@ class Client:
                     vd.draw_trade_route(self.screen, route, self.hex_to_pixel, z)
         if self.names_front:
             self.draw_city_names(faded=False)
+
+    def draw_regions(self):
+        """Each region's hexes outlined in its colour; an edge between two regions grey."""
+        size = HEX_SIZE / 2.0 * self.zoom * 0.9           # inset a little inside the hex
+        width = max(2, round(size * 0.13))
+        for h, ri in self.region_of.items():
+            cx, cy = self.hex_to_pixel(h)
+            for d in HEX_DIRS:
+                n = HexCoord(h.x + d[0], h.y + d[1], h.z + d[2])
+                other = self.region_of.get(n)
+                shared = other is not None and other != ri
+                nx, ny = self.hex_to_pixel(n)                  # the edge facing that neighbour
+                e = round((math.degrees(math.atan2(ny - cy, nx - cx)) - 30) / 60) % 6
+                a0, a1 = math.radians(60 * e), math.radians(60 * (e + 1))
+                pygame.draw.line(self.screen, REGION_SHARED if shared else REGION_RGB[ri % len(REGION_RGB)],
+                                 (round(cx + size * math.cos(a0)), round(cy + size * math.sin(a0))),
+                                 (round(cx + size * math.cos(a1)), round(cy + size * math.sin(a1))),
+                                 max(1, width - 1) if shared else width)
+
+    def draw_region_legend(self):
+        regions = self.cfg.get("regions") or []
+        br = self.board_rect()
+        h = 10 + 18 * len(regions)
+        w = 12 + max(self.small.size(r["name"])[0] for r in regions) + 26
+        box = pygame.Rect(10, br.bottom - h - 10, w, h)
+        bg = pygame.Surface(box.size, pygame.SRCALPHA)
+        bg.fill((255, 255, 255, 215))
+        self.screen.blit(bg, box.topleft)
+        pygame.draw.rect(self.screen, DARK_GRAY, box, 1, border_radius=6)
+        for i, r in enumerate(regions):
+            y = box.y + 6 + 18 * i
+            pygame.draw.rect(self.screen, REGION_RGB[i % len(REGION_RGB)], (box.x + 8, y + 1, 14, 12), 3)
+            self.text(r["name"], box.x + 28, y, self.small)
 
     def draw_posts(self, h, posts):
         """Posts as triangles, centers as larger squares with a white core (positions as
@@ -476,8 +527,11 @@ class Client:
         """Routes and Show City Names, over the board's top-left corner (as on the web)."""
         self.tool_buttons = []
         x, y = 10, 10
-        for what, label, on in (("routes", "Routes", self.show_routes),
-                                ("names", "Show City Names", self.names_front)):
+        tools = [("routes", "Routes", self.show_routes)]
+        if self.region_of:
+            tools.append(("regions", "Show Regions", self.show_regions))
+        tools.append(("names", "Show City Names", self.names_front))
+        for what, label, on in tools:
             w = self.small.size(label)[0] + 16
             r = pygame.Rect(x, y, w, 24)
             hov = r.collidepoint(pygame.mouse.get_pos())

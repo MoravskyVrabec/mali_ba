@@ -129,6 +129,10 @@ void init_pyspiel_games_mali_ba(::pybind11::module &m) {
             return std::vector<mali_ba::HexCoord>(hex_set.begin(), hex_set.end());
         })
         .def("get_cities", &mali_ba::Mali_BaGame::GetCities, py::return_value_policy::reference_internal)
+        // Regions (read-only, for display): region id of a hex (-1 = none), names, ids.
+        .def("get_region_for_hex", &mali_ba::Mali_BaGame::GetRegionForHex)
+        .def("get_region_name", &mali_ba::Mali_BaGame::GetRegionName)
+        .def("get_valid_region_ids", &mali_ba::Mali_BaGame::GetValidRegionIds)
         .def("get_training_parameters", &mali_ba::Mali_BaGame::GetTrainingParameters, py::return_value_policy::reference_internal)
         .def("new_initial_state",
             static_cast<std::unique_ptr<open_spiel::State> (open_spiel::mali_ba::Mali_BaGame::*)() const>(

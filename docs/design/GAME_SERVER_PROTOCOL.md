@@ -76,8 +76,12 @@ All bodies are JSON. Errors return a 4xx status with `{"detail": "..."}`.
  "meeple_colors": ["solid black", "clear black", ...],
  "post_types": {"1": "post", "2": "center"},
  "map_rect": [-11.214, -7.147, 21.824, 16.034],
- "map_url": "/api/map"}
+ "map_url": "/api/map",
+ "regions": [{"id": 1, "name": "Desert West", "hexes": [[-5, 0, 5], ...]}, ...]}
 ```
+`regions` comes from the engine (the hexes each region holds, as used in scoring); it is
+empty with an engine built before 19 October 2026, and clients then hide their Show
+Regions toggle.
 `map_rect` places the background map (`GET /api/map`, a JPEG) relative to the hexes:
 x, y, width and height, in hex radii from the centre of hex (0,0,0). Screen y points
 down, and hexes are flat-topped, so hex (q,r,s) is centred at (1.5 q, √3 (r − s) / 2).
@@ -236,6 +240,9 @@ the open seats. To play, click a highlighted hex or a move button. The wheel zoo
 right-drag, shift-drag or a touch drag pans. Hovering a move shows it on the board.
 Restart Turn and Complete Turn sit under the prompt; Enter also completes a turn.
 "End game…" at the bottom of the sidebar stops the game after a confirmation.
+Show Regions outlines each region's hexes in its own colour (edges between two regions
+in grey) and adds a colour key; Show City Names brings names in front of the pieces.
+Both are remembered per browser.
 
 **Pygame** (`play/pygame_client.py`) needs only pygame, websockets and the mali_ba package
 (`PYTHONPATH=open_spiel/python/games`); it does not need the engine build.
