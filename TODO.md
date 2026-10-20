@@ -2,6 +2,12 @@
 
 ## FIRST: desktop memory errors (added 2026-10-11)
 
+**Status 2026-10-19: no recurrence.** No machine-check errors in the kernel logs since
+2026-10-12, `HardwareCorrupted: 0 kB` (since the reboot of 2026-10-19 18:04), and runs
+D021-D041 finished cleanly. The user thinks it was a one-off; kept here to watch. Quick
+check: `grep HardwareCorrupted /proc/meminfo` and
+`journalctl -k --since YYYY-MM-DD | grep -i "memory corruption"`.
+
 The desktop is reporting uncorrectable RAM errors. On 2026-10-11 the kernel killed
 68 Python processes with machine-check exceptions ("MCE: Killing python ... due to
 hardware memory corruption fault"), from 16:14 on; most were D020 actors (silently
