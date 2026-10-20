@@ -436,6 +436,13 @@ python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_age
     <li><strong>Next, D041:</strong> from D040, <code>--learning_rate 0.00005</code> (the staircase), everything else unchanged. If it ties again, work on the value head (flat for two runs) rather than cutting the rate further.</li>
   </ul>
 
+  <h3 id="d041">10.6 D041 (19 October)</h3>
+  <ul>
+    <li><strong>Run:</strong> 15,000 games from D040 at learning rate 0.00005 (2,250 training steps, sample reuse 2.9x). Policy gap 0.222 → 0.218 (lowest yet); value head unchanged for a third run (81%, 0.347); 97% natural wins; Timbuktu wins rising late in the run (29-47% of samples vs ~20% in D040).</li>
+    <li><strong>Head-to-heads:</strong> D041 vs D040 <strong>0.352</strong> [0.311, 0.395], a tie; D041 vs D036 <strong>0.412</strong> [0.370, 0.456], higher than D039 (0.393) and D040 (0.391) against D036, but within noise. Small signs all point upward. D041 handed 31 of 220 ended games to the opponent (14%, vs 9-11% before): watch.</li>
+    <li><strong>Next, D042:</strong> from D041, learning rate 0.00005, a full 25,000 games. Clear gain (vs D036 ~0.43+, or beats D041) = keep the staircase; a tie = start the value-head work (flat for three runs).</li>
+  </ul>
+
   <h2 id="play">11. Playing against the models (18 October)</h2>
   <p>A game server now lets any mix of humans and bots play, from any machine that can reach it. The engine holds every rule; the front ends only draw the board and send one of the legal moves the server lists. No C++ changes were needed.</p>
   <ul>
