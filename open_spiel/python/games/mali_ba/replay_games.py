@@ -8,9 +8,10 @@ main-play decision:
     Actor 52, Game 1234, Move 17: Player 1 plays 'MancalaDir_4'
     Actor 52, Game 1234: FINISHED in 342 moves. ... Reason: '...'
 So each finished game can be rebuilt exactly and any board quantity measured at any
-point. Every logged move is checked against the legal moves; a game whose move is not
-legal is counted as a failure and dropped (it would mean the ini does not match the
-run's rules).
+point. Every logged move is checked against the legal moves, and the player to move
+against the log. On the first mismatch the script stops with a message naming the log,
+game and move (usually the ini or the engine build does not match the run's rules);
+--keep_going drops such games instead and counts them in the summary.
 
 Only games the desktop played are replayable: remote (laptop) games log their result
 but not their moves ("no moves/setup logged" in the summary).
@@ -27,7 +28,7 @@ at every step) and to summarize.
 Usage (from open_spiel/python/games/mali_ba, with the usual PYTHONPATH; single
 process, ~17 games/s, safe to run at low priority beside training):
     nice -n 19 python replay_games.py /media/robp/UD/Projects/open_spiel/train_runD041.log \
-        [--json records.json] [--max_games 500] [--config_file mali_ba.ini]
+        [--json records.json] [--max_games 500] [--config_file mali_ba.ini] [--keep_going]
 """
 
 import argparse
@@ -35,6 +36,7 @@ import json
 import os
 import re
 import statistics as st
+import sys
 import time
 from collections import defaultdict
 
@@ -49,6 +51,14 @@ TIMEOUT_REASON = "Max game length"
 CURVE_EVERY = 50
 
 
+class ReplayMismatch(Exception):
+    """A logged game the engine cannot reproduce."""
+
+    def __init__(self, kind, reason, detail=""):
+        super().__init__(reason)
+        self.kind, self.reason, self.detail = kind, reason, detail
+
+
 def board_counts(state, num_hexes):
     """(meeples on the board or in hand, empty hexes)."""
     j = json.loads(pyspiel.mali_ba.downcast_state(state).serialize())
@@ -59,44 +69,48 @@ def board_counts(state, num_hexes):
             num_hexes - sum(1 for v in hm.values() if v))
 
 
-def apply_string(state, wanted):
-    """Applies the legal action whose string is `wanted`; False if there is none."""
+def apply_string(state, wanted, where):
+    """Applies the legal action whose string is `wanted`; raises ReplayMismatch if none."""
     player = state.current_player()
-    for a in state.legal_actions():
-        if state.action_to_string(player, a) == wanted:
-            state.apply_action(a)
-            return True
-    return False
+    legal = [state.action_to_string(player, a) for a in state.legal_actions()]
+    if wanted not in legal:
+        shown = ", ".join(legal[:12]) + (f", ... ({len(legal)} in all)" if len(legal) > 12 else "")
+        raise ReplayMismatch(f"{where.split()[0]} not legal", f"{where}: '{wanted}' is not legal",
+                             f"player {player} to move; legal: {shown or 'none'}")
+    state.apply_action(state.legal_actions()[legal.index(wanted)])
 
 
 def replay_game(game, num_hexes, setup, tokens, moves):
-    """Rebuilds one game; returns (record, None) or (None, failure reason)."""
+    """Rebuilds one game and returns its record; raises ReplayMismatch if it can't."""
     place_phase = pyspiel.mali_ba.Phase.PLACE_TOKEN
     play_phase = getattr(pyspiel.mali_ba.Phase, "PLAY", None)
     state = game.new_initial_state()
-    if not apply_string(state, setup):
-        return None, "setup not legal"
+    apply_string(state, setup, "setup")
     start_meeples, _ = board_counts(state, num_hexes)
     queues = {p: list(t) for p, t in tokens.items()}
     while (not state.is_terminal()
            and pyspiel.mali_ba.downcast_state(state).current_phase() == place_phase):
         p = state.current_player()
-        if not queues.get(p) or not apply_string(state, "PlaceToken_" + queues[p].pop(0)):
-            return None, "placement not legal"
+        if not queues.get(p):
+            raise ReplayMismatch("token missing", "token placement: the SETUP line has no token left for "
+                                 f"player {p}", f"tokens logged: {tokens}")
+        apply_string(state, "PlaceToken_" + queues[p].pop(0), "token placement")
 
     removed_by = defaultdict(int)
     curve, turn_options = {}, []
     prev, _ = board_counts(state, num_hexes)
     for i, (player, move) in enumerate(moves):
         if state.is_terminal():
-            return None, "game ended before the logged moves did"
+            raise ReplayMismatch("game over early", f"move {i}: the game is already over, but the log has "
+                                 f"{len(moves) - i} more moves",
+                                 f"end reason: {pyspiel.mali_ba.downcast_state(state).get_game_end_reason()}")
         if state.current_player() != player:
-            return None, "player to move differs from the log"
+            raise ReplayMismatch("wrong player", f"move {i}: the log has player {player} to move, the engine "
+                                 f"player {state.current_player()}", f"logged move: '{move}'")
         if (play_phase is not None
                 and pyspiel.mali_ba.downcast_state(state).current_phase() == play_phase):
             turn_options.append((i, len(state.legal_actions())))
-        if not apply_string(state, move):
-            return None, "logged move not legal"
+        apply_string(state, move, f"move {i}")
         now, empty = board_counts(state, num_hexes)
         if now != prev:
             removed_by[move.split("_")[0]] += prev - now
@@ -108,11 +122,14 @@ def replay_game(game, num_hexes, setup, tokens, moves):
     return {"start_meeples": start_meeples, "end_meeples": end_meeples,
             "end_empty": end_empty, "moves": len(moves), "terminal": state.is_terminal(),
             "removed_by": dict(removed_by), "curve": curve,
-            "turn_options": turn_options}, None
+            "turn_options": turn_options}
 
 
-def replay_log(path, game, num_hexes, max_games, progress_every=1000):
-    """Streams a training log; replays each game as its FINISHED line arrives."""
+def replay_log(path, game, num_hexes, max_games, keep_going=False, progress_every=1000):
+    """Streams a training log; replays each game as its FINISHED line arrives.
+
+    Raises ReplayMismatch (with the log and game added) on the first game the engine
+    cannot reproduce, unless keep_going, which drops and counts it instead."""
     setups, moves = {}, defaultdict(list)
     records, failures = [], defaultdict(int)
     t0 = time.time()
@@ -148,10 +165,18 @@ def replay_log(path, game, num_hexes, max_games, progress_every=1000):
                 if not game_moves or setup is None:
                     failures["no moves/setup logged (remote game)"] += 1
                     continue
-                rec, err = replay_game(game, num_hexes, setup[0], setup[1], game_moves)
-                if err:
-                    failures[err] += 1
-                    continue
+                try:
+                    rec = replay_game(game, num_hexes, setup[0], setup[1], game_moves)
+                except (ReplayMismatch, pyspiel.SpielError) as e:
+                    if not isinstance(e, ReplayMismatch):
+                        e = ReplayMismatch("engine error", f"engine error: {e}")
+                    if keep_going:
+                        failures["not reproducible: " + e.kind] += 1
+                        continue
+                    e.where = (f"{os.path.basename(path)}, Actor {key[0]}, Game {key[1]} "
+                               f"({setup[0]}, finished in {m[3]} moves, '{m[4]}')")
+                    e.replayed = len(records)
+                    raise e
                 rec["reason"] = m[4]
                 rec["log"] = os.path.basename(path)
                 records.append(rec)
@@ -217,14 +242,28 @@ def main():
                     help="ini with the rules the run used (default: the current one)")
     ap.add_argument("--max_games", type=int, default=10**9, help="per log")
     ap.add_argument("--json", help="write every game's record to this file")
+    ap.add_argument("--keep_going", action="store_true",
+                    help="drop games the engine cannot reproduce instead of stopping")
     args = ap.parse_args()
 
     game = pyspiel.load_game("mali_ba", {"config_file": args.config_file})
     num_hexes = len(pyspiel.mali_ba.downcast_game(game).get_valid_hexes())
     records, failures = [], defaultdict(int)
     for path in args.logs:
-        print(f"Replaying {path}")
-        recs, fails = replay_log(path, game, num_hexes, args.max_games)
+        print(f"Replaying {path}", flush=True)
+        try:
+            recs, fails = replay_log(path, game, num_hexes, args.max_games, args.keep_going)
+        except ReplayMismatch as e:
+            print(f"\nSTOPPED: a logged game could not be replayed.\n"
+                  f"  game:    {e.where}\n"
+                  f"  problem: {e.reason}\n"
+                  + (f"  detail:  {e.detail}\n" if e.detail else "")
+                  + f"  ({e.replayed} games of this log replayed before it)\n"
+                  "Likely causes: the ini or the engine build differs from the run's rules (pass\n"
+                  "the run's ini with --config_file, or check the build date of pyspiel.so), or the\n"
+                  "log line was garbled by interleaved output. --keep_going drops such games and\n"
+                  "counts them instead.", file=sys.stderr)
+            sys.exit(1)
         records += recs
         for k, v in fails.items():
             failures[k] += v

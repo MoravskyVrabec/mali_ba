@@ -317,10 +317,14 @@ start) for further analysis.
 - Only the desktop's games can be replayed: remote (laptop) games log their result
   but not their moves; they are counted as "no moves/setup logged (remote game)".
 - Every logged move is checked against the engine's legal moves, and the player to
-  move against the log. A game that fails is dropped and counted by reason. Failures
-  mean the ini or the engine build does not match the run's rules: pass the run's ini
-  with `--config_file` (the default is the current `mali_ba.ini`), or use logs
-  recorded under the current rules.
+  move against the log. On the first game it cannot reproduce, the script stops
+  (exit code 1) with a message naming the log, actor, game and move, the move it
+  expected and the moves that were legal. That usually means the ini or the engine
+  build does not match the run's rules: pass the run's ini with `--config_file` (the
+  default is the current `mali_ba.ini`), check the build date of `pyspiel.so`, or use
+  logs recorded under the current rules. A log line garbled by interleaved output
+  would stop it too; `--keep_going` drops such games instead and counts them by kind
+  in the summary.
 - It replays the moves that were played. It can test a rule that changes only
   scoring or when the game ends (for example "where would a meeple clock of N spaces
   have ended these games?"), but not a rule that changes which moves are legal: the
