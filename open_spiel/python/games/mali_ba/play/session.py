@@ -24,6 +24,13 @@ placement is a turn, also two in a row at a serpentine bend); the game then wait
 that human's complete_turn(). Until then restart_turn() puts the game back to the start of
 the turn (any number of times).
 
+Human seats choose their own goods (choose_goods, default on; needs an engine built with
+SetGoodsChoiceSeats, 2026-10-20): which goods pay for an upgrade, and which goods to take
+from an income source that offers a choice. Those are extra decisions in the turn
+(phases UPGRADE_PAYMENT and INCOME_CHOICE; view()["choice"] says which). Bots never see
+them: they choose on a copy of the state with the choices off, where the engine pays and
+collects as in training.
+
 Not thread-safe by itself: a server holds one lock per session (bot_move can take
 seconds; run it off the event loop).
 """
@@ -32,8 +39,8 @@ import random
 import time
 
 from mali_ba.play.bots import make_bot
-from mali_ba.play.describe import common_goods_list, describe_action
-from mali_ba.play.goods import GoodsSummarizer, read_rules, regions_from_ini
+from mali_ba.play.describe import common_goods_list, describe_action, parse_hex, rare_goods_list
+from mali_ba.play.goods import GoodsSummarizer, annotate_choices, read_rules, regions_from_ini
 
 
 class IllegalMove(ValueError):
@@ -93,7 +100,7 @@ def _regions(g):
 
 class GameSession:
 
-    def __init__(self, config_file, seats, seed=None, game=None):
+    def __init__(self, config_file, seats, seed=None, game=None, choose_goods=True):
         import pyspiel
         self._pyspiel = pyspiel
         self.config_file = config_file
@@ -104,6 +111,7 @@ class GameSession:
         self.seed = random.randrange(2**31) if seed is None else int(seed)
         self._rng = random.Random(self.seed)
         self.goods_list = common_goods_list(self.game)
+        self.rare_list = rare_goods_list(self.game)
         cfg = board_config(self.game, config_file)
         self._city_names = {tuple(c["location"]): c["name"] for c in cfg["cities"]}
         self._goods = GoodsSummarizer(cfg["cities"], cfg["regions"], read_rules(config_file))
@@ -122,6 +130,11 @@ class GameSession:
 
         self.state = self.game.new_initial_state()
         self._ms().seed_rng(self.seed & 0xFFFFFFFF)   # the heuristic's own randomness
+        # Human seats choose their own goods, where the engine supports it.
+        self.choice_seats = ([s["seat"] for s in self.seats if s["type"] == "human"]
+                             if choose_goods and hasattr(self._ms(), "set_goods_choice_seats") else [])
+        if self.choice_seats:
+            self._ms().set_goods_choice_seats(self.choice_seats)
         self.history = []          # [{"n", "seat", "action", "name", "label", "t"}]
         # A human's turn: a copy of the game from its start (for Restart Turn), and, once
         # their moves have passed play on, the seat waiting to press Complete Turn. Until
@@ -174,11 +187,27 @@ class GameSession:
         if self.current_seat() is None or self.awaiting_complete is not None:
             return []
         sj = state_json if state_json is not None else self.state_json()
-        moves = [describe_action(self._ms(), a, sj, self.goods_list)
+        moves = [describe_action(self._ms(), a, sj, self.goods_list, self.rare_list)
                  for a in self.state.legal_actions()]
         if any(m["kind"] == "declare_route" for m in moves):
             self._add_route_hexes(moves, sj)
-        return moves
+        return annotate_choices(moves, sj, self.current_seat())
+
+    def choice_info(self, state_json=None):
+        """The goods choice in progress, for the prompt and the board highlight:
+        {"kind": "upgrade_payment", "hex", "paid", "cost"} (common goods paid so far, of
+        cost; or one rare good) or {"kind": "income", "hex", "left"} (sources still to
+        decide, this one included); None otherwise."""
+        sj = state_json if state_json is not None else self.state_json()
+        mid = sj.get("midTurnState") or {}
+        phase = self.phase()
+        if phase == "UPGRADE_PAYMENT" and mid.get("upgradeHex"):
+            return {"kind": "upgrade_payment", "hex": list(parse_hex(mid["upgradeHex"])),
+                    "paid": mid.get("upgradeCommonPaid", 0), "cost": mid.get("upgradeCostCommon", 3)}
+        if phase == "INCOME_CHOICE" and mid.get("incomeChoiceHex"):
+            return {"kind": "income", "hex": list(parse_hex(mid["incomeChoiceHex"])),
+                    "left": mid.get("incomeChoicesLeft", 1)}
+        return None
 
     def _add_route_hexes(self, moves, sj):
         """Each DeclareRoute_k names the k-th route the engine found. Its hexes come from
@@ -242,6 +271,7 @@ class GameSession:
             "result": self.result(),
             "goods": self.goods_list,
             "players": self._goods.summary(sj),   # goods, sets, rare regions (goods.py)
+            "choice": self.choice_info(sj),
             "turn": self.turn_info(),
         }
 
@@ -321,7 +351,15 @@ class GameSession:
         if cur is None or cur not in self._bots:
             raise IllegalMove("it is not a bot's turn")
         legal = self.state.legal_actions()
-        a = self._bots[cur].choose(self.state)
+        view = self.state
+        if self.choice_seats:
+            # Bots search a copy with the goods choices off: the engine pays and collects
+            # for every seat there, as in training, so a search never explores a human's
+            # payment step. The bot's move is legal here too (the setting only changes
+            # what happens after an upgrade or an income).
+            view = self.state.clone()
+            self._pyspiel.mali_ba.downcast_state(view).set_goods_choice_seats([])
+        a = self._bots[cur].choose(view)
         if a not in legal:          # never expected; keep the game going if it happens
             a = self._rng.choice(legal)
         rec = self._apply(a)
@@ -354,7 +392,7 @@ class GameSession:
     def _apply(self, a):
         seat = self.current_seat()
         sj = self.state_json()
-        desc = describe_action(self._ms(), a, sj, self.goods_list)
+        desc = describe_action(self._ms(), a, sj, self.goods_list, self.rare_list)
         if desc["kind"] == "declare_route":
             self._add_route_hexes([desc], sj)
         self.state.apply_action(a)

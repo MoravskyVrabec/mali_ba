@@ -435,8 +435,10 @@ class Client:
         mancala_hex = (HexCoord(*map(int, mid["mancalaHex"].split(",")))
                        if self.view and "MANCALA" in self.view["phase"] and mid.get("mancalaHex")
                        else None)
+        choice = (self.view or {}).get("choice")
+        choice_hex = HexCoord(*choice["hex"]) if choice else None   # the upgrade / income source being decided
         self.draw_map()
-        self.draw_board(highlight, self.selected_hex or mancala_hex)
+        self.draw_board(highlight, self.selected_hex or mancala_hex or choice_hex)
         self.draw_toolbar()
         if self.show_regions and self.region_of:
             self.draw_region_legend()
@@ -762,7 +764,11 @@ class Client:
         if moves:
             hex_moves = [m for m in moves if m.get("hex")]
             listed = self.listed_moves()
-            if self.route_moves():
+            if v.get("choice"):
+                for line in self.choice_prompt(v["choice"], moves):
+                    for part in self.wrap(line, self.font, mw):
+                        y = self.text(part, x, y, self.font)
+            elif self.route_moves():
                 y = self.text("Choose a trade route: hover to see it;", x, y, self.small)
                 y = self.text("click hexes to show only routes through them", x, y, self.small)
                 if self.route_filter:
@@ -947,6 +953,20 @@ class Client:
                 if r["have"]:
                     self.text(", ".join(r["goods"]), cx + 15, cy + 15, self.small, DARK_GRAY, half - 18)
         self.screen.set_clip(None)
+
+    def choice_prompt(self, c, moves):
+        """What a goods choice decides (seats that choose their own goods), as lines."""
+        at = "(" + ",".join(str(v) for v in c["hex"]) + ")"
+        if c["kind"] == "upgrade_payment":
+            paid = f" ({c['paid']} of {c['cost']} paid)" if c["paid"] else ""
+            return [f"Pay for the upgrade at {at}: one rare good, or {c['cost']} common goods{paid}.",
+                    "Each option shows the set points it would cost."]
+        src = next((m["source"] for m in moves if m.get("source")), "center")
+        lines = [f"Income from your {src} at {at}: choose the goods."]
+        if c.get("left", 1) > 1:
+            n = c["left"] - 1
+            lines.append(f"({n} more income choice{'s' if n > 1 else ''} after this)")
+        return lines
 
     def draw_result(self, res):
         lines = [l for l in (res.get("score") or "").splitlines() if l.strip() and "====" not in l]

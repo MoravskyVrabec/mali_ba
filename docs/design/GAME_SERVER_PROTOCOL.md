@@ -218,10 +218,12 @@ The engine splits a turn into single decisions. Each legal move carries a `kind`
 | `start_mancala` | `StartMancala_(x,y,z)` | `hex` (the token that moves) |
 | `mancala_step` | `MancalaDir_k` | `hex` (where the step goes), `direction` |
 | `place_post` | `PlacePost` (at the mancala's end hex) | |
-| `pay_good` | `PayGood_k` | `good` |
+| `pay_good` | `PayGood_k` (for a post, or one of an upgrade's common goods) | `good`, `spend_cost` |
+| `pay_rare` | `PayRare_k` (an upgrade paid with one rare good) | `good`, `spend_cost` |
 | `upgrade` | `UpgradePost_(x,y,z)` | `hex` |
 | `declare_route` | `DeclareRoute_k` | `route_index`, `hexes` (the route, in order), `cities` (the cities on it) |
 | `take_income` | `TakeIncome` | |
+| `income_choice` | `IncomeChoice_<center\|post>_(x,y,z)_<rare=…\|common=…>` | `source`, `source_hex`, `gain`, `set_gain` |
 | `pass` | `Pass` (decline a post or route, or end a mancala) | |
 
 A front end can highlight `hex` on the board and show `label` as text.
@@ -231,6 +233,23 @@ use. Each option's `hexes` come from the engine: the server applies the option t
 of the state and reads the new route. A front end can draw an option on the board, or
 narrow the list to the routes through hexes the player clicks, as the pygame client does.
 History records keep `hex`, `hexes` and `good` when the move had them.
+
+**Goods choices** (needs an engine built with `SetGoodsChoiceSeats`, 20 October 2026).
+Human seats choose their own goods; bots never do (they move on a copy of the state where
+the engine pays and collects, as in training). Two extra steps can come up in a human's
+turn, and `view.choice` says which:
+- after `upgrade`, when there is more than one way to pay, phase `UPGRADE_PAYMENT`: one
+  `pay_rare`, or `pay_good` three times (cost from the ini).
+  `choice = {"kind": "upgrade_payment", "hex", "paid", "cost"}`;
+- after `take_income`, for each source with more than one outcome (a center on a route:
+  one rare good of a connected city or two of their common goods; a center on no route
+  or a post with several equally near cities), phase `INCOME_CHOICE`:
+  `choice = {"kind": "income", "hex", "left"}`. The goods arrive together after the
+  last choice.
+
+`spend_cost` is the set points a payment would lose; `set_gain` what an income option
+would add (counting the options already chosen this income); both are also appended to
+the `label`. Restart Turn undoes these steps like any other.
 
 ## Bots
 

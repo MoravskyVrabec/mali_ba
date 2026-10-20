@@ -114,7 +114,11 @@ namespace open_spiel
       kOptionalPostPayment = 6,
       kOptionalRoute = 7,      
       kEndRound = 8,
-      kGameOver = 9
+      kGameOver = 9,
+      // Only for seats that choose their own goods (SetGoodsChoiceSeats; human play).
+      // Training never enters them.
+      kUpgradePayment = 10,    // pay for an upgrade: one rare good, or common goods one at a time
+      kIncomeChoice = 11       // pick the goods for one income source that offers a choice
     };
     std::ostream &operator<<(std::ostream &os, const Phase &phase);
 

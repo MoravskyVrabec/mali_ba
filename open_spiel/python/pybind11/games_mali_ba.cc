@@ -37,6 +37,8 @@ void init_pyspiel_games_mali_ba(::pybind11::module &m) {
         .value("OPTIONAL_ROUTE", open_spiel::mali_ba::Phase::kOptionalRoute)
         .value("END_ROUND", open_spiel::mali_ba::Phase::kEndRound)
         .value("GAME_OVER", open_spiel::mali_ba::Phase::kGameOver)
+        .value("UPGRADE_PAYMENT", open_spiel::mali_ba::Phase::kUpgradePayment)
+        .value("INCOME_CHOICE", open_spiel::mali_ba::Phase::kIncomeChoice)
         .export_values();
         
     py::enum_<open_spiel::mali_ba::PlayerColor>(mali_ba, "Mali_BaPlayerColor")
@@ -111,6 +113,9 @@ void init_pyspiel_games_mali_ba(::pybind11::module &m) {
         .def("get_winning_player", &mali_ba::Mali_BaState::GetWinningPlayer)
         .def("get_game_end_triggering_player", &mali_ba::Mali_BaState::GetGameEndTriggeringPlayer)
         .def("is_final_round", &mali_ba::Mali_BaState::IsFinalRound)
+        .def("set_goods_choice_seats", &mali_ba::Mali_BaState::SetGoodsChoiceSeats,
+             "Seats that choose their own goods (upgrade payment, income); [] = the engine chooses.")
+        .def("get_goods_choice_seats", &mali_ba::Mali_BaState::GetGoodsChoiceSeats)
         .def("get_score_breakdown_string", &mali_ba::Mali_BaState::GetScoreBreakdownString)
         .def("current_phase", &mali_ba::Mali_BaState::CurrentPhase)
         .def("is_near_win", &mali_ba::Mali_BaState::IsNearWin,

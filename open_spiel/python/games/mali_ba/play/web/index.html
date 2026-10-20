@@ -452,6 +452,7 @@ function renderBoard() {
   for (const m of routeMoves()) for (const h of m.hexes) hi.add(key(h));
   const mid = b.midTurnState || {};
   const mancala = v.phase.includes("MANCALA") && mid.mancalaHex ? mid.mancalaHex : null;
+  const choiceHex = v.choice ? key(v.choice.hex) : null;   // the upgrade or income source being decided
 
   if (G.cfg.map_url && G.cfg.map_rect) {
     const [x, y, w, h] = G.cfg.map_rect;
@@ -466,7 +467,7 @@ function renderBoard() {
         gTop = el("g", {"pointer-events": "none"}, svg);
   for (const h of G.cfg.valid_hexes) {
     const k = key(h), c = px(h);
-    const cls = "hex" + (k === G.selHex || k === mancala ? " sel" : hi.has(k) ? " hi" : "");
+    const cls = "hex" + (k === G.selHex || k === mancala || k === choiceHex ? " sel" : hi.has(k) ? " hi" : "");
     const p = el("polygon", {points: hexPoints(c), class: cls}, gHex);
     p.addEventListener("click", ev => clickHex(k, ev));
     p.addEventListener("mouseenter", () => showHover(k));
@@ -603,7 +604,8 @@ function renderSide() {
   const moves = myMoves(), listed = listedMoves();
   let prompt = "";
   if (moves.length) {
-    if (routeMoves().length) prompt = `<strong>Choose a trade route.</strong> <span class="small muted">Hover an option to see it; click hexes to show only routes through them${G.filter.size ? ` (${G.filter.size} selected; click again to remove)` : ""}.</span>`;
+    if (v.choice) prompt = choicePrompt(v.choice, moves);
+    else if (routeMoves().length) prompt = `<strong>Choose a trade route.</strong> <span class="small muted">Hover an option to see it; click hexes to show only routes through them${G.filter.size ? ` (${G.filter.size} selected; click again to remove)` : ""}.</span>`;
     else if (moves.some(m => m.hex)) prompt = "<strong>Your move:</strong> <span class='small muted'>click a highlighted hex" + (listed.length ? " or choose below" : "") + ".</span>";
     else prompt = "<strong>Your move:</strong>";
   }
@@ -641,6 +643,17 @@ function renderSide() {
     res.innerHTML = `<strong>${head}</strong> <button style="float:right" onclick="G.showResult=false;render()">Hide</button><pre>${esc(score)}</pre>`;
     res.classList.remove("hidden");
   } else res.classList.add("hidden");
+}
+
+// A goods choice (seats that choose their own goods): what is being decided.
+function choicePrompt(c, moves) {
+  const at = `(${c.hex.join(",")})`;
+  if (c.kind === "upgrade_payment")
+    return `<strong>Pay for the upgrade at ${at}:</strong> one rare good, or ${c.cost} common goods`
+      + (c.paid ? ` <strong>(${c.paid} of ${c.cost} paid)</strong>` : "") + `. <span class="small muted">Each option shows the set points it would cost.</span>`;
+  const src = (moves.find(m => m.source) || {}).source || "center";
+  const more = c.left > 1 ? ` <span class="small muted">(${c.left - 1} more income choice${c.left > 2 ? "s" : ""} after this)</span>` : "";
+  return `<strong>Income from your ${src} at ${at}:</strong> choose the goods.${more}`;
 }
 
 // ---------- goods drawer ----------

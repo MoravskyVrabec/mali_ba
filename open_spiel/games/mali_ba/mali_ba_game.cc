@@ -1052,6 +1052,18 @@ namespace open_spiel
                             state->last_action_hex_ = *hc;
                         }
                     }
+                    // Goods choices: the seats, and an upgrade payment in progress. An
+                    // income choice in progress is not restored (its options are rebuilt
+                    // only by taking income), so such a state is not round-tripped.
+                    if (j_mid.contains("goodsChoiceSeats")) {
+                        state->SetGoodsChoiceSeats(j_mid.at("goodsChoiceSeats").get<std::vector<int>>());
+                    }
+                    if (j_mid.contains("upgradeHex")) {
+                        if (auto hc = JsonStringToHexCoord(j_mid.at("upgradeHex").get<std::string>())) {
+                            state->pending_upgrade_hex_ = *hc;
+                        }
+                        state->upgrade_common_paid_ = j_mid.value("upgradeCommonPaid", 0);
+                    }
                 }
 
             } catch (const std::exception &e) {
@@ -1126,6 +1138,8 @@ namespace open_spiel
                 case Phase::kPlay:      os << "Play"; break;
                 case Phase::kEndRound:  os << "EndRound"; break;
                 case Phase::kGameOver:  os << "GameOver"; break;
+                case Phase::kUpgradePayment: os << "UpgradePayment"; break;
+                case Phase::kIncomeChoice:   os << "IncomeChoice"; break;
                 default: os << "UnknownPhase(" << static_cast<int>(phase) << ")";
             }
             return os;

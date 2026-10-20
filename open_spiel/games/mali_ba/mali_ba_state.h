@@ -151,6 +151,13 @@ namespace mali_ba
         bool IsFinalRound() const { return final_round_end_seat_ >= 0 && !is_terminal_; }
         // Seat that makes the first main-play move (rules main_play_start_seat).
         Player MainPlayStartSeat() const;
+        // Seats that choose their own goods (human play): which goods pay for an upgrade
+        // (Phase::kUpgradePayment) and which goods to take from an income source that
+        // offers a choice (Phase::kIncomeChoice). Empty, the default and in training:
+        // the engine chooses for everyone, as it always has. Copied by Clone().
+        void SetGoodsChoiceSeats(const std::vector<int>& seats);
+        std::vector<int> GetGoodsChoiceSeats() const;
+        bool ChoosesOwnGoods(Player player) const;
         std::string GetScoreBreakdownString() const;
         // Every player's current score, as the game would score it if it ended now.
         std::vector<double> ComputeScores(bool log_breakdown = false) const;
@@ -266,6 +273,30 @@ namespace mali_ba
         HexCoord last_action_hex_; // Tracks where token landed or post upgraded
         std::array<bool, 3> last_was_income_ = {false, false, false};
         bool pending_route_declaration_ = false;
+
+        // --- Goods choices (SetGoodsChoiceSeats) ---
+        // Goods gained from one income source, or a whole income.
+        struct IncomeOutcome {
+            std::map<std::string, int> common;
+            std::map<std::string, int> rare;
+        };
+        // One income source with more than one way to take its goods.
+        struct PendingIncomeChoice {
+            HexCoord hex;
+            bool is_post = false;
+            std::vector<IncomeOutcome> options;
+        };
+        std::vector<bool> goods_choice_seats_;          // per seat; empty = nobody
+        HexCoord pending_upgrade_hex_;                  // kUpgradePayment: the post being upgraded
+        int upgrade_common_paid_ = 0;                   // kUpgradePayment: common goods paid so far
+        IncomeOutcome pending_income_;                  // kIncomeChoice: fixed income + choices made
+        std::vector<PendingIncomeChoice> pending_income_choices_;  // kIncomeChoice: still to choose, in order
+
+        bool HasUpgradePaymentChoice(Player player) const;
+        void FinishUpgrade();                           // convert the post, then offer a route or end the turn
+        void BuildIncomeChoices();                      // fills pending_income_ and pending_income_choices_
+        void ApplyIncomeOutcome(const IncomeOutcome& outcome);
+        std::string IncomeOutcomeToString(const IncomeOutcome& outcome) const;
 
         // Helper to end a turn and pass to the next player
         void EndTurn();

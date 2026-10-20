@@ -2,16 +2,19 @@
 
 The engine splits a turn into single decisions and names each one (PlaceToken_(x,y,z),
 StartMancala_(x,y,z), MancalaDir_k, PlacePost, PayGood_k, UpgradePost_(x,y,z),
-DeclareRoute_k, TakeIncome, Pass). describe_action() turns one into a dict a front end
-can draw without knowing any rules:
+DeclareRoute_k, TakeIncome, Pass, and for seats that choose their own goods PayRare_k and
+IncomeChoice_<center|post>_(x,y,z)_<goods>). describe_action() turns one into a dict a
+front end can draw without knowing any rules:
 
     {"action": 812, "name": "MancalaDir_2", "kind": "mancala_step",
      "hex": [0, 1, -1], "label": "Continue the mancala to (0,1,-1)"}
 
-Kinds: place_token, start_mancala, mancala_step, place_post, pay_good, upgrade,
-declare_route, take_income, pass. "hex" is set for actions tied to one hex (a front end
-highlights it); "good" for payments; "route_index" for route declarations (GameSession
-adds each route's "hexes" and "cities" by applying it to a copy of the state).
+Kinds: place_token, start_mancala, mancala_step, place_post, pay_good, pay_rare, upgrade,
+declare_route, take_income, income_choice, pass. "hex" is set for actions tied to one
+hex (a front end highlights it); "good" for payments; "route_index" for route
+declarations (GameSession adds each route's "hexes" and "cities" by applying it to a copy
+of the state); an income choice has "source" (center or post), "source_hex" (not "hex":
+it is a list choice, not a hex click) and "gain" ({"rare": {...}, "common": {...}}).
 """
 import re
 
@@ -38,15 +41,45 @@ def common_goods_list(game):
     return sorted({c.common_good for c in cities})
 
 
+def rare_goods_list(game):
+    """Rare goods in the engine's PayRare_k order (sorted alphabetically, as GoodsManager)."""
+    import pyspiel
+    cities = pyspiel.mali_ba.downcast_game(game).get_cities()
+    return sorted({c.rare_good for c in cities})
+
+
+def _goods_text(goods):
+    """{"Millet": 2} -> "2 Millet"; {"Millet": 1, "Kola nuts": 1} -> "Kola nuts and Millet"."""
+    parts = [f"{n} {g}" if n > 1 else g for g, n in sorted(goods.items())]
+    return " and ".join(parts)
+
+
+def parse_income_choice(name):
+    """'IncomeChoice_center_(1,-2,1)_rare=Kora' -> ("center", (1,-2,1), {"rare": {"Kora": 1},
+    "common": {}}); None if the name has another form."""
+    m = re.match(r"IncomeChoice_(center|post)_\((-?\d+),(-?\d+),(-?\d+)\)_(.*)$", name)
+    if not m:
+        return None
+    gain = {"rare": {}, "common": {}}
+    for part in m.group(5).split(";"):
+        kind, _, goods = part.partition("=")
+        if kind in gain:
+            for g in goods.split(","):
+                if g:
+                    gain[kind][g] = gain[kind].get(g, 0) + 1
+    return m.group(1), tuple(int(v) for v in m.group(2, 3, 4)), gain
+
+
 def _hex_str(h):
     return f"({h[0]},{h[1]},{h[2]})"
 
 
-def describe_action(state, action, state_json, goods_list):
+def describe_action(state, action, state_json, goods_list, rare_list=()):
     """One legal action -> description dict (see module docstring).
 
     state: the pyspiel state; state_json: its parsed serialize() output (for the
-    mid-turn mancala position); goods_list: common_goods_list(game).
+    mid-turn mancala position); goods_list: common_goods_list(game); rare_list:
+    rare_goods_list(game).
     """
     player = state.current_player()
     name = state.action_to_string(player, action)
@@ -73,6 +106,21 @@ def describe_action(state, action, state_json, goods_list):
         k = int(name.split("_")[1])
         good = goods_list[k] if 0 <= k < len(goods_list) else f"good {k}"
         d.update(kind="pay_good", good=good, label=f"Pay with {good}")
+    elif name.startswith("PayRare_"):
+        k = int(name.split("_")[1])
+        good = rare_list[k] if 0 <= k < len(rare_list) else f"rare good {k}"
+        d.update(kind="pay_rare", good=good, label=f"Pay with {good} (rare)")
+    elif name.startswith("IncomeChoice_"):
+        parsed = parse_income_choice(name)
+        if parsed is None:
+            d.update(kind="income_choice", label=name)
+        else:
+            source, h, gain = parsed
+            what = " and ".join(t for t in (
+                _goods_text(gain["rare"]) + (" (rare)" if gain["rare"] else ""),
+                _goods_text(gain["common"])) if t)
+            d.update(kind="income_choice", source=source, source_hex=list(h), gain=gain,
+                     label=f"Take {what}")
     elif name.startswith("UpgradePost_"):
         h = parse_hex(name)
         d.update(kind="upgrade", hex=list(h), label=f"Upgrade the post at {_hex_str(h)} to a center")

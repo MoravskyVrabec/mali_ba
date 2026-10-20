@@ -226,7 +226,25 @@ std::string Mali_BaState::Serialize() const {
         // Use your existing helper to safely serialize the coordinates
         j_mid_turn["mancalaHex"] = HexCoordToJsonString(current_mancala_hex_);
         j_mid_turn["lastActionHex"] = HexCoordToJsonString(last_action_hex_);
-        
+
+        // Goods choices (SetGoodsChoiceSeats; human play). Written only when in use, so
+        // training states serialize as before.
+        const std::vector<int> choice_seats = GetGoodsChoiceSeats();
+        if (!choice_seats.empty()) {
+            j_mid_turn["goodsChoiceSeats"] = choice_seats;
+            if (current_phase_ == Phase::kUpgradePayment) {
+                j_mid_turn["upgradeHex"] = HexCoordToJsonString(pending_upgrade_hex_);
+                j_mid_turn["upgradeCommonPaid"] = upgrade_common_paid_;
+                j_mid_turn["upgradeCostCommon"] = GetGame()->GetRules().upgrade_cost_common;
+            }
+            if (current_phase_ == Phase::kIncomeChoice && !pending_income_choices_.empty()) {
+                j_mid_turn["incomeChoiceHex"] = HexCoordToJsonString(pending_income_choices_.front().hex);
+                j_mid_turn["incomeChoicesLeft"] = static_cast<int>(pending_income_choices_.size());
+                j_mid_turn["incomePendingCommon"] = pending_income_.common;
+                j_mid_turn["incomePendingRare"] = pending_income_.rare;
+            }
+        }
+
         j["midTurnState"] = j_mid_turn;
 
         // Convert the JSON object to a string (compact version)

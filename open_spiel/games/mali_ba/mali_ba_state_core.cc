@@ -193,7 +193,12 @@ namespace open_spiel
               current_mancala_path_(other.current_mancala_path_),
               current_mancala_hex_(other.current_mancala_hex_),
               last_action_hex_(other.last_action_hex_),
-              pending_route_declaration_(other.pending_route_declaration_)
+              pending_route_declaration_(other.pending_route_declaration_),
+              goods_choice_seats_(other.goods_choice_seats_),
+              pending_upgrade_hex_(other.pending_upgrade_hex_),
+              upgrade_common_paid_(other.upgrade_common_paid_),
+              pending_income_(other.pending_income_),
+              pending_income_choices_(other.pending_income_choices_)
         {
             // Caches are intentionally NOT copied. They will be regenerated on the clone when needed.
             // Copy the cumulative returns
@@ -482,6 +487,44 @@ namespace open_spiel
                     for (size_t i = 0; i < std::min(possible_routes.size(), (size_t)300); ++i) {
                         result.actions.push_back(kRouteBase + i);
                         result.counts.trade_route_create_moves++;
+                    }
+                    break;
+                }
+
+                // Pay for an upgrade (seats that choose their own goods): one rare good
+                // (kRouteBase + its index in the rare goods list; offered only before any
+                // common good is paid), or common goods one at a time (kPaymentBase +
+                // index), offered while enough common goods remain to finish paying.
+                case Phase::kUpgradePayment: {
+                    const GameRules& rules = GetGame()->GetRules();
+                    const auto& gm = GoodsManager::GetInstance();
+                    if (upgrade_common_paid_ == 0) {
+                        for (const auto& [name, count] : GetPlayerRareGoods(current_player_id_)) {
+                            int id = gm.GetRareGoodIndex(name);
+                            if (count >= rules.upgrade_cost_rare && id >= 0)
+                                result.actions.push_back(kRouteBase + id);
+                        }
+                    }
+                    int total_common = 0;
+                    for (const auto& [name, count] : GetPlayerCommonGoods(current_player_id_))
+                        total_common += std::max(0, count);
+                    if (total_common >= rules.upgrade_cost_common - upgrade_common_paid_) {
+                        for (const auto& [name, count] : GetPlayerCommonGoods(current_player_id_)) {
+                            int id = gm.GetCommonGoodIndex(name);
+                            if (count > 0 && id >= 0) result.actions.push_back(kPaymentBase + id);
+                        }
+                    }
+                    std::sort(result.actions.begin(), result.actions.end());
+                    break;
+                }
+
+                // Pick the goods for the next income source that offers a choice:
+                // kRouteBase + the option's index.
+                case Phase::kIncomeChoice: {
+                    if (!pending_income_choices_.empty()) {
+                        const auto& options = pending_income_choices_.front().options;
+                        for (size_t i = 0; i < options.size(); ++i)
+                            result.actions.push_back(kRouteBase + static_cast<Action>(i));
                     }
                     break;
                 }
@@ -852,6 +895,164 @@ namespace open_spiel
             LOG_DEBUG("Player ", player_id, " collected income: ", total_common, " common goods, ", total_rare, " rare goods");
         }
 
+        // =====================================================================
+        // Goods choices (SetGoodsChoiceSeats): human play only; training never sets it.
+        // =====================================================================
+        void Mali_BaState::SetGoodsChoiceSeats(const std::vector<int>& seats) {
+            goods_choice_seats_.assign(NumPlayers(), false);
+            for (int s : seats) {
+                if (s >= 0 && s < NumPlayers()) goods_choice_seats_[s] = true;
+            }
+            ClearCaches();
+        }
+
+        std::vector<int> Mali_BaState::GetGoodsChoiceSeats() const {
+            std::vector<int> seats;
+            for (int s = 0; s < static_cast<int>(goods_choice_seats_.size()); ++s) {
+                if (goods_choice_seats_[s]) seats.push_back(s);
+            }
+            return seats;
+        }
+
+        bool Mali_BaState::ChoosesOwnGoods(Player player) const {
+            return player >= 0 && player < static_cast<Player>(goods_choice_seats_.size()) &&
+                   goods_choice_seats_[player];
+        }
+
+        // More than one way to pay for an upgrade: two kinds of rare good, a rare good or
+        // common goods, or common goods in more than one combination. With a single way
+        // the engine pays as before (ApplyTradingPostUpgrade), without asking.
+        bool Mali_BaState::HasUpgradePaymentChoice(Player player) const {
+            const GameRules& rules = GetGame()->GetRules();
+            int ways = 0;
+            for (const auto& [name, count] : GetPlayerRareGoods(player)) {
+                if (count >= rules.upgrade_cost_rare) ways++;
+            }
+            int total_common = 0, common_kinds = 0;
+            for (const auto& [name, count] : GetPlayerCommonGoods(player)) {
+                if (count > 0) { total_common += count; common_kinds++; }
+            }
+            if (total_common >= rules.upgrade_cost_common) {
+                ways += (common_kinds == 1 || total_common == rules.upgrade_cost_common) ? 1 : 2;
+            }
+            return ways > 1;
+        }
+
+        // The upgrade is paid for (Phase::kUpgradePayment): the post becomes a center,
+        // then the turn goes on exactly as after an engine-paid upgrade.
+        void Mali_BaState::FinishUpgrade() {
+            UpgradeTradingPost(pending_upgrade_hex_, current_player_color_);
+            last_action_hex_ = pending_upgrade_hex_;
+            upgrade_common_paid_ = 0;
+            auto possible = FindPossibleTradeRoutes(current_player_color_, true, &last_action_hex_, 5);
+            if (possible.empty()) { EndTurn(); } else { current_phase_ = Phase::kOptionalRoute; }
+        }
+
+        // Income as the rules give it, for a seat that chooses its own goods. Sources with
+        // a single outcome go straight into pending_income_; each source with several
+        // becomes a PendingIncomeChoice, decided in Phase::kIncomeChoice in board order:
+        //   - a center in a city: that city's rare good;
+        //   - a center on a trade route: one rare good of a connected city, or two of
+        //     their common goods in any combination (ApplyIncomeCollection always takes
+        //     the first connected city's rare good);
+        //   - a center on no route: two common goods of the nearest city, any mix when
+        //     several are equally near (ApplyIncomeCollection takes the first);
+        //   - a post: one common good of the nearest city, a choice on a tie.
+        void Mali_BaState::BuildIncomeChoices() {
+            pending_income_ = IncomeOutcome();
+            pending_income_choices_.clear();
+            const PlayerColor color = GetPlayerColor(current_player_id_);
+
+            auto distinct_commons = [](const std::vector<const City*>& cities) {
+                std::vector<std::string> goods;
+                for (const City* c : cities) {
+                    if (std::find(goods.begin(), goods.end(), c->common_good) == goods.end())
+                        goods.push_back(c->common_good);
+                }
+                return goods;
+            };
+            auto two_commons = [&distinct_commons](const std::vector<const City*>& cities) {
+                std::vector<IncomeOutcome> options;
+                const auto goods = distinct_commons(cities);
+                for (size_t a = 0; a < goods.size(); ++a) {
+                    for (size_t b = a; b < goods.size(); ++b) {
+                        IncomeOutcome o;
+                        o.common[goods[a]] += 1;
+                        o.common[goods[b]] += 1;
+                        options.push_back(o);
+                    }
+                }
+                return options;
+            };
+            auto add = [this](const HexCoord& hex, bool is_post, std::vector<IncomeOutcome> options) {
+                if (options.empty()) return;
+                if (options.size() == 1) {
+                    for (const auto& [g, n] : options[0].common) pending_income_.common[g] += n;
+                    for (const auto& [g, n] : options[0].rare) pending_income_.rare[g] += n;
+                    return;
+                }
+                PendingIncomeChoice choice;
+                choice.hex = hex;
+                choice.is_post = is_post;
+                choice.options = std::move(options);
+                pending_income_choices_.push_back(std::move(choice));
+            };
+
+            for (const auto& [hex, posts] : trade_posts_locations_) {
+                for (const auto& post : posts) {
+                    if (post.owner != color) continue;
+                    const City* city = GetGame()->GetCityAt(hex);
+                    if (post.type == TradePostType::kCenter && city != nullptr) {
+                        IncomeOutcome o;
+                        o.rare[city->rare_good] = 1;
+                        add(hex, false, {o});
+                    } else if (post.type == TradePostType::kCenter) {
+                        const auto connected = GetConnectedCities(hex, color);
+                        if (!connected.empty()) {
+                            std::vector<IncomeOutcome> options;
+                            for (const City* c : connected) {
+                                IncomeOutcome o;
+                                o.rare[c->rare_good] = 1;
+                                options.push_back(o);
+                            }
+                            for (const auto& o : two_commons(connected)) options.push_back(o);
+                            add(hex, false, std::move(options));
+                        } else {
+                            add(hex, false, two_commons(FindClosestCities(hex)));
+                        }
+                    } else if (post.type == TradePostType::kPost) {
+                        std::vector<IncomeOutcome> options;
+                        for (const auto& good : distinct_commons(FindClosestCities(hex))) {
+                            IncomeOutcome o;
+                            o.common[good] = 1;
+                            options.push_back(o);
+                        }
+                        add(hex, true, std::move(options));
+                    }
+                }
+            }
+        }
+
+        void Mali_BaState::ApplyIncomeOutcome(const IncomeOutcome& outcome) {
+            for (const auto& [good, n] : outcome.common) common_goods_[current_player_id_][good] += n;
+            for (const auto& [good, n] : outcome.rare) rare_goods_[current_player_id_][good] += n;
+        }
+
+        // "rare=Kora" or "common=Millet,Brass jewelry" (a good twice is listed twice).
+        std::string Mali_BaState::IncomeOutcomeToString(const IncomeOutcome& outcome) const {
+            auto names = [](const std::map<std::string, int>& goods) {
+                std::string out;
+                for (const auto& [good, n] : goods) {
+                    for (int k = 0; k < n; ++k) out += (out.empty() ? "" : ",") + good;
+                }
+                return out;
+            };
+            std::string out;
+            if (!outcome.rare.empty()) out += "rare=" + names(outcome.rare);
+            if (!outcome.common.empty()) out += (out.empty() ? "" : ";") + std::string("common=") + names(outcome.common);
+            return out;
+        }
+
         void Mali_BaState::ApplyTradeRouteCreate(const Move& move) {
             if (move.type != ActionType::kTradeRouteCreate) {
                 LOG_WARN("ApplyTradeRouteCreate called with wrong move type");
@@ -968,15 +1169,34 @@ namespace open_spiel
                     // Track consecutive income for training heuristic (not an actual game rule).
                     last_was_income_[current_player_id_] = (action == kIncomeAction);
                     if (action == kIncomeAction) {
-                        ApplyIncomeCollection("income");
+                        if (ChoosesOwnGoods(current_player_id_)) {
+                            // The fixed part is held back until every choice is made, so
+                            // the goods (and the win checks on them) change only once.
+                            BuildIncomeChoices();
+                            if (!pending_income_choices_.empty()) {
+                                current_phase_ = Phase::kIncomeChoice;
+                                break;
+                            }
+                            ApplyIncomeOutcome(pending_income_);
+                            pending_income_ = IncomeOutcome();
+                        } else {
+                            ApplyIncomeCollection("income");
+                        }
                         // End Turn
                         current_player_color_ = GetNextPlayerColor(current_player_color_);
                         current_player_id_ = GetPlayerId(current_player_color_);
-                    } 
+                    }
                     else if (action >= kUpgradeBase && action < kPaymentBase) {
                         int hex_index = action - kUpgradeBase;
                         last_action_hex_ = GetGame()->IndexToCoord(hex_index);
-                        
+
+                        if (ChoosesOwnGoods(current_player_id_) &&
+                            HasUpgradePaymentChoice(current_player_id_)) {
+                            pending_upgrade_hex_ = last_action_hex_;
+                            upgrade_common_paid_ = 0;
+                            current_phase_ = Phase::kUpgradePayment;
+                            break;
+                        }
                         ApplyTradingPostUpgrade(last_action_hex_);
 
                         {
@@ -1116,6 +1336,39 @@ namespace open_spiel
                     current_mancala_path_.clear();
                     break;
                 }
+
+                case Phase::kUpgradePayment: {
+                    const GameRules& rules = GetGame()->GetRules();
+                    const auto& gm = GoodsManager::GetInstance();
+                    bool paid_in_full = false;
+                    if (action >= kRouteBase) {
+                        const std::string& good = gm.GetRareGoodsList()[action - kRouteBase];
+                        rare_goods_[current_player_id_][good] -= rules.upgrade_cost_rare;
+                        paid_in_full = true;
+                    } else {
+                        const std::string& good = gm.GetCommonGoodsList()[action - kPaymentBase];
+                        common_goods_[current_player_id_][good] -= 1;
+                        paid_in_full = ++upgrade_common_paid_ >= rules.upgrade_cost_common;
+                    }
+                    if (paid_in_full) FinishUpgrade();
+                    break;
+                }
+
+                case Phase::kIncomeChoice: {
+                    const IncomeOutcome& chosen =
+                        pending_income_choices_.front().options[action - kRouteBase];
+                    for (const auto& [good, n] : chosen.common) pending_income_.common[good] += n;
+                    for (const auto& [good, n] : chosen.rare) pending_income_.rare[good] += n;
+                    pending_income_choices_.erase(pending_income_choices_.begin());
+                    if (pending_income_choices_.empty()) {
+                        ApplyIncomeOutcome(pending_income_);
+                        pending_income_ = IncomeOutcome();
+                        current_player_color_ = GetNextPlayerColor(current_player_color_);
+                        current_player_id_ = GetPlayerId(current_player_color_);
+                        current_phase_ = Phase::kPlay;
+                    }
+                    break;
+                }
                 default:
                     break;
             }
@@ -1167,6 +1420,21 @@ namespace open_spiel
             }
             if (action >= kPaymentBase && action < kRouteBase) {
                 return absl::StrCat("PayGood_", action - kPaymentBase);
+            }
+            // In the goods-choice phases the route range means something else.
+            if (action >= kRouteBase && current_phase_ == Phase::kUpgradePayment) {
+                return absl::StrCat("PayRare_", action - kRouteBase);
+            }
+            if (action >= kRouteBase && current_phase_ == Phase::kIncomeChoice) {
+                // IncomeChoice_center_(x,y,z)_rare=Kora  /  IncomeChoice_post_(x,y,z)_common=Millet
+                const size_t i = static_cast<size_t>(action - kRouteBase);
+                if (!pending_income_choices_.empty() &&
+                    i < pending_income_choices_.front().options.size()) {
+                    const auto& c = pending_income_choices_.front();
+                    return absl::StrCat("IncomeChoice_", c.is_post ? "post_" : "center_",
+                                        c.hex.ToString(), "_", IncomeOutcomeToString(c.options[i]));
+                }
+                return absl::StrCat("IncomeChoice_", i);
             }
             if (action >= kRouteBase) {
                 return absl::StrCat("DeclareRoute_", action - kRouteBase);

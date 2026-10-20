@@ -145,3 +145,38 @@ class GoodsSummarizer:
                                   "goods": rare_by_region.get(r["id"], [])} for r in self.regions]},
             "routes": {"active": active, "needed": self.rules.get("routes_needed")},
         }
+
+
+def annotate_choices(moves, state_json, seat):
+    """Adds set-point effects to a seat's goods choices, in place: "spend_cost" on
+    payments (pay_good, pay_rare) and "set_gain" on income choices, each also appended to
+    the label. Income choices count the goods already chosen this income (held back by
+    the engine until the last choice, midTurnState.incomePending*)."""
+    if seat is None or not any(m["kind"] in ("pay_good", "pay_rare", "income_choice") for m in moves):
+        return moves
+    counts = {}
+    for side in ("commonGoods", "rareGoods"):
+        held = (state_json.get(side) or [])
+        for g, c in (held[seat] if seat < len(held) else {}).items():
+            if c > 0:
+                counts[g] = counts.get(g, 0) + c
+    mid = state_json.get("midTurnState") or {}
+    pending = dict(counts)
+    for side in ("incomePendingCommon", "incomePendingRare"):
+        for g, c in (mid.get(side) or {}).items():
+            pending[g] = pending.get(g, 0) + c
+    now, base = set_points(counts), set_points(pending)
+    for m in moves:
+        if m["kind"] in ("pay_good", "pay_rare") and counts.get(m.get("good"), 0) > 0:
+            less = dict(counts)
+            less[m["good"]] -= 1
+            m["spend_cost"] = now - set_points(less)
+            m["label"] += f"  (−{m['spend_cost']} set pts)" if m["spend_cost"] else "  (no set points lost)"
+        elif m["kind"] == "income_choice" and m.get("gain"):
+            more = dict(pending)
+            for side in ("rare", "common"):
+                for g, c in m["gain"][side].items():
+                    more[g] = more.get(g, 0) + c
+            m["set_gain"] = set_points(more) - base
+            m["label"] += f"  (+{m['set_gain']} set pts)"
+    return moves

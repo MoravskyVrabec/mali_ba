@@ -283,10 +283,15 @@ the pieces (Show City Names), Show Regions. Both clients get every change.
   region pips and routes; a click opens a goods drawer over the board (sets, each
   good's city/region and "if spent" cost, rare-good regions). `play/goods.py`, checked
   against the engine's set scoring by `play/test_goods.py`.
-- **Next: choosing payments (in progress).** An ini switch for human play adds real
-  payment decisions: which goods pay for an upgrade (1 rare, or 3 common one at a
-  time), and which goods to take as income where the rules give a choice. Bots keep the
-  engine's automatic choices. Needs an engine build.
+- **Choosing payments and income (written 2026-10-20; needs a build, then
+  `python -m mali_ba.play.test_goods_choices`).** Human seats choose which goods pay
+  for an upgrade (1 rare, or 3 common one at a time) and which goods to take as income
+  where the rules give a choice, each option labelled with its set-point effect. Engine:
+  `SetGoodsChoiceSeats` (a per-state seat list, not an ini switch, so training can't
+  turn it on; bots move on a copy with it off), phases UPGRADE_PAYMENT and
+  INCOME_CHOICE. Note: the engine's automatic income (bots, training) never takes the
+  two common goods the rules allow for a center on a route, and breaks ties between
+  equally near cities by taking the first; humans now get the rules' choices.
 - The old GUI (`main.py`, `ui/visualizer.py`, `utils/cpp_interface.py`) is untouched:
   its live modes send whole-turn move strings the engine no longer accepts, and its
   rule copies (`ui/visualizer_other.py`) are stale. Replay mode may still work. Decide:
