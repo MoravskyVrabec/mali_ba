@@ -267,6 +267,16 @@ served by the server. No C++ changes were needed.
 - Ideas: undo for hot-seat games; a replay viewer for saved games; show each player's
   goods in detail; a model's value estimate as an optional "who's winning" bar.
 
+## Quick-play option for experienced players (added 2026-10-19)
+
+Both clients now ask before upgrades and mancala starts: a click on such a hex opens a
+menu beside it, even when it is the only move there (web since 4780bb7; pygame still
+plays a hex's only move at once and should get the menu too). Add a per-player setting
+("quick play"), remembered per browser, under which a hex with exactly one move plays
+it on one click, as before. Mancala steps and token placements stay one click either
+way. Possible extras: double-click to play a menu's first choice; keyboard shortcuts
+(Enter = Complete Turn already exists; R = Restart Turn).
+
 ## AI skill levels (added 2026-10-18)
 
 Offer "Level 1-5" opponents instead of model names (raw model/sims stay available).
