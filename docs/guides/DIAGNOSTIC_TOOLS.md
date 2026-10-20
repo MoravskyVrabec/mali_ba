@@ -13,6 +13,7 @@ All of them live in `open_spiel/python/games/mali_ba/`.
 | Did the **value** head improve between runs? | `value_probe.py` | seconds per checkpoint |
 | How decisive is the search? | `search_sharpness.py` | minutes |
 | Do starting token positions matter? | `analyze_placements.py` | about a minute, reads logs |
+| What does the board look like over a game (meeples, empty hexes, options)? | `replay_games.py` | ~11 min for a 15,000-game log, one core |
 
 Only `ab_eval.py` measures playing strength. Everything else measures something
 that *usually* goes with strength, and has been misleading before: D011's value
@@ -288,6 +289,61 @@ wins.
 (+4.3 points across its typical range, and the only one that raises outright wins);
 each token near its own city (-3.2 points for being farther); a little better away
 from Timbuktu (+1.8); culture diversity is mostly spread in disguise.
+
+## replay_games.py: replay logged games and measure the board
+
+A self-play game is fully determined by its log lines: the chance outcome on the
+SETUP line (`layout=Setup_N`; the meeple layout and starting goods depend only on N),
+the token placements on the same line (each seat's, in serpentine order), and every
+main-play decision (`Actor A, Game G, Move M: Player P plays '...'`). The script
+streams a training log and, as each `FINISHED` line arrives, rebuilds that game in the
+engine move by move, so any board quantity can be measured at any point of any game.
+It needs no network and no GPU: one process, ~17 games/s, fine at `nice -n 19` beside
+a training run.
+
+```bash
+nice -n 19 python replay_games.py /media/robp/UD/Projects/open_spiel/train_runD041.log \
+    [more logs] [--json records.json] [--max_games 500] [--config_file mali_ba.ini]
+```
+
+**What it reports** (all games, natural ends and timeouts separately): meeples left
+at the end and removed, empty hexes at the end, which move types removed meeples, the
+board every 100 moves (median meeples / empty hexes over the games still running),
+and legal options at the start of a turn by fifth of the game. `--json` saves one
+record per game (including the board every 50 moves and the options at every turn
+start) for further analysis.
+
+**Limits and checks.**
+- Only the desktop's games can be replayed: remote (laptop) games log their result
+  but not their moves; they are counted as "no moves/setup logged (remote game)".
+- Every logged move is checked against the engine's legal moves, and the player to
+  move against the log. A game that fails is dropped and counted by reason. Failures
+  mean the ini or the engine build does not match the run's rules: pass the run's ini
+  with `--config_file` (the default is the current `mali_ba.ini`), or use logs
+  recorded under the current rules.
+- It replays the moves that were played. It can test a rule that changes only
+  scoring or when the game ends (for example "where would a meeple clock of N spaces
+  have ended these games?"), but not a rule that changes which moves are legal: the
+  replay would stop at the first move the new rule forbids, and the players would
+  have played differently anyway.
+
+**Adding a measurement.** `replay_game()` holds a full engine state at every step;
+add the quantity to its record and a line to `summarize()`. Two traps found on the
+way:
+- `serialize()` leaves empty hexes out of `hexMeeples`. Count empty hexes as the
+  number of valid hexes minus the hexes listed with meeples.
+- During a mancala move the picked-up meeples sit in `midTurnState.meeplesInHand`,
+  not on the board; count them, or every mancala start looks like a removal.
+
+**Result (D041, 11,172 desktop games, 2026-10-19):** the board starts with 246 meeples
+(82 hexes x 3). Games that end naturally (median 179 decisions, ~21 turns per player)
+finish with a median of 219 meeples (89%); the fewest in any game was 154. Timeouts
+(500 moves) keep a median of 184. Removal is steady at ~12-15 meeples per 100 moves:
+trading posts 67%, upgrades 17%, routes 15%. A median of 20 hexes are empty at the
+end (32 at timeouts), yet options at the start of a turn *rise* over the game (3.7 in
+the first fifth, ~6.5 from the middle on), and a turn with a single option is
+practically unheard of. Board depletion does not put players under time pressure
+under the current rules (see TODO, "Rules: make points matter").
 
 ---
 

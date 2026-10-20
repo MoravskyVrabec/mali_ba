@@ -9,8 +9,9 @@ The project's to-do list is [`../TODO.md`](../TODO.md) at the repo root.
 
 ## guides/ (current how-to documents)
 - [DIAGNOSTIC_TOOLS.md](guides/DIAGNOSTIC_TOOLS.md): what `analyze_log.py`,
-  `ab_eval.py`, `policy_probe.py`, `search_sharpness.py` and
-  `analyze_placements.py` measure, how they work and how to read them.
+  `ab_eval.py`, `policy_probe.py`, `value_probe.py`, `search_sharpness.py`,
+  `analyze_placements.py` and `replay_games.py` (replays logged games through the
+  engine to measure the board) measure, how they work and how to read them.
 - [DISTRIBUTED_TRAINING.md](guides/DISTRIBUTED_TRAINING.md): running training
   across machines (queue server, remote actors).
 - [GCP_SETUP.md](guides/GCP_SETUP.md): the Google Cloud worker setup (not in use

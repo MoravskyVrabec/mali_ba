@@ -316,6 +316,23 @@ Make each an ini switch. A network trained under the old rules underplays new on
 judge candidate rules from a short fine-tuning run from the current model (win-type
 mix, game length, whether points decide), not from games against today's model.
 
+Two related findings (2026-10-19), for the same decision:
+- **Routes are declared freely.** The most routes one player declared in a game
+  (D040-D042 desktop logs): 34 in a natural end, 26 in a timeout; in 89% of D040's
+  natural-end games no player declared more than 8. A per-player route cap (e.g. 4-5)
+  would also make routes easy to show on a physical board (route markers by shape on
+  the centers).
+- **The board never runs low.** `replay_games.py` on D041: natural-end games finish
+  with a median 219 of 246 meeples, and options at the start of a turn rise over the
+  game (3.7 -> ~6.5). The original idea, time pressure from a shrinking board, does not
+  happen. Options: a capture rule (only a commented-out stub in the engine today), a
+  visible track of removed meeples that ends the game (~25-35 spaces would end games
+  at today's length), fewer starting meeples (not enough by itself), income that costs
+  meeples. A meeple clock plus the win conditions turned into point bonuses would let
+  points decide every game. `replay_games.py` can test end-condition and scoring
+  variants on recorded games (not rules that change which moves are legal); see
+  docs/guides/DIAGNOSTIC_TOOLS.md.
+
 ## Quick-play option for experienced players (added 2026-10-19)
 
 Both clients now ask before upgrades and mancala starts: a click on such a hex opens a
