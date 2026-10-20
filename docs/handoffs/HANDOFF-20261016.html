@@ -1,5 +1,5 @@
 <title>Mali-Ba Training Handoff</title>
-<meta name="description" content="Runs D024 to D030: sharper search targets, the seat 2 investigation, mover-relative training, the laptop settings bug, and the D031 teacher plan.">
+<meta name="description" content="Runs D024 to D042: sharper search targets, the seat 2 investigation, mover-relative training, the learning-rate staircase, the value head, and the game server for human play.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -131,9 +131,20 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
 </style>
 
 <main>
-  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 16 October 2026, updated 18 October</div>
+  <div class="eyebrow">Mali-Ba AlphaZero training · handoff · 16 October 2026, updated 19 October</div>
   <h1>Sharper targets, the seat 2 investigation, and mover-relative training</h1>
   <p class="sub">Runs D024 through D030 and the plan for D031, 13–16 October. Written so either of us can pick this up cold. It continues <a href="HANDOFF-20261013.html">the 13 October handoff</a> (the D019–D021 plateau, the self-play fix, D023). The source of truth is the <code>mali_ba</code> repo (branch <code>main</code>); <code>open_spiel</code> only holds symlinks.</p>
+
+  <div class="status" style="border-left-color: var(--good)">
+    <h3>Update, 19 October (evening): where things stand</h3>
+    <ul>
+      <li><strong>Running: D042</strong> (both machines, started 20:03): from D041, learning rate 0.00005, 25,000 games, otherwise D040's settings (<a href="#d042">10.7</a>). When it ends: D042 vs D041 (recording the new probe set v4) and D042 vs D036.</li>
+      <li><strong>Best models: D039, D040, D041</strong>, level with each other (D040 vs D039 0.358, D041 vs D040 0.352). Against the fixed reference D036 they score 0.393, 0.391 and <strong>0.412</strong>: a plateau, perhaps creeping upward with the lower learning rate. The trained network now beats a human easily.</li>
+      <li><strong>The value head has been flat since D039</strong> (probe v3 top-pick ~76%, training value error ~0.43 for three runs) and it is not overfitting: its targets are the noisy limit. If D042 ties, D043 mixes the search's own value into the value target (<code>docs/notes/VALUE_HEAD_2026-10-19.md</code>, <a href="#open">section 12</a>).</li>
+      <li><strong>Human play works</strong>: a game server with web and pygame clients, any mix of humans and bots (<a href="#play">section 11</a>). Engine rule <code>block_consecutive_income</code> is now an ini setting (on for training, off for human play; built and checked). <strong>One build is pending:</strong> region bindings for the clients' Show Regions toggle; build after D042.</li>
+      <li><strong>Rules question raised:</strong> both win conditions end the game at once, so points decide only ~3% of games (D040 self-play: rare goods 71%, Timbuktu 26%, move cap 3%). The user is considering changes; options in <a href="#open">section 12</a>.</li>
+    </ul>
+  </div>
 
   <div class="status">
     <h3>Update, 18 October: D032–D038</h3>
@@ -184,7 +195,9 @@ footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
       <li><a href="#settings">Settings in effect (D031)</a></li>
       <li><a href="#tools">Tools and commands</a></li>
       <li><a href="#misled">Things that misled us</a></li>
-      <li><a href="#since16">Since 16 October: D032–D038</a></li>
+      <li><a href="#since16">Since 16 October: D032–D042</a></li>
+      <li><a href="#play">Playing against the models</a></li>
+      <li><a href="#open">Open items and next steps</a></li>
     </ol>
   </nav>
 
@@ -357,6 +370,20 @@ python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_age
     <li><strong>Which flag for which network:</strong> D028 and earlier are absolute (no flag). D029, D030 and D031 on are mover-relative: <code>--mover_relative_X</code> in ab_eval, <code>:rel</code> in value_probe, <code>--mover_relative</code> in seat_balance and search_sharpness. The wrong mode silently gives a much weaker agent. Since 116938a, <code>--mover_relative_X</code> searches one view per search (the same as <code>--seat_relabel_X</code>); results recorded with it before 16 October evening (D030 0.105, D031 0.065) used the per-position search.</li>
     <li>Scripts outside the trainer need <code>PYTHONPATH</code> with the build's <code>python</code> directory and <code>open_spiel/python/games</code>, run from the <code>open_spiel</code> tree.</li>
   </ul>
+  <p>Current head-to-head form (19 October): both agents mover-relative, uct_c 0.5, guidance 0, 501 games.</p>
+  <pre><code>python ab_eval.py --agent_a mali_ba_agent_vD042.weights.h5 --agent_b mali_ba_agent_vD041.weights.h5 \
+    --mover_relative_a --mover_relative_b --uct_c 0.5 --guidance_blend_normalized --heuristic_weight 0.0 \
+    --sims 300 --games 501 --workers 32 \
+    --record_positions /media/robp/UD/Projects/open_spiel/value_probe_set_v4.npz \
+    --config_file $PWD/mali_ba.ini 2>&1 | tee ab_D042rel_vs_D041rel_u05_h0.log
+
+# training dashboard against the previous run
+python analyze_log.py /media/robp/UD/Projects/open_spiel/train_runD042.log \
+    --compare /media/robp/UD/Projects/open_spiel/train_runD041.log
+
+# value heads on one held-out set (v4 once recorded; v3 = D031 vs D028 games)
+python value_probe.py --positions /media/robp/UD/Projects/open_spiel/value_probe_set_v4.npz \
+    --agents mali_ba_agent_vD039.weights.h5:rel mali_ba_agent_vD041.weights.h5:rel mali_ba_agent_vD042.weights.h5:rel</code></pre>
 
   <h2 id="misled">9. Things that misled us (don't repeat)</h2>
   <ul>
@@ -368,11 +395,13 @@ python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_age
     <li><strong>Starting a new input view from an old network's weights isn't a warm start</strong> if the old network searches badly in that view: its self-play games teach little. A teacher that plays well helped (D031 with 5,000 games beat D030 with 21,000).</li>
     <li><strong>Plain value-probe top-pick rewards seat priors.</strong> Use balanced, with the seat picks; and probe with positions from games like the ones the model plays.</li>
     <li><strong>Seat balance depends on the model and its strength</strong>, not only the rules. It looked fair in near-random play and collapsed as play improved; seat 0 vs 1 flipped between models.</li>
+    <li><strong>An ini rule setting does nothing until the engine is rebuilt.</strong> An older build ignores unknown keys without a word (block_consecutive_income looked broken until the build). Check the build date of <code>build/python/pyspiel.so</code> against the engine sources.</li>
+    <li><strong>One run's gain is below what 501 games can detect.</strong> Since D039 every run has tied the one before; compare against a fixed older reference (D036) to see the line move.</li>
     <li><strong>Overwriting a probe file:</strong> <code>--record_positions</code> to an existing name replaces it (v2 now holds the guidance-0.10 game's positions). Use a new name each time.</li>
   </ul>
 
 
-  <h2 id="since16">10. Since 16 October: D032 to D038</h2>
+  <h2 id="since16">10. Since 16 October: D032 to D042</h2>
 
   <h3>10.1 Runs and head-to-heads</h3>
   <p>All mover-relative, one view per search; head-to-heads 300 simulations, 501 games, both agents mover-relative unless noted.</p>
@@ -443,16 +472,58 @@ python ab_eval.py --agent_a mali_ba_agent_vD028.weights.h5 --agent_b mali_ba_age
     <li><strong>Next, D042:</strong> from D041, learning rate 0.00005, a full 25,000 games. Clear gain (vs D036 ~0.43+, or beats D041) = keep the staircase; a tie = start the value-head work (flat for three runs).</li>
   </ul>
 
-  <h2 id="play">11. Playing against the models (18 October)</h2>
-  <p>A game server now lets any mix of humans and bots play, from any machine that can reach it. The engine holds every rule; the front ends only draw the board and send one of the legal moves the server lists. No C++ changes were needed.</p>
+  <h3 id="d042">10.7 D042 (running, started 19 October 20:03)</h3>
+  <dl class="kv">
+    <dt>Started from</dt><dd><code>mali_ba_agent_vD041.weights.h5</code> (line D039 → D040 → D041 → D042)</dd>
+    <dt>Machines</dt><dd>desktop and laptop</dd>
+    <dt>Games</dt><dd>25,000</dd>
+    <dt>Learning rate</dt><dd><strong>0.00005</strong> (Adam, constant; <code>--learning_rate</code>)</dd>
+    <dt>Search</dt><dd>uct_c 0.5; full search on 55% of moves, else 40 simulations; policy-target pruning on; mover-relative, one view per search</dd>
+    <dt>Guidance</dt><dd>0</dd>
+    <dt>Buffer</dt><dd>100k positions, 1 in 32 kept; pools near-win 0.05, rare goods 0.55, Timbuktu 0.35, timeout 0.05; min_buffer_to_train 10,000</dd>
+    <dt>Training</dt><dd>every 8 s, batch 128, aux targets on</dd>
+    <dt>Rules</dt><dd>original; <code>block_consecutive_income = true</code> (as all training so far)</dd>
+  </dl>
   <ul>
-    <li><strong>Start the server</strong> (open_spiel tree, mali_ba env, needs <code>fastapi</code> and <code>uvicorn</code>): <code>PYTHONPATH=build/python:open_spiel/python/games:. python -m mali_ba.play.server --host 0.0.0.0 --port 8765</code></li>
-    <li><strong>Browser:</strong> open <code>http://HOST:8765/</code>, choose the seats (human, any model, heuristic) and create the game. The link <code>#g=GAME_ID</code> invites others.</li>
-    <li><strong>Pygame:</strong> <code>python -m mali_ba.play.pygame_client --new human,D039,heuristic [--server http://HOST:8765]</code>; also <code>--join</code>, <code>--watch</code>, <code>--hotseat</code>.</li>
-    <li><strong>Bots</strong> search as ab_eval evaluates (uct_c 0.5, no noise, guidance 0, mover-relative from D029, most-visited move), 300 simulations by default (about 0.8 s per decision on the CPU while training runs). Bots place tokens with the heuristic.</li>
-    <li>Route choices can offer 100+ options late in a game, so each option carries its hexes: hover to see one, click hexes to keep only routes through them.</li>
-    <li>Protocol and options: <code>docs/design/GAME_SERVER_PROTOCOL.md</code>. Code: <code>open_spiel/python/games/mali_ba/play/</code>. Commits d57dd11, 8e38db9, 7be38fb, 23d7063.</li>
+    <li><strong>Afterwards:</strong> D042 vs D041 (with <code>--record_positions …value_probe_set_v4.npz</code>, a new file) and D042 vs D036; the dashboard against D041; the value probe on v4 (D039, D041, D042).</li>
+    <li><strong>Decision:</strong> D042 beats D041, or scores clearly above D041's 0.412 against D036 (about 0.43 or more) → keep the staircase. A tie → D043 with the search value mixed into the value target (<a href="#open">section 12</a>).</li>
+    <li><strong>Watch:</strong> the policy gap (0.218 at the end of D041); the training value error (flat at ~0.43); the share of Timbuktu wins (rising late in D041); how often a model's own move hands the game to the opponent (D041 14%).</li>
   </ul>
 
-  <footer>Prepared 16 October 2026. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch, latest commit <code>642b8d7</code> (code: <code>ebbd743</code>).</footer>
+  <h2 id="play">11. Playing against the models (18–19 October)</h2>
+  <p>A game server lets any mix of humans and bots play, from any machine that can reach it. The engine holds every rule; the clients draw the board, show the legal moves the server lists, and send one back. Code: <code>open_spiel/python/games/mali_ba/play/</code>. Protocol (version 2): <code>docs/design/GAME_SERVER_PROTOCOL.md</code>.</p>
+  <pre><code># from the open_spiel tree, mali_ba env (needs fastapi and uvicorn)
+PYTHONPATH=build/python:open_spiel/python/games:. python -m mali_ba.play.server --host 0.0.0.0
+# browser: http://HOST:8765/   (an invite link is http://HOST:8765/#g=GAME_ID)
+# pygame:  python -m mali_ba.play.pygame_client --new human,D041,heuristic [--server http://HOST:8765]
+#          also --join GAME_ID, --watch GAME_ID, --hotseat (several humans at one screen)</code></pre>
+  <h3>How play works</h3>
+  <ul>
+    <li><strong>Turns:</strong> a human's turn is several decisions; when the last one passes play on, the game waits for <strong>Complete Turn</strong> (or Enter). <strong>Restart Turn</strong> puts the game back to the start of the turn at any time. Each token placement is its own turn, including the two in a row at a serpentine bend.</li>
+    <li><strong>Hex clicks:</strong> mancala steps and token placements play on one click; an upgrade or a mancala start opens a menu by the hex first, even when it is the only choice (a one-click upgrade once caught the user out). A quick-play option for experienced players is in TODO.</li>
+    <li><strong>Trade routes:</strong> a route choice can offer 100+ options, so each carries its hexes (read from the engine by applying it to a copy of the state): hover to see one, click hexes to keep only routes through them.</li>
+    <li><strong>End game:</strong> a small "End game…" link at the bottom of the sidebar, with an "are you sure?" box. No winner; the score so far is shown; the game is saved.</li>
+    <li><strong>Display:</strong> the background map is pinned to the hexes (follows zoom and pan); centers are drawn larger than posts; city names sit behind the pieces unless <strong>Show City Names</strong> is on; <strong>Show Regions</strong> outlines each region in its own colour (edges between regions grey) and appears once the engine is rebuilt with the region bindings. Settings are remembered per browser / in <code>~/.config/mali_ba/pygame_client.json</code>.</li>
+    <li><strong>Both clients get every change</strong> (web and pygame kept in step, both tested headlessly). The old GUI (<code>main.py</code>, <code>ui/visualizer.py</code>) is untouched and its live modes are broken; extend <code>play/</code> instead.</li>
+  </ul>
+  <h3>Server details</h3>
+  <ul>
+    <li><strong>Bots</strong> search as ab_eval evaluates (uct_c 0.5, no noise, guidance 0, mover-relative from D029, most-visited move), 300 simulations by default (~0.8 s per decision on the CPU while training runs); <code>D041@100</code> is a faster bot. Bots place tokens with the heuristic (self-play never learned placement). Models are chosen by id from the model directory, newest first.</li>
+    <li><strong>Rules for human play:</strong> the server uses the training ini except the values in <code>PLAY_RULES</code> (by default <code>block_consecutive_income = false</code>; the ban on taking income twice in a row was a training aid, not a game rule), written to <code>play/games_played/play_mali_ba.ini</code>; <code>--rule KEY=VALUE</code> changes any other value.</li>
+    <li><strong>Finished and ended games</strong> are saved as JSON in <code>play/games_played/</code> (git-ignored), with the full move history: material for a replay viewer, or for human-like models later.</li>
+    <li><strong>Restarting:</strong> client changes to the web page need only a browser reload (the server reads the page fresh, and the browser rejoins its seat); server or session changes, or a new engine build, need a server restart, which ends the games in progress.</li>
+    <li>There is no login: expose the server only on the LAN or Tailscale. The laptop needs <code>python -m pip install "fastapi" "uvicorn[standard]" "typing_extensions==4.15.0"</code> only to run a server there.</li>
+  </ul>
+
+  <h2 id="open">12. Open items and next steps</h2>
+  <ul>
+    <li><strong>After D042</strong> (<a href="#d042">10.7</a>): head-to-heads, dashboard, value probe v4, and the decision.</li>
+    <li><strong>Value head (D043 if D042 ties):</strong> blend the search's root value into the value target, <code>(1 − λ)·outcome + λ·search value</code> for the player to move, λ = 0.5 on full-search moves only; other players keep the outcome. Needs a small change to the actors (store the root value), the buffer format (with conversion of older saves) and an ini setting (0 = today's behaviour). Measure: training value error (should drop), probe v4, head-to-head. Details and the analysis behind it: <code>docs/notes/VALUE_HEAD_2026-10-19.md</code>.</li>
+    <li><strong>Engine build after D042:</strong> region bindings (5d65fc7). Then restart the game server and check Show Regions; the engine should report 6 regions of 9, 9, 18, 12, 15 and 19 hexes.</li>
+    <li><strong>Rules, for the user to decide:</strong> both win conditions end the game at once, so a human playing for points loses to a race (the user's first game: D040 won by Timbuktu to coast after ~9 mancala turns each). Options, gentlest first: <code>end_game_finish_round</code> (exists); turn a win condition into a large point bonus that ends the game after the round, so points decide every game; raise the bar (route length, regions crossed, centers at both ends, or <code>end_game_req_num_routes</code>); more interaction around Timbuktu. A network trained under the old rules underplays new ones, so measure candidate rules with a short fine-tuning run from the current model.</li>
+    <li><strong>Learning-rate staircase:</strong> 0.0002 → 0.0001 (D039, a gain) → 0.00005 (D041–D042). If gains continue, consider 0.000025 later; if not, the value head comes first.</li>
+    <li><strong>Later (TODO.md):</strong> AI skill levels (model, simulations and temperature presets, calibrated with ab_eval); quick-play option; a replay viewer for saved games; retiring or porting the old GUI's live modes; earlier items (fast budget 40 → 80, uct_c 0.25 once the value head improves, normalized blend as evaluator default, <code>policy_probe.py</code>).</li>
+  </ul>
+
+  <footer>Prepared 16 October 2026, updated 19 October. Commits referenced are in the <code>mali_ba</code> repo, <code>main</code> branch; latest code commit <code>5d65fc7</code> (region bindings, not yet built).</footer>
 </main>

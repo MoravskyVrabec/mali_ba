@@ -101,6 +101,12 @@ which the user prefers. Update the rules document to match.
 
 ## Get the policy learning (added 2026-10-08)
 
+**Status 2026-10-19: largely achieved.** Since uct_c 1.0 -> 0.5, policy-target pruning,
+more full searches (0.55) and guidance 0, the targets are sharp (target H ~0.59) and
+the policy follows them (gap ~0.22, lowest 0.218 in D041); the models now beat a human
+easily. Remaining work is the value head (see "Value head" below). The history below is
+kept for reference.
+
 The policy head still learns essentially nothing: probe on 2026-10-08 (D007, D010,
 D011, D012) gave top-1 31-34% (no significant differences, inside the untrained
 range) and entropy 92.0% -> 93.2% of uniform, i.e. slightly *flatter* over time.
@@ -257,6 +263,15 @@ network bots (ab_eval's search, 300 sims default), a FastAPI/WebSocket game serv
 (protocol v1, `docs/design/GAME_SERVER_PROTOCOL.md`), a pygame client and a web client
 served by the server. No C++ changes were needed.
 
+Since then (2026-10-18/19): protocol 2 (Restart Turn / Complete Turn; each token
+placement is a turn), End Game with confirmation, the ini rule
+`block_consecutive_income` (off for human play via the server's PLAY_RULES; built),
+a hex menu before upgrades and mancala starts, centers drawn larger, city names behind
+the pieces (Show City Names), Show Regions. Both clients get every change.
+
+- **Build pending (after D042):** region bindings (5d65fc7, `games_mali_ba.cc`). Then
+  restart the server and check Show Regions appears; the engine should report 6
+  regions of 9, 9, 18, 12, 15 and 19 hexes.
 - The old GUI (`main.py`, `ui/visualizer.py`, `utils/cpp_interface.py`) is untouched:
   its live modes send whole-turn move strings the engine no longer accepts, and its
   rule copies (`ui/visualizer_other.py`) are stale. Replay mode may still work. Decide:
@@ -266,6 +281,34 @@ served by the server. No C++ changes were needed.
 - No login on the server: expose it only on the LAN or Tailscale.
 - Ideas: undo for hot-seat games; a replay viewer for saved games; show each player's
   goods in detail; a model's value estimate as an optional "who's winning" bar.
+
+## Value head: search value in the target (added 2026-10-19)
+
+The value head has been flat since D039 (probe v3 top-pick ~76%, balanced ~69.6%;
+training value error ~0.43 for three runs) and is not overfitting: its targets (one
+game's final outcome) are the noisy limit. If D042 ties D041, D043 should mix the
+search's root value into the target: (1 - lam) * outcome + lam * search value, for the
+player to move only, lam = 0.5, full-search moves only. Work: actors store the root
+value; buffer entry + `buffer_format.py` conversion of older saves; ini
+`value_target_search_weight` (0 = current behaviour). Measure training value error,
+probe v4 (record it in the D042 vs D041 head-to-head, new file name), head-to-head.
+Analysis: `docs/notes/VALUE_HEAD_2026-10-19.md`.
+
+## Rules: make points matter (added 2026-10-19; the user is considering)
+
+Both win conditions end the game at once, so points decide only the ~3% of games that
+reach the move cap (D040 self-play: rare goods 71%, Timbuktu 26%, move cap 3%). A human
+playing for points loses to a race: in the first human game D040 won by Timbuktu to
+coast after ~9 mancala turns each. Options, gentlest first:
+- `end_game_finish_round = true` (exists): everyone else gets one more turn.
+- A win condition becomes a large point bonus that ends the game after the round, so
+  points decide every game.
+- Raise the bar: minimum route length or regions crossed, centers at both ends, or a
+  prerequisite (`end_game_req_num_routes` exists).
+- More interaction around Timbuktu (limit posts there; blocking).
+Make each an ini switch. A network trained under the old rules underplays new ones:
+judge candidate rules from a short fine-tuning run from the current model (win-type
+mix, game length, whether points decide), not from games against today's model.
 
 ## Quick-play option for experienced players (added 2026-10-19)
 
