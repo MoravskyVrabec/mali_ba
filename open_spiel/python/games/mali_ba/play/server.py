@@ -147,7 +147,7 @@ MAP_FILE = os.path.join(MALI_BA_DIR, "ui", "mali_ba_map.jpg")
 
 
 def _board_config():
-    cfg = board_config(_game())
+    cfg = board_config(_game(), SETTINGS["config_file"])
     cfg["map_url"] = "/api/map" if os.path.exists(MAP_FILE) else None
     return cfg
 

@@ -25,7 +25,8 @@ Turn puts the game back to the start of your turn; when your turn is done, Compl
 Turn (or Enter) passes play on. The Routes and Show City Names buttons (top left of the
 board) toggle trade routes and bring city names in front of the pieces; Show Regions
 outlines each region in its own colour (both remembered in
-~/.config/mali_ba/pygame_client.json). Keys: F fits the board, R toggles trade routes,
+~/.config/mali_ba/pygame_client.json). Click a player's row in the sidebar for their goods
+drawer (goods, sets, rare-good regions; Esc closes it). Keys: F fits the board, R toggles trade routes,
 H hides the final score, Esc closes a menu or quits. "End game..." (bottom right of the
 sidebar) stops the game for everyone after asking.
 """
@@ -61,6 +62,26 @@ REGION_RGB = [(0xE6, 0x9F, 0x00), (0x56, 0xB4, 0xE9), (0x00, 0x9E, 0x73), (0xCC,
 REGION_SHARED = (0x8A, 0x8A, 0x8A)
 HEX_DIRS = ((1, -1, 0), (1, 0, -1), (0, 1, -1), (-1, 1, 0), (-1, 0, 1), (0, -1, 1))
 PREFS_FILE = os.path.expanduser("~/.config/mali_ba/pygame_client.json")
+
+
+def progress(n, need):
+    """'3/5' while short of a requirement, '6 (met)' once it is met (the web shows a
+    tick; pygame's default font has none)."""
+    return f"{n}" if not need else (f"{n} (met)" if n >= need else f"{n}/{need}")
+
+
+def sets_line(p):
+    """'8 kinds 60 · 3 kinds 6 x4 · 1 kind 1 x29 = 187 pts': equal sets grouped."""
+    if not p["sets"]:
+        return "no goods yet"
+    parts = []
+    for x in p["sets"]:
+        if parts and parts[-1][0] == x["size"]:
+            parts[-1][2] += 1
+        else:
+            parts.append([x["size"], x["points"], 1])
+    return (" \u00b7 ".join(f"{n} kind{'s' if n > 1 else ''} {pts}" + (f" x{k}" if k > 1 else "")
+                            for n, pts, k in parts) + f" = {p['set_points']} pts")
 
 
 def load_prefs():
@@ -214,6 +235,11 @@ class Client:
         self.end_rect = None
         self.confirm_buttons = []    # [(rect, "end" | "keep")]
         self.hover = None
+        self.drawer = None           # the seat whose goods drawer is open
+        self.seat_rects = []         # [(rect, seat)]: sidebar rows, a click opens the drawer
+        self.drawer_rect = None
+        self.drawer_buttons = []     # [(rect, seat | "close")]
+        self.region_index = {r["id"]: i for i, r in enumerate(board_cfg.get("regions") or [])}
         self.fit()
 
     # -- geometry (flat-top cube coordinates, as in ui/visualizer.py) --
@@ -350,6 +376,15 @@ class Client:
                     return
             self.close_menu()
             return
+        if self.drawer is not None and self.drawer_rect and self.drawer_rect.collidepoint(pos):
+            for r, what in self.drawer_buttons:
+                if r.collidepoint(pos):
+                    self.drawer = None if what == "close" else what
+            return                           # a click inside the drawer never reaches the board
+        for r, seat in self.seat_rects:
+            if r.collidepoint(pos):
+                self.drawer = None if self.drawer == seat else seat
+                return
         for r, what in self.tool_buttons:
             if r.collidepoint(pos):
                 if what == "routes":
@@ -407,6 +442,7 @@ class Client:
             self.draw_region_legend()
         self.draw_sidebar(moves)
         self.draw_route_marks()
+        self.draw_drawer()
         if self.menu:
             self.draw_menu()
         if self.view and self.view.get("result") and self.show_result:
@@ -656,8 +692,22 @@ class Client:
         mine = [s for s in self.conns if s is not None]
         y += 6
         sj = v["board"]
+        # One compact row per player (click it for the goods drawer): set points, kinds of
+        # goods, posts left, and progress toward the rare-goods end condition and routes.
+        self.seat_rects = []
+        players = v.get("players") or []
         for seat in v["seats"]:
             i = seat["seat"]
+            top = y
+            p = players[i] if i < len(players) else None
+            rows = 3 if p and p["regions"]["list"] else 2
+            row = pygame.Rect(x - 4, top - 2, mw + 8, 4 + self.font.get_linesize()
+                              + (rows - 1) * self.small.get_linesize())
+            if self.drawer == i:
+                pygame.draw.rect(self.screen, BLACK, row, 2, border_radius=6)
+            elif row.collidepoint(pygame.mouse.get_pos()):
+                pygame.draw.rect(self.screen, GRAY, row, 1, border_radius=6)
+            self.seat_rects.append((row, i))
             col = PLAYER_COLOR_DICT.get(PlayerColor.from_int(i), GRAY)
             pygame.draw.circle(self.screen, col, (x + 8, y + 9), 7)
             pygame.draw.circle(self.screen, BLACK, (x + 8, y + 9), 7, 1)
@@ -665,11 +715,19 @@ class Client:
                 pygame.draw.polygon(self.screen, BLACK, [(x - 9, y + 3), (x - 9, y + 15), (x - 2, y + 9)])
             you = " (you)" if i in mine else ""
             y = self.text(f"{seat['name']}{you}", x + 20, y, max_w=mw - 20)
-            cg = sum(sj["commonGoods"][i].values()) if i < len(sj["commonGoods"]) else 0
-            rg = sj["rareGoods"][i] if i < len(sj["rareGoods"]) else {}
             posts = sj["playerPostsSupply"][i] if i < len(sj["playerPostsSupply"]) else "?"
-            y = self.text(f"common {cg}  rare {sum(rg.values())} ({len(rg)} kinds)  posts left {posts}",
-                          x + 20, y, self.small, DARK_GRAY, mw - 20)
+            line2 = f"posts left {posts}"
+            if p:
+                line2 = f"sets {p['set_points']} pts \u00b7 {p['total']} goods, {p['kinds']} kinds \u00b7 " + line2
+            y = self.text(line2, x + 20, y, self.small, DARK_GRAY, mw - 20)
+            if rows == 3:
+                px_ = self.draw_pips(p["regions"]["list"], x + 20, y + 2, 9)
+                rg, rt = p["regions"], p["routes"]
+                line3 = f"rare regions {progress(rg['have'], rg['needed'])}"
+                if rt["needed"]:
+                    line3 += f" \u00b7 routes {progress(rt['active'], rt['needed'])}"
+                y = self.text(line3, px_ + 4, y, self.small, DARK_GRAY, mw - (px_ - x) - 4)
+            y += 3
         y += 4
         phase = v["phase"].replace("_", " ").lower()
         y = self.text(f"Phase: {phase}" + ("   — final round" if v.get("final_round") else ""),
@@ -773,6 +831,123 @@ class Client:
                       (200, 30, 30) if hov else (150, 50, 50))
             pygame.draw.line(self.screen, (150, 50, 50), self.end_rect.bottomleft, self.end_rect.bottomright)
 
+    def region_rgb(self, region_id):
+        return REGION_RGB[self.region_index.get(region_id, 0) % len(REGION_RGB)]
+
+    def draw_pips(self, regions, x, y, size):
+        """One small square per region: filled when the player has a rare good from it.
+        Returns the x after the last pip."""
+        for r in regions:
+            rect = pygame.Rect(x, y, size, size)
+            col = self.region_rgb(r["id"])
+            if r["have"]:
+                pygame.draw.rect(self.screen, col, rect, border_radius=2)
+            pygame.draw.rect(self.screen, col, rect, 2, border_radius=2)
+            x += size + 3
+        return x
+
+    def wrap(self, text, font, width):
+        lines, cur = [], ""
+        for word in text.split(" "):
+            t = (cur + " " + word).strip()
+            if cur and font.size(t)[0] > width:
+                lines.append(cur)
+                cur = word
+            else:
+                cur = t
+        return lines + ([cur] if cur else [])
+
+    def draw_drawer(self):
+        """The goods drawer: over the board's right side, so the sidebar never grows."""
+        self.drawer_rect, self.drawer_buttons = None, []
+        v = self.view
+        players = (v or {}).get("players") or []
+        if self.drawer is None or self.drawer >= len(players):
+            return
+        p = players[self.drawer]
+        br = self.board_rect()
+        w = min(380, br.width - 20)
+        box = pygame.Rect(br.right - w - 10, 44, w, br.height - 54)
+        self.drawer_rect = box
+        bg = pygame.Surface(box.size, pygame.SRCALPHA)
+        bg.fill((251, 248, 241, 248))
+        self.screen.blit(bg, box.topleft)
+        pygame.draw.rect(self.screen, BLACK, box, 1, border_radius=10)
+        self.screen.set_clip(box)
+        x, y, iw = box.x + 10, box.y + 8, box.width - 20
+        mouse = pygame.mouse.get_pos()
+        # player tabs, and a close button
+        tx = x
+        for seat in v["seats"]:
+            i = seat["seat"]
+            label = seat["name"]
+            tw = min(110, self.small.size(label)[0] + 26)
+            r = pygame.Rect(tx, y, tw, 22)
+            pygame.draw.rect(self.screen, YELLOW if r.collidepoint(mouse) else (250, 250, 245), r, border_radius=5)
+            pygame.draw.rect(self.screen, BLACK if i == self.drawer else GRAY, r, 2 if i == self.drawer else 1,
+                             border_radius=5)
+            pygame.draw.circle(self.screen, PLAYER_COLOR_DICT.get(PlayerColor.from_int(i), GRAY), (r.x + 10, r.centery), 5)
+            self.text(label, r.x + 18, r.y + 5, self.small, max_w=tw - 22)
+            self.drawer_buttons.append((r, i))
+            tx += tw + 4
+        close = pygame.Rect(box.right - 32, y, 22, 22)
+        pygame.draw.rect(self.screen, YELLOW if close.collidepoint(mouse) else (250, 250, 245), close, border_radius=5)
+        pygame.draw.rect(self.screen, GRAY, close, 1, border_radius=5)
+        self.text("x", close.x + 7, close.y + 4, self.font)
+        self.drawer_buttons.append((close, "close"))
+        y += 30
+        for line in self.wrap("Sets: " + sets_line(p), self.font, iw):
+            y = self.text(line, x, y, self.font)
+        y += 6
+        y = self.text(f"GOODS \u00b7 {p['total']} ({p['kinds']} kinds)", x, y, self.small, DARK_GRAY)
+        cols = (x, x + iw - 150, x + iw - 120, x + iw)    # good | # | from | if spent (right edge)
+        if p["goods"]:
+            self.text("Good", cols[0], y + 2, self.small, DARK_GRAY)
+            self.text("#", cols[1], y + 2, self.small, DARK_GRAY)
+            self.text("From", cols[2], y + 2, self.small, DARK_GRAY)
+            t = "If spent"
+            self.text(t, cols[3] - self.small.size(t)[0], y + 2, self.small, DARK_GRAY)
+            y += 18
+            for kind, title in (("rare", "Rare"), ("common", "Common")):
+                gs = [g for g in p["goods"] if g["kind"] == kind]
+                if not gs:
+                    continue
+                y = self.text(title, x, y + 2, self.small, GRAY)
+                for g in gs:
+                    pygame.draw.line(self.screen, LIGHT_GRAY, (x, y), (x + iw, y))
+                    nx = x
+                    if kind == "rare" and g["region"] is not None:
+                        pygame.draw.rect(self.screen, self.region_rgb(g["region"]), (x, y + 5, 9, 9), border_radius=2)
+                        nx += 13
+                    self.text(g["name"], nx, y + 3, self.small, max_w=cols[1] - nx - 6)
+                    self.text(str(g["count"]), cols[1], y + 3, self.small)
+                    self.text(g["city"] or "", cols[2], y + 3, self.small, DARK_GRAY, max_w=cols[3] - cols[2] - 34)
+                    cost = f"-{g['spend_cost']}" if g["spend_cost"] else "0"
+                    self.text(cost, cols[3] - self.small.size(cost)[0], y + 3, self.small)
+                    y += 19
+        else:
+            y = self.text("None yet.", x, y + 2, self.small, DARK_GRAY)
+        rg, rt = p["regions"], p["routes"]
+        if rg["list"]:
+            y += 10
+            head = f"RARE GOODS BY REGION \u00b7 {progress(rg['have'], rg['needed'])}"
+            if rt["needed"]:
+                head += f" \u00b7 ROUTES {progress(rt['active'], rt['needed'])}"
+            y = self.text(head, x, y, self.small, DARK_GRAY, iw)
+            if rg["needed"]:
+                for line in self.wrap(f"The game ends when a player with {rt['needed'] or 'enough'} routes "
+                                      f"holds rare goods from {rg['needed']} regions.", self.small, iw):
+                    y = self.text(line, x, y, self.small, GRAY)
+            y += 4
+            half = iw // 2
+            for k, r in enumerate(rg["list"]):
+                cx, cy = x + (k % 2) * half, y + (k // 2) * 34
+                self.draw_pips([r], cx, cy + 3, 10)
+                self.text(r["name"], cx + 15, cy, self.small, BLACK if r["have"] else GRAY, half - 18)
+                if r["have"]:
+                    self.text(", ".join(r["goods"]), cx + 15, cy + 15, self.small, DARK_GRAY, half - 18)
+        self.screen.set_clip(None)
+
     def draw_result(self, res):
         lines = [l for l in (res.get("score") or "").splitlines() if l.strip() and "====" not in l]
         win = res.get("winner")
@@ -802,6 +977,9 @@ class Client:
                     continue
                 if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE and self.menu:
                     self.close_menu()                # Esc closes a hex menu, not the window
+                    continue
+                if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE and self.drawer is not None:
+                    self.drawer = None               # ... or the goods drawer
                     continue
                 if e.type == pygame.QUIT or (e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE):
                     pygame.quit()

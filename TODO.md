@@ -275,9 +275,18 @@ placement is a turn), End Game with confirmation, the ini rule
 a hex menu before upgrades and mancala starts, centers drawn larger, city names behind
 the pieces (Show City Names), Show Regions. Both clients get every change.
 
-- **Build pending (after D042):** region bindings (5d65fc7, `games_mali_ba.cc`). Then
-  restart the server and check Show Regions appears; the engine should report 6
-  regions of 9, 9, 18, 12, 15 and 19 hexes.
+- **Build pending (after D042):** region bindings (5d65fc7, `games_mali_ba.cc`). Until
+  then the server reads the regions from the ini (`regions_source: "ini"` in
+  `/api/board`). After the build, restart the server and check that `/api/board` says
+  `regions_source: "engine"` with 6 regions of 9, 9, 18, 12, 15 and 19 hexes.
+- **Goods display (done 2026-10-19):** each player's row shows set points, goods,
+  region pips and routes; a click opens a goods drawer over the board (sets, each
+  good's city/region and "if spent" cost, rare-good regions). `play/goods.py`, checked
+  against the engine's set scoring by `play/test_goods.py`.
+- **Next: choosing payments (in progress).** An ini switch for human play adds real
+  payment decisions: which goods pay for an upgrade (1 rare, or 3 common one at a
+  time), and which goods to take as income where the rules give a choice. Bots keep the
+  engine's automatic choices. Needs an engine build.
 - The old GUI (`main.py`, `ui/visualizer.py`, `utils/cpp_interface.py`) is untouched:
   its live modes send whole-turn move strings the engine no longer accepts, and its
   rule copies (`ui/visualizer_other.py`) are stale. Replay mode may still work. Decide:
@@ -285,8 +294,10 @@ the pieces (Show City Names), Show Regions. Both clients get every change.
   `play/games_played/` are JSON with the full move history).
 - Placement for network bots uses the heuristic (self-play places tokens at random).
 - No login on the server: expose it only on the LAN or Tailscale.
-- Ideas: undo for hot-seat games; a replay viewer for saved games; show each player's
-  goods in detail; a model's value estimate as an optional "who's winning" bar.
+- Ideas: undo for hot-seat games; a replay viewer for saved games; a model's value
+  estimate as an optional "who's winning" bar.
+- Touch screens (tablets): there is no hover, so route previews and hex hover info
+  need a tap equivalent.
 
 ## Value head: search value in the target (added 2026-10-19)
 

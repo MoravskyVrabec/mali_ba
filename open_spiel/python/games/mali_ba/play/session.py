@@ -33,6 +33,7 @@ import time
 
 from mali_ba.play.bots import make_bot
 from mali_ba.play.describe import common_goods_list, describe_action
+from mali_ba.play.goods import GoodsSummarizer, read_rules, regions_from_ini
 
 
 class IllegalMove(ValueError):
@@ -51,11 +52,14 @@ MEEPLE_COLORS = ["solid black", "clear black", "solid silver", "clear silver", "
                  "solid gold", "clear gold", "solid bronze", "clear bronze", "clear tan"]
 
 
-def board_config(game):
+def board_config(game, config_file=None):
     """The board's fixed parts, which never change during a game: the hexes, the
-    cities, and the names behind the board JSON's numbers."""
+    cities, the regions, and the names behind the board JSON's numbers."""
     import pyspiel
     g = pyspiel.mali_ba.downcast_game(game)
+    regions, source = _regions(g), "engine"
+    if not regions and config_file:
+        regions, source = regions_from_ini(config_file), "ini"
     return {
         "grid_radius": g.get_grid_radius(),
         "valid_hexes": sorted([h.x, h.y, h.z] for h in g.get_valid_hexes()),
@@ -67,13 +71,15 @@ def board_config(game):
         "meeple_colors": MEEPLE_COLORS,
         "post_types": {"1": "post", "2": "center"},
         "map_rect": MAP_RECT,
-        "regions": _regions(g),
+        "regions": regions,
+        # "ini" until the engine is built with its region bindings (5d65fc7); same regions
+        "regions_source": source if regions else None,
     }
 
 
 def _regions(g):
     """[{"id", "name", "hexes"}] from the engine; [] with an engine built before the
-    region bindings (2026-10-19), so clients just hide the regions toggle."""
+    region bindings (2026-10-19); board_config then reads them from the ini."""
     if not hasattr(g, "get_region_for_hex"):
         return []
     by_id = {}
@@ -98,8 +104,9 @@ class GameSession:
         self.seed = random.randrange(2**31) if seed is None else int(seed)
         self._rng = random.Random(self.seed)
         self.goods_list = common_goods_list(self.game)
-        self._city_names = {tuple(c["location"]): c["name"]
-                            for c in board_config(self.game)["cities"]}
+        cfg = board_config(self.game, config_file)
+        self._city_names = {tuple(c["location"]): c["name"] for c in cfg["cities"]}
+        self._goods = GoodsSummarizer(cfg["cities"], cfg["regions"], read_rules(config_file))
 
         self.seats = []
         self._bots = {}
@@ -214,7 +221,7 @@ class GameSession:
                 "score": ms.get_score_breakdown_string(), "moves": len(self.history)}
 
     def board_config(self):
-        return board_config(self.game)
+        return board_config(self.game, self.config_file)
 
     def view(self, for_seat=None):
         """Everything a front end draws. Legal moves are included when it is a human's
@@ -234,6 +241,7 @@ class GameSession:
             "history": self.history[-200:],
             "result": self.result(),
             "goods": self.goods_list,
+            "players": self._goods.summary(sj),   # goods, sets, rare regions (goods.py)
             "turn": self.turn_info(),
         }
 

@@ -77,11 +77,12 @@ All bodies are JSON. Errors return a 4xx status with `{"detail": "..."}`.
  "post_types": {"1": "post", "2": "center"},
  "map_rect": [-11.214, -7.147, 21.824, 16.034],
  "map_url": "/api/map",
- "regions": [{"id": 1, "name": "Desert West", "hexes": [[-5, 0, 5], ...]}, ...]}
+ "regions": [{"id": 1, "name": "Desert West", "hexes": [[-5, 0, 5], ...]}, ...],
+ "regions_source": "engine"}
 ```
-`regions` comes from the engine (the hexes each region holds, as used in scoring); it is
-empty with an engine built before 19 October 2026, and clients then hide their Show
-Regions toggle.
+`regions` comes from the engine (the hexes each region holds, as used in scoring). With
+an engine built before the region bindings (19 October 2026) the server reads the same
+regions from the ini instead, and `regions_source` is `"ini"`.
 `map_rect` places the background map (`GET /api/map`, a JPEG) relative to the hexes:
 x, y, width and height, in hex radii from the centre of hex (0,0,0). Screen y points
 down, and hexes are flat-topped, so hex (q,r,s) is centred at (1.5 q, √3 (r − s) / 2).
@@ -172,6 +173,14 @@ highest `seq`, not the longest history: a restarted turn makes the history short
               "t": 1792371002.3}, ...],
  "result": null,
  "goods": ["Casava/peanut", ...],
+ "players": [{"seat": 0, "total": 9, "kinds": 6, "set_points": 44,
+              "sets": [{"size": 6, "points": 30}, {"size": 2, "points": 3}, ...],
+              "goods": [{"name": "Kora", "kind": "rare", "count": 1, "city": "Sikasso",
+                         "culture": "Senoufo", "region": 3, "spend_cost": 19}, ...],
+              "regions": {"have": 3, "needed": 5,
+                          "list": [{"id": 1, "name": "Desert West", "have": true,
+                                    "goods": ["Silver cross"]}, ...]},
+              "routes": {"active": 1, "needed": 2}}, ...],
  "turn": {"seat": 0, "moves": 3, "can_restart": true, "complete": false}}
 ```
 
@@ -181,6 +190,12 @@ highest `seq`, not the longest history: a restarted turn makes the history short
   mancala in progress: `mancalaHex`, `mancalaPath`, `meeplesInHand`, `lastActionHex`),
   `history` and `version`. Hexes are cube coordinates `x,y,z` with x+y+z = 0.
 - `legal_moves` is non-empty only for the seat to move, on its own connection.
+- `players` summarises each seat's goods (`play/goods.py`): the goods held, with the city
+  each comes from and, for rare goods, its region id; the sets they make, largest first,
+  and their points (the engine's set scoring, common and rare goods together);
+  `spend_cost`, the set points that spending one of that good would lose now; rare-good
+  regions against the end condition (`needed` is `null` when that condition is off); and
+  active routes against `end_game_req_numroutes`.
 - `history` holds the last 200 decisions. A restarted turn's decisions are removed from it.
 - `turn` is set during a human's turn (otherwise `null`): `moves` made so far this turn,
   `can_restart` (at least one move to undo) and `complete` (the turn is done and waits
@@ -242,7 +257,12 @@ Restart Turn and Complete Turn sit under the prompt; Enter also completes a turn
 "End game…" at the bottom of the sidebar stops the game after a confirmation.
 Show Regions outlines each region's hexes in its own colour (edges between two regions
 in grey) and adds a colour key; Show City Names brings names in front of the pieces.
-Both are remembered per browser.
+Both are remembered per browser. Each player's row in the sidebar shows their set points,
+goods and kinds, posts left, one pip per region (filled when they hold a rare good from
+it) and routes against the end condition; clicking a row opens a goods drawer over the
+board (every good with its city, region and "if spent" cost, the sets, and the regions),
+with a tab per player. Esc or × closes it. It sits over the board so the sidebar stays
+narrow on tablets.
 
 **Pygame** (`play/pygame_client.py`) needs only pygame, websockets and the mali_ba package
 (`PYTHONPATH=open_spiel/python/games`); it does not need the engine build.

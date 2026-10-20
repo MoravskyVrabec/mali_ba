@@ -49,6 +49,28 @@ h2 { font-size: 15px; margin: 18px 0 8px; color: var(--muted); text-transform: u
 .seat { display: flex; align-items: flex-start; gap: 8px; padding: 4px 6px; border-radius: 6px; }
 .seat.turn { background: #f3e7c9; }
 .dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #333; flex: none; margin-top: 3px; }
+.seat { cursor: pointer; }
+.seat:hover { outline: 1px solid var(--line); }
+.seat.open { outline: 2px solid var(--ink); }
+.pips { display: inline-flex; gap: 2px; vertical-align: -1px; margin-right: 4px; }
+.pip { width: 9px; height: 9px; border-radius: 2px; border: 1.5px solid; box-sizing: border-box; }
+/* goods drawer: over the board, so the sidebar never grows (tablets) */
+#goodsdrawer { position: absolute; right: 10px; top: 46px; bottom: 10px; width: min(380px, calc(100% - 20px)); z-index: 4;
+               overflow-y: auto; background: rgba(251, 248, 241, .97); border: 1px solid var(--ink); border-radius: 10px;
+               box-shadow: 0 6px 24px rgba(0,0,0,.25); padding: 10px 12px; }
+#goodsdrawer .tabs { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+#goodsdrawer .tabs button { display: inline-flex; gap: 5px; align-items: center; padding: 3px 8px; }
+#goodsdrawer .tabs button.on { border-color: var(--ink); font-weight: 600; }
+#goodsdrawer .tabs .dot { width: 10px; height: 10px; margin: 0; }
+#goodsdrawer .close { margin-left: auto; }
+#goodsdrawer table { width: 100%; border-collapse: collapse; font-size: 13px; }
+#goodsdrawer td, #goodsdrawer th { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line); }
+#goodsdrawer th { color: var(--muted); font-weight: 500; }
+#goodsdrawer td.num, #goodsdrawer th.num { text-align: right; }
+#goodsdrawer .sub { color: var(--muted); font-size: 12px; }
+#goodsdrawer h3 { font-size: 13px; margin: 12px 0 4px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.regiongrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 13px; }
+.regiongrid .miss { color: var(--muted); }
 #moves { display: flex; flex-direction: column; gap: 5px; max-height: 42vh; overflow-y: auto; padding-right: 2px; }
 #moves button { text-align: left; }
 #moves button:hover { background: var(--hi); }
@@ -84,6 +106,7 @@ svg text { pointer-events: none; }
   #game { grid-template-columns: 1fr; grid-template-rows: 58vh auto; height: auto; min-height: 100vh; }
   #side { border-left: 0; border-top: 1px solid var(--line); }
   #moves { max-height: none; }
+  #goodsdrawer { top: 46px; right: 8px; width: calc(100% - 16px); }
   .seatrow { grid-template-columns: 60px 1fr; }
 }
 </style>
@@ -120,6 +143,7 @@ svg text { pointer-events: none; }
     </div>
     <div id="result" class="hidden"></div>
     <div id="hexmenu" class="hidden" role="menu"></div>
+    <div id="goodsdrawer" class="hidden" role="dialog" aria-label="Goods"></div>
   </div>
   <div id="side">
     <div><strong id="gtitle">Mali-Ba</strong> <span id="role" class="small muted"></span></div>
@@ -545,13 +569,23 @@ function showHover(k) {
 }
 function renderSide() {
   const v = G.view, b = v.board;
+  // One compact row per player (tap it for the goods drawer): set points, kinds of goods,
+  // posts left, and progress toward the rare-goods end condition and its routes.
   $("seatlist").innerHTML = v.seats.map(s => {
-    const i = s.seat, cg = Object.values(b.commonGoods[i] || {}).reduce((a, x) => a + x, 0);
-    const rg = b.rareGoods[i] || {}, rgn = Object.values(rg).reduce((a, x) => a + x, 0);
+    const i = s.seat, p = (v.players || [])[i];
     const you = G.mine.includes(i) ? " (you)" : "";
-    return `<div class="seat${v.current_seat === i ? " turn" : ""}"><span class="dot" style="background:${PLAYER_RGB[i]}"></span>
-      <div><div>${esc(s.name)}${you}</div><div class="small muted">common ${cg} &middot; rare ${rgn} (${Object.keys(rg).length} kinds) &middot; posts left ${b.playerPostsSupply[i]}</div></div></div>`;
+    let line2 = `posts left ${b.playerPostsSupply[i]}`, line3 = "";
+    if (p) {
+      line2 = `sets ${p.set_points} pts &middot; ${p.total} goods, ${p.kinds} kinds &middot; ${line2}`;
+      const rg = p.regions, need = rg.needed, rt = p.routes;
+      if (rg.list.length) line3 = `<span class="pips">${regionPips(rg.list)}</span>rare regions ${progress(rg.have, need)}`
+        + (rt.needed ? ` &middot; routes ${progress(rt.active, rt.needed)}` : "");
+    }
+    return `<div class="seat${v.current_seat === i ? " turn" : ""}${G.drawer === i ? " open" : ""}" onclick="toggleDrawer(${i})" title="Show ${esc(s.name)}'s goods">
+      <span class="dot" style="background:${PLAYER_RGB[i]}"></span>
+      <div><div>${esc(s.name)}${you}</div><div class="small muted">${line2}</div>${line3 ? `<div class="small muted">${line3}</div>` : ""}</div></div>`;
   }).join("");
+  renderDrawer();
   $("phase").textContent = "Phase: " + v.phase.replace(/_/g, " ").toLowerCase() + (v.final_round ? " — final round" : "");
 
   // Spectators may take an open seat (the server says which are open via /api/games).
@@ -607,6 +641,54 @@ function renderSide() {
     res.innerHTML = `<strong>${head}</strong> <button style="float:right" onclick="G.showResult=false;render()">Hide</button><pre>${esc(score)}</pre>`;
     res.classList.remove("hidden");
   } else res.classList.add("hidden");
+}
+
+// ---------- goods drawer ----------
+function regionColor(id) {
+  const i = (G.cfg.regions || []).findIndex(r => r.id === id);
+  return REGION_RGB[(i < 0 ? 0 : i) % REGION_RGB.length];
+}
+function regionPips(list) {
+  return list.map(r => `<span class="pip" title="${esc(r.name)}${r.have ? ": " + esc(r.goods.join(", ")) : ""}" style="border-color:${regionColor(r.id)};background:${r.have ? regionColor(r.id) : "transparent"}"></span>`).join("");
+}
+// "3/5" while short of a requirement, "6 ✓" once it is met.
+function progress(n, need) { return need ? (n >= need ? `${n} &#10003;` : `${n}/${need}`) : `${n}`; }
+// Sets as "8 kinds 60 · 3 kinds 6 ×4 · 1 kind 1 ×29 = 187 pts": equal sets grouped.
+function setsLine(p) {
+  if (!p.sets.length) return "no goods yet";
+  const parts = [];
+  for (const x of p.sets) {
+    const last = parts[parts.length - 1];
+    if (last && last.size === x.size) last.n++; else parts.push({size: x.size, points: x.points, n: 1});
+  }
+  return parts.map(x => `${x.size} kind${x.size > 1 ? "s" : ""} ${x.points}${x.n > 1 ? " &times;" + x.n : ""}`).join(" &middot; ")
+    + ` = <strong>${p.set_points} pts</strong>`;
+}
+function toggleDrawer(seat) { G.drawer = G.drawer === seat ? null : seat; render(); }
+function closeDrawer() { if (G && G.drawer != null) { G.drawer = null; render(); } }
+function renderDrawer() {
+  const d = $("goodsdrawer"), v = G.view, p = G.drawer != null && v.players ? v.players[G.drawer] : null;
+  d.classList.toggle("hidden", !p);
+  if (!p) return;
+  const tabs = v.seats.map(s => `<button class="${s.seat === G.drawer ? "on" : ""}" onclick="G.drawer=${s.seat};render()"><span class="dot" style="background:${PLAYER_RGB[s.seat]}"></span>${esc(s.name)}</button>`).join("")
+    + `<button class="close" onclick="closeDrawer()" title="Close (Esc)">&times;</button>`;
+  const sets = setsLine(p);
+  const row = g => `<tr><td>${esc(g.name)}${g.kind === "rare" && g.region != null ? ` <span class="pip" style="display:inline-block;border-color:${regionColor(g.region)};background:${regionColor(g.region)}"></span>` : ""}</td>
+      <td class="num">${g.count}</td><td class="sub">${esc(g.city || "")}</td>
+      <td class="num" title="Set points lost if one is spent now">${g.spend_cost ? "&minus;" + g.spend_cost : "0"}</td></tr>`;
+  const part = (kind, title) => {
+    const gs = p.goods.filter(g => g.kind === kind);
+    return gs.length ? `<tr><th colspan="4">${title}</th></tr>` + gs.map(row).join("") : "";
+  };
+  const rg = p.regions, rt = p.routes;
+  const regions = rg.list.length ? `<h3>Rare goods by region &middot; ${progress(rg.have, rg.needed)}${rt.needed ? ` &middot; routes ${progress(rt.active, rt.needed)}` : ""}</h3>
+    ${rg.needed ? `<div class="sub">The game ends when a player with ${rt.needed || "enough"} routes holds rare goods from ${rg.needed} regions.</div>` : ""}
+    <div class="regiongrid">${rg.list.map(r => `<div class="${r.have ? "" : "miss"}"><span class="pip" style="display:inline-block;border-color:${regionColor(r.id)};background:${r.have ? regionColor(r.id) : "transparent"}"></span> ${esc(r.name)}${r.have ? `<div class="sub">${esc(r.goods.join(", "))}</div>` : ""}</div>`).join("")}</div>` : "";
+  d.innerHTML = `<div class="tabs">${tabs}</div>
+    <div><strong>Sets:</strong> ${sets}</div>
+    <h3>Goods &middot; ${p.total} (${p.kinds} kinds)</h3>
+    ${p.goods.length ? `<table><tr><th>Good</th><th class="num">#</th><th>From</th><th class="num" title="Set points lost if one is spent now">If spent</th></tr>${part("rare", "Rare")}${part("common", "Common")}</table>` : `<div class="sub">None yet.</div>`}
+    ${regions}`;
 }
 
 // ---------- pan and zoom ----------
@@ -667,6 +749,7 @@ $("completebtn").onclick = () => send({cmd: "complete_turn"});
 document.addEventListener("keydown", e => {
   if (!$("confirmend").classList.contains("hidden")) { if (e.key === "Escape") closeConfirm(); return; }
   if (e.key === "Escape" && G && G.menuOpen) { closeHexMenu(); return; }
+  if (e.key === "Escape" && G && G.drawer != null) { closeDrawer(); return; }
   if (e.key === "Enter" && G && G.view && !$("completebtn").disabled && !$("turnctl").classList.contains("hidden")) send({cmd: "complete_turn"});
 });
 
