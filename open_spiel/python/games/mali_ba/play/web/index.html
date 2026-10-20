@@ -63,6 +63,11 @@ button.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
 #completebtn:not(:disabled) { background: #2f7d32; border-color: #2f7d32; }
 #history div { display: flex; gap: 6px; align-items: center; }
 #history .dot { width: 9px; height: 9px; margin: 0; }
+#hexmenu { position: absolute; z-index: 5; display: flex; flex-direction: column; gap: 4px; padding: 6px;
+           background: var(--panel); border: 1px solid var(--ink); border-radius: 9px; box-shadow: 0 6px 24px rgba(0,0,0,.25); max-width: 300px; }
+#hexmenu button { text-align: left; }
+#hexmenu button:hover, #hexmenu button:focus { background: var(--hi); }
+#hexmenu button.cancel { color: var(--muted); }
 #result { position: absolute; left: 14px; top: 50px; max-width: min(640px, calc(100% - 28px)); max-height: calc(100% - 64px);
           overflow: auto; background: rgba(255,255,255,.96); border: 2px solid var(--ink); border-radius: 10px; padding: 12px 16px; }
 #result pre { font-size: 12.5px; margin: 8px 0 0; white-space: pre-wrap; }
@@ -110,6 +115,7 @@ svg text { pointer-events: none; }
       <button id="routesbtn" title="Show or hide trade routes">Routes</button>
     </div>
     <div id="result" class="hidden"></div>
+    <div id="hexmenu" class="hidden" role="menu"></div>
   </div>
   <div id="side">
     <div><strong id="gtitle">Mali-Ba</strong> <span id="role" class="small muted"></span></div>
@@ -325,6 +331,7 @@ function pickView() {
   // The seat to move's own view carries its legal moves; use it if it is up to date.
   const v = G.views[cur] && G.seqs[cur] === newest ? G.views[cur] : latest;
   if (v !== G.view) {
+    if (G.menuOpen) closeHexMenu();
     const before = G.view;
     G.view = v;
     if (G.selHex && !movesAt(G.selHex).length) G.selHex = null;
@@ -348,15 +355,41 @@ function send(m) {
   G.selHex = null; G.filter.clear(); G.hoverMove = null;
   status("");
 }
-function clickHex(k) {
+// Moves that a single click may play at once: frequent and unambiguous. Anything else
+// on a hex (an upgrade, a mancala start) opens a menu by the hex, even if it is the
+// only choice there, so a costly decision is never made by one stray click.
+const ONE_CLICK = new Set(["mancala_step", "place_token"]);
+function closeHexMenu() { $("hexmenu").classList.add("hidden"); if (G && G.hoverMove && G.menuOpen) { G.hoverMove = null; renderBoard(); } if (G) G.menuOpen = false; }
+function openHexMenu(k, moves, ev) {
+  const menu = $("hexmenu"), wrap = $("boardwrap").getBoundingClientRect();
+  menu.innerHTML = "";
+  for (const m of moves) {
+    const b = document.createElement("button"); b.textContent = m.label;
+    b.onclick = e => { e.stopPropagation(); closeHexMenu(); send(m); };
+    b.onmouseenter = () => { G.hoverMove = m; renderBoard(); };
+    menu.appendChild(b);
+  }
+  const c = document.createElement("button"); c.textContent = "Cancel"; c.className = "cancel";
+  c.onclick = e => { e.stopPropagation(); closeHexMenu(); };
+  menu.appendChild(c);
+  menu.classList.remove("hidden");
+  const x = Math.min(ev.clientX - wrap.left + 12, wrap.width - menu.offsetWidth - 8);
+  const y = Math.min(ev.clientY - wrap.top + 12, wrap.height - menu.offsetHeight - 8);
+  menu.style.left = Math.max(8, x) + "px"; menu.style.top = Math.max(8, y) + "px";
+  G.menuOpen = true; G.selHex = k; renderBoard();
+  menu.querySelector("button").focus();
+}
+function clickHex(k, ev) {
+  closeHexMenu();
   if (G.view && G.view.result) { G.showResult = !G.showResult; render(); return; }
   if (routeMoves().some(m => m.hexes.some(h => key(h) === k))) {
     G.filter.has(k) ? G.filter.delete(k) : G.filter.add(k);
     render(); return;
   }
   const here = movesAt(k);
-  if (here.length === 1) send(here[0]);
-  else { G.selHex = here.length ? k : null; render(); }
+  if (here.length === 1 && ONE_CLICK.has(here[0].kind)) send(here[0]);
+  else if (here.length) openHexMenu(k, here, ev);
+  else { G.selHex = null; render(); }
 }
 
 // ---------- drawing ----------
@@ -402,7 +435,7 @@ function renderBoard() {
     const k = key(h), c = px(h);
     const cls = "hex" + (k === G.selHex || k === mancala ? " sel" : hi.has(k) ? " hi" : "");
     const p = el("polygon", {points: hexPoints(c), class: cls}, gHex);
-    p.addEventListener("click", () => clickHex(k));
+    p.addEventListener("click", ev => clickHex(k, ev));
     p.addEventListener("mouseenter", () => showHover(k));
     el("text", {x: c[0], y: c[1] - R * 0.62, "font-size": 4.2, "text-anchor": "middle", fill: "#5b5248"}, gHex).textContent = k;
   }
@@ -422,7 +455,11 @@ function renderBoard() {
     posts.forEach((p, i) => {
       const a = -Math.PI / 2 + 0.9 + i * 0.8, x = c[0] + Math.cos(a) * R * 0.66, y = c[1] + Math.sin(a) * R * 0.66;
       const col = PLAYER_RGB[p.owner] || "#999";
-      if (p.type === 2) el("rect", {x: x - s, y: y - s, width: 2 * s, height: 2 * s, fill: col, stroke: "#000", "stroke-width": 0.6}, gItems);
+      if (p.type === 2) {               // center: a larger square with a white core
+        const c = s * 1.45;
+        el("rect", {x: x - c, y: y - c, width: 2 * c, height: 2 * c, fill: col, stroke: "#000", "stroke-width": 0.9}, gItems);
+        el("rect", {x: x - c * 0.38, y: y - c * 0.38, width: c * 0.76, height: c * 0.76, fill: "#fff", stroke: "#000", "stroke-width": 0.4}, gItems);
+      }
       else el("polygon", {points: `${x},${y - s * 1.2} ${x - s},${y + s * 0.8} ${x + s},${y + s * 0.8}`, fill: col, stroke: "#000", "stroke-width": 0.6}, gItems);
     });
   }
@@ -563,6 +600,7 @@ $("reallyendbtn").onclick = () => {
 $("completebtn").onclick = () => send({cmd: "complete_turn"});
 document.addEventListener("keydown", e => {
   if (!$("confirmend").classList.contains("hidden")) { if (e.key === "Escape") closeConfirm(); return; }
+  if (e.key === "Escape" && G && G.menuOpen) { closeHexMenu(); return; }
   if (e.key === "Enter" && G && G.view && !$("completebtn").disabled && !$("turnctl").classList.contains("hidden")) send({cmd: "complete_turn"});
 });
 
